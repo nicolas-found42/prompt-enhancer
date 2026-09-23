@@ -100,9 +100,7 @@ class RankingResult:
         return (self.selected or self.original).text
 
     def to_dict(self) -> dict[str, Any]:
-        selected_grade = (
-            _serialize_grade(self.selected.grade) if self.selected else None
-        )
+        selected_grade = _serialize_grade((self.selected or self.original).grade)
         return {
             "selected_candidate_id": self.selected_candidate_id,
             "selected_candidate": self.selected.to_dict() if self.selected else None,

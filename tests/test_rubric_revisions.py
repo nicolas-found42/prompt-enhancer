@@ -264,7 +264,7 @@ def test_writer_proposes_question_from_measured_error_without_supplied_question(
     assert proposal.evidence[0].error_id == "missing-audience"
 
 
-def test_adopted_questions_replace_default_checklist_with_explicit_polarity(tmp_path: Path) -> None:
+def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(tmp_path: Path) -> None:
     from prompt_enhancer.gateway import ScriptedGateway
     from prompt_enhancer.optimizer import PromptOptimizer
     from prompt_enhancer.store import RunStore
@@ -285,8 +285,33 @@ def test_adopted_questions_replace_default_checklist_with_explicit_polarity(tmp_
     result = optimizer.optimize("Write a release note.", {"clarification_allowed": False})
 
     gaps = result["report"]["diagnosis"]["confirmed_gaps"]
-    assert [gap["key"] for gap in gaps] == ["missing-audience"]
-    assert gaps[0]["missing_probability"] == 0.95
+    by_key = {gap["key"]: gap for gap in gaps}
+    assert "goal" in by_key
+    assert "context" in by_key
+    assert by_key["missing-audience"]["missing_probability"] == 0.95
+
+
+def test_disabled_default_question_stays_disabled_after_store_reopens(tmp_path: Path) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+    from prompt_enhancer.optimizer import PromptOptimizer
+    from prompt_enhancer.store import RunStore
+
+    path = tmp_path / "rubric.sqlite3"
+    store = SQLiteRubricStore(path)
+    store.initialize(RubricVersion("active", (), disabled_default_question_ids=("context",)))
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            choice = "general" if request.get("key") == "task_type" else "none"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+        return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
+
+    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway, rubric_store=SQLiteRubricStore(path)).optimize("Write a release note.", {"clarification_allowed": False})
+
+    keys = {item["key"] for item in result["report"]["diagnosis"]["confirmed_gaps"]}
+    assert "goal" in keys
+    assert "context" not in keys
 
 
 def test_harness_adapter_uses_replay_and_maps_public_report_fields() -> None:

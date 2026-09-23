@@ -9,12 +9,13 @@ and a durable run identifier.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
+from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 
-from .catalog import DEFAULT_DEEP_WEAK_PANEL, LiveModelCatalog
+from .catalog import DEFAULT_DEEP_WEAK_PANEL, DEFAULT_WEAK_PANEL, LiveModelCatalog
 from .clarification import (
     ClarificationService,
     InMemoryClarificationRepository,
@@ -30,6 +31,7 @@ from .diagnosis import (
     DecisionGateway,
     Diagnoser,
     DiagnosisReport,
+    DiagnosisRubric,
     GapImpact,
 )
 from .fidelity import check_candidate_fidelity
@@ -51,6 +53,7 @@ from .rewrite import _text as completion_text
 from .rubric_revisions import SQLiteRubricStore
 from .runner import PanelResult, run_candidates
 from .selector import rank_candidates
+from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
 from .strategies import STRATEGY_LIBRARY, RewriteStrategy, search_strategies
 from .strong_check import StrongCheckPolicy
@@ -59,6 +62,16 @@ from .success_tests import CompletionGateway, SuccessTestCompiler
 
 class RunNotFoundError(KeyError):
     """Raised when a caller resumes or edits an unknown run."""
+
+
+@dataclass(frozen=True, slots=True)
+class _RunContext:
+    prompt: str
+    run_id: str
+    diagnosis: Mapping[str, Any]
+    assumptions: Any
+    settings: Settings
+    seed: int
 
 
 class PromptOptimizer:
@@ -70,9 +83,27 @@ class PromptOptimizer:
         store: RunStore | None = None,
         config: Settings | None = None,
         rubric_store: SQLiteRubricStore | None = None,
+        diagnosis_rubric: DiagnosisRubric = DEFAULT_RUBRIC,
     ) -> None:
         self.store = store or RunStore()
-        self.config = config or Settings()
+        self.config = config or Settings.from_env()
+        self.diagnosis_rubric = diagnosis_rubric
+        self.settings_store = (
+            SettingsStore(
+                Path(self.store.path).with_suffix(".settings.json"),
+                defaults=ModelDefaults(
+                    writer=self.config.writer_model,
+                    strong=self.config.strong_check_model,
+                    weak=self.config.weak_models,
+                ),
+            )
+            if self.store.path != ":memory:" else None
+        )
+        if self.settings_store is not None:
+            defaults = self.settings_store.load().defaults
+            self.config.writer_model = defaults.writer
+            self.config.strong_check_model = defaults.strong
+            self.config.weak_models = defaults.weak
         self.gateway: Any = gateway if gateway is not None else self._default_gateway()
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (SQLiteRubricStore(self.store.path) if self.store.path != ":memory:" else None)
@@ -81,6 +112,29 @@ class PromptOptimizer:
             self._clarification_repository(),
             continuation=self._continue_clarification,
         )
+
+    def get_model_settings(self) -> dict[str, Any]:
+        return self.config.public_dict()
+
+    def update_model_settings(self, values: Mapping[str, Any]) -> dict[str, Any]:
+        if "judge_model" in values and values["judge_model"] != self.config.judge_model:
+            raise ValueError("judge model is fixed")
+        writer = values.get("writer_model", self.config.writer_model)
+        strong = values.get("strong_check_model", self.config.strong_check_model)
+        weak = values.get("weak_models", self.config.weak_models)
+        if not isinstance(writer, str) or not writer.strip():
+            raise ValueError("writer_model must be a model ID")
+        if not isinstance(strong, str) or not strong.strip():
+            raise ValueError("strong_check_model must be a model ID")
+        if not isinstance(weak, (list, tuple)) or len(weak) < 3 or any(not isinstance(item, str) or not item.strip() for item in weak) or len(set(weak)) != len(weak):
+            raise ValueError("weak_models must contain at least three distinct model IDs")
+        selected = ModelDefaults(writer=writer.strip(), strong=strong.strip(), weak=tuple(weak))
+        if self.settings_store is not None:
+            self.settings_store.save(selected)
+        self.config.writer_model = selected.writer
+        self.config.strong_check_model = selected.strong
+        self.config.weak_models = selected.weak
+        return self.get_model_settings()
 
     def _default_gateway(self) -> Any:
         if not self.config.openrouter_api_key or not self.config.opencode_go_key:
@@ -123,6 +177,8 @@ class PromptOptimizer:
         if not isinstance(selected_weak, (list, tuple)) or not selected_weak or any(not isinstance(item, str) or not item for item in selected_weak):
             raise ValueError("weak model overrides must be a non-empty list")
         count = {"fast": 2, "standard": 3, "deep": 5}[tier]
+        if len(set(selected_weak[:count])) != count:
+            raise ValueError(f"weak panel for {tier} requires {count} distinct models")
         return replace(self.config, writer_model=writer, strong_check_model=strong, weak_models=tuple(selected_weak[:count]))
 
     @staticmethod
@@ -186,29 +242,14 @@ class PromptOptimizer:
             result["report"]["diagnosis"] = diagnosis_payload
             return result
         return self._run_rounds(
-            prompt, run_id, tier, diagnosis_payload,
-            assumptions=[item.as_dict() for item in plan.assumptions],
-            run_settings=run_settings, run_seed=run_seed,
+            _RunContext(prompt, run_id, diagnosis_payload, [item.as_dict() for item in plan.assumptions], run_settings, run_seed),
+            tier,
             prior_failures=options.get("prior_round_failures", ()),
         )
 
-    def _round_executor(
-        self,
-        prompt: str,
-        run_id: str,
-        diagnosis: Mapping[str, Any],
-        assumptions: Any,
-        run_settings: Settings,
-        run_seed: int,
-    ) -> Any:
+    def _round_executor(self, context: _RunContext) -> Any:
         def execute(request: RoundRequest) -> Mapping[str, Any]:
-            result = self._run_optimization(
-                prompt, run_id, request.tier.value, diagnosis,
-                assumptions=assumptions,
-                prior_failures=request.prior_failures,
-                run_settings=run_settings,
-                run_seed=run_seed,
-            )
+            result = self._run_optimization(context, request.tier.value, request.prior_failures)
             report = result["report"]
             failures = [
                 {
@@ -236,39 +277,52 @@ class PromptOptimizer:
 
     def _run_rounds(
         self,
-        prompt: str,
-        run_id: str,
+        context: _RunContext,
         tier: str,
-        diagnosis: Mapping[str, Any],
         *,
-        assumptions: Any = (),
-        run_settings: Settings,
-        run_seed: int,
         prior_failures: Any = (),
     ) -> OptimizeResult:
         repeated = self.repeat.run(
-            run_id=run_id,
-            prompt=prompt,
+            run_id=context.run_id,
+            prompt=context.prompt,
             tier=tier,
-            execute_round=self._round_executor(prompt, run_id, diagnosis, assumptions, run_settings, run_seed),
+            execute_round=self._round_executor(context),
             initial_failures=prior_failures,
         )
         return cast(OptimizeResult, repeated.as_payload())
 
+    @staticmethod
+    def _unchanged_report(
+        *, status: str, summary: str, models: Mapping[str, Any],
+        diagnosis: Mapping[str, Any], tests: Any, assumptions: Any,
+        original: str, working: str, tier: str,
+    ) -> dict[str, Any]:
+        return {
+            "status": status,
+            "models": dict(models),
+            "summary": summary,
+            "diagnosis": dict(diagnosis),
+            "tests": tests,
+            "candidates": [],
+            "per_model": {},
+            "assumptions": list(assumptions),
+            "diff": _diff(original, working),
+            "offer_deep": tier != "deep",
+            "history": [],
+        }
+
     def _run_optimization(
         self,
-        prompt: str,
-        run_id: str,
+        context: _RunContext,
         tier: str,
-        diagnosis_payload: Mapping[str, Any],
-        *,
-        tests: Any = (),
-        assumptions: Any = (),
         prior_failures: Any = (),
-        run_settings: Settings | None = None,
-        run_seed: int = 0,
     ) -> OptimizeResult:
-        selected_settings = run_settings or self.config
+        prompt = context.prompt
+        run_id = context.run_id
+        diagnosis_payload = context.diagnosis
+        assumptions = context.assumptions
+        run_seed = context.seed
+        selected_settings = context.settings
         models = self._model_roles(selected_settings)
         working_prompt = _prompt_with_assumptions(prompt, assumptions)
         try:
@@ -283,25 +337,19 @@ class PromptOptimizer:
         confirmed_gaps = diagnosis_payload.get("confirmed_gaps", [])
         if not test_payload or not confirmed_gaps:
             no_gaps = not confirmed_gaps
-            report = {
-                "status": "no_change" if no_gaps and test_payload else "unverified",
-                "models": models,
-                "summary": (
-                    "No confirmed gaps were found; the original request was returned unchanged."
-                    if no_gaps and test_payload else
-                    "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
-                    if no_gaps else
-                    "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
-                ),
-                "diagnosis": diagnosis_payload,
-                "tests": test_payload,
-                "candidates": [],
-                "per_model": {},
-                "assumptions": list(assumptions),
-                "diff": _diff(prompt, working_prompt),
-                "offer_deep": tier != "deep",
-                "history": [],
-            }
+            summary = (
+                "No confirmed gaps were found; the original request was returned unchanged."
+                if no_gaps and test_payload else
+                "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
+                if no_gaps else
+                "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
+            )
+            report = self._unchanged_report(
+                status="no_change" if no_gaps and test_payload else "unverified",
+                summary=summary, models=models, diagnosis=diagnosis_payload,
+                tests=test_payload, assumptions=assumptions, original=prompt,
+                working=working_prompt, tier=tier,
+            )
             return self._result(run_id, working_prompt, working_prompt == prompt, report)
 
         strategy_choice = self.gateway.decide(
@@ -337,19 +385,12 @@ class PromptOptimizer:
                 run_id,
                 working_prompt,
                 working_prompt == prompt,
-                {
-                    "status": "no_change",
-                    "models": models,
-                    "summary": "No candidate strategy was selected.",
-                    "diagnosis": diagnosis_payload,
-                    "tests": test_payload,
-                    "candidates": [],
-                    "per_model": {},
-                    "assumptions": list(assumptions),
-                    "diff": _diff(prompt, working_prompt),
-                    "offer_deep": tier != "deep",
-                    "history": [],
-                },
+                self._unchanged_report(
+                    status="no_change", summary="No candidate strategy was selected.",
+                    models=models, diagnosis=diagnosis_payload, tests=test_payload,
+                    assumptions=assumptions, original=prompt, working=working_prompt,
+                    tier=tier,
+                ),
             )
 
         panel = run_candidates(
@@ -428,9 +469,16 @@ class PromptOptimizer:
                 rubric = self.rubric_store.active_rubric()
             except RuntimeError:
                 pass
-        diagnosis_rubric = DEFAULT_RUBRIC if rubric is None else replace(
-            DEFAULT_RUBRIC,
-            task_types=tuple(replace(task, checklist=()) for task in DEFAULT_RUBRIC.task_types),
+        suppressed = (
+            {item.question_id for item in rubric.questions} | set(rubric.disabled_default_question_ids)
+            if rubric is not None else set()
+        )
+        diagnosis_rubric = replace(
+            self.diagnosis_rubric,
+            task_types=tuple(
+                replace(task, checklist=tuple(item for item in task.checklist if item.key not in suppressed))
+                for task in self.diagnosis_rubric.task_types
+            ),
         )
         report = Diagnoser(cast(DecisionGateway, self.gateway), rubric=diagnosis_rubric).diagnose(prompt)
         if rubric is None:
@@ -442,14 +490,15 @@ class PromptOptimizer:
         if not questions:
             return replace(report, rubric_version=rubric.version_id)
         responses = self.gateway.jev_batch(questions)
-        gaps = []
+        gaps = list(report.confirmed_gaps)
+        default_impacts = {item.key: item.impact for task in DEFAULT_RUBRIC.task_types for item in task.checklist}
         for item, response in zip(rubric.questions, responses, strict=True):
             decision = parse_decision(response)
             if not isinstance(decision, NoulDecision):
                 continue
             missing = decision.probability if item.missing_when == "yes" else 1.0 - decision.probability
             if missing >= item.threshold and decision.confidence >= diagnosis_rubric.confidence_threshold:
-                gaps.append(ConfirmedGap(item.question_id, item.text, GapImpact.MEDIUM, missing, decision.confidence, item.threshold))
+                gaps.append(ConfirmedGap(item.question_id, item.text, default_impacts.get(item.question_id, GapImpact.MEDIUM), missing, decision.confidence, item.threshold))
         return replace(report, confirmed_gaps=tuple(gaps), rubric_version=rubric.version_id)
 
     def _strong_score(self, prompt: str, tests: Any, run_id: str, settings: Settings) -> float:
@@ -504,7 +553,13 @@ class PromptOptimizer:
         tier = str((metadata or {}).get("tier", "standard"))
         run_settings = self._run_settings((metadata or {}).get("options", {}), tier)
         assumptions = state.get("assumptions", [])
-        return self._run_rounds(prompt, run_id, tier, (metadata or {}).get("diagnosis", {"confirmed_gaps": [], "problem_sentences": []}), assumptions=assumptions, run_settings=run_settings, run_seed=_run_seed(prompt, (metadata or {}).get("options", {}).get("seed")))
+        context = _RunContext(
+            prompt, run_id,
+            (metadata or {}).get("diagnosis", {"confirmed_gaps": [], "problem_sentences": []}),
+            assumptions, run_settings,
+            _run_seed(prompt, (metadata or {}).get("options", {}).get("seed")),
+        )
+        return self._run_rounds(context, tier)
 
     def resume(self, run_id: str, answers: dict[str, Any]) -> OptimizeResult:
         usage_before = self._usage_cost()
@@ -619,23 +674,35 @@ class PromptOptimizer:
         assert detail is not None
         self.gateway.new_run(run_id)
         prior_cost = dict(record.get("cost") or {})
-        run_settings = self._run_settings(record.get("options") or {}, "deep")
+        deep_options = dict(record.get("options") or {})
+        overrides = dict(deep_options.get("model_overrides") or {})
+        if "weak" in overrides or "weak_models" in overrides:
+            prior_weak = overrides.get("weak", overrides.get("weak_models"))
+            chosen = [prior_weak] if isinstance(prior_weak, str) else list(prior_weak)
+            base_slots = max(0, 3 - len(set(chosen)))
+            base_fill = [model for model in DEFAULT_WEAK_PANEL if model not in chosen][:base_slots]
+            deep_extras = DEFAULT_DEEP_WEAK_PANEL[len(DEFAULT_WEAK_PANEL):]
+            overrides["weak"] = list(dict.fromkeys((*chosen, *base_fill, *deep_extras, *DEFAULT_WEAK_PANEL)))[:5]
+            overrides.pop("weak_models", None)
+            deep_options["model_overrides"] = overrides
+        deep_options["tier"] = "deep"
+        run_settings = self._run_settings(deep_options, "deep")
         prior_report = dict((record.get("result") or {}).get("report") or {})
         repeated = self.repeat.deep_pass(
             detail,
-            self._round_executor(
+            self._round_executor(_RunContext(
                 str(record["prompt"]), run_id,
                 prior_report.get("diagnosis", {}),
                 prior_report.get("assumptions", []),
                 run_settings,
                 _run_seed(str(record["prompt"]), (record.get("options") or {}).get("seed")),
-            ),
+            )),
         )
         result = cast(OptimizeResult, repeated.as_payload())
         result["cost"] = cast(CostBreakdown, _add_usage_delta(prior_cost, {"total": 0.0}, self._usage_cost()))
         evidence = self._training_evidence(result, record)
         result["report"]["jev_answers"] = evidence["jev_answers"]
-        self.store.save_run({**record, "result": result, "tier": "deep", "cost": result["cost"], **evidence})
+        self.store.save_run({**record, "result": result, "tier": "deep", "options": deep_options, "cost": result["cost"], **evidence})
         return result
 
     def _result(

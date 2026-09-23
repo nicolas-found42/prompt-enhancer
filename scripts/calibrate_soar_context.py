@@ -1,0 +1,99 @@
+"""Calibrate the exact default context question from a SOAR strict replay.
+
+This is intentionally narrow: SOAR's human `missing context` label does not
+provide ground truth for the other checklist questions.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+from prompt_enhancer.catalog import JEV_MODEL
+from prompt_enhancer.evaluation.datasets import load_dataset, replay_digest
+from prompt_enhancer.gateway import ReplayGateway
+
+CONTEXT_QUESTION = "Is the required piece 'relevant context' confidently missing from the request?"
+THRESHOLDS = tuple(round(0.8 + index / 100, 2) for index in range(16))
+Row = tuple[str, float, bool, bool]
+
+
+def _metrics(rows: list[Row], threshold: float) -> dict[str, float | int]:
+    tp = sum(probability >= threshold and expected for _, probability, expected, _ in rows)
+    fp = sum(probability >= threshold and not expected for _, probability, expected, _ in rows)
+    fn = sum(probability < threshold and expected for _, probability, expected, _ in rows)
+    tn = sum(probability < threshold and not expected for _, probability, expected, _ in rows)
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    recall = tp / (tp + fn) if tp + fn else 0.0
+    f05 = 1.25 * precision * recall / (0.25 * precision + recall) if precision + recall else 0.0
+    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "precision": precision, "recall": recall, "f0_5": f05}
+
+
+def calibrate(dataset_path: Path, replay_path: Path) -> dict[str, Any]:
+    dataset = load_dataset(dataset_path)
+    recording = json.loads(replay_path.read_text(encoding="utf-8"))
+    responses = recording.get("responses")
+    if not isinstance(responses, dict):
+        raise TypeError("strict replay requires an object of responses")
+    rows: list[Row] = []
+    for case in dataset.cases:
+        if not case.labels_present or "context" not in case.metadata.get("evaluation_gaps", []):
+            raise ValueError(f"case {case.id} lacks a reviewable context label")
+        question = {
+            "model": JEV_MODEL,
+            "query": CONTEXT_QUESTION,
+            "state": {"prompt": case.prompt},
+            "type": "noul",
+            "key": "gap:context",
+        }
+        key = ReplayGateway.request_key("decide", JEV_MODEL, question, "judge")
+        answer = responses.get(key)
+        if answer is None:
+            raise ValueError(f"missing context decision for case {case.id}")
+        if not isinstance(answer, dict):
+            raise TypeError(f"context decision for case {case.id} must be an object")
+        probability = answer.get("noul", answer.get("probability_true"))
+        if isinstance(probability, bool) or not isinstance(probability, (float, int)) or not 0 <= probability <= 1:
+            raise ValueError(f"invalid context probability for case {case.id}")
+        holdout = int(hashlib.sha256(case.id.encode()).hexdigest()[:8], 16) % 5 == 0
+        rows.append((case.id, float(probability), "context" in case.expected_gaps, holdout))
+    train = [row for row in rows if not row[3]]
+    holdout = [row for row in rows if row[3]]
+    selected = max(THRESHOLDS, key=lambda threshold: (_metrics(train, threshold)["f0_5"], threshold))
+    return {
+        "question_id": "gap:context",
+        "question": CONTEXT_QUESTION,
+        "dataset_digest": dataset.digest,
+        "replay_digest": replay_digest(replay_path),
+        "rows": len(rows),
+        "train_count": len(train),
+        "holdout_count": len(holdout),
+        "selection": "Maximum training F0.5 over 0.80 to 0.95 in 0.01 steps; higher threshold breaks ties",
+        "baseline_threshold": 0.9,
+        "selected_threshold": selected,
+        "baseline_train": _metrics(train, 0.9),
+        "selected_train": _metrics(train, selected),
+        "baseline_holdout": _metrics(holdout, 0.9),
+        "selected_holdout": _metrics(holdout, selected),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", required=True, type=Path)
+    parser.add_argument("--replay", required=True, type=Path)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    rendered = json.dumps(calibrate(args.dataset, args.replay), indent=2, sort_keys=True) + "\n"
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered, encoding="utf-8")
+    else:
+        print(rendered, end="")
+
+
+if __name__ == "__main__":
+    main()

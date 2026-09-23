@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -112,9 +112,13 @@ class DiagnosisRubric:
     default_task_type: str = "general"
     confidence_threshold: float = 0.8
     gap_threshold: float = 0.9
+    gap_thresholds: Mapping[str, float] = field(default_factory=dict)
     problem_threshold: float = 0.9
     pointer_threshold: float = 0.8
     uncertainty_margin: float = 0.1
+
+    def gap_threshold_for(self, question_id: str) -> float:
+        return self.gap_thresholds.get(question_id, self.gap_threshold)
 
 
 _GENERAL_CHECKLIST = (
@@ -130,6 +134,14 @@ _CODING_CHECKLIST = _GENERAL_CHECKLIST + (
     ChecklistItem("language", "language or runtime", GapImpact.HIGH),
     ChecklistItem("tests", "test expectations", GapImpact.MEDIUM),
 )
+_PLANNING_CHECKLIST = _GENERAL_CHECKLIST + (ChecklistItem("time_horizon", "time horizon", GapImpact.MEDIUM),)
+_CHAT_CHECKLIST = _GENERAL_CHECKLIST[:2]
+
+_TASK_TREE = {
+    "communication": ("writing", "chat"),
+    "investigation": ("analysis", "research"),
+    "execution": ("coding", "planning"),
+}
 
 DEFAULT_RUBRIC = DiagnosisRubric(
     task_types=(
@@ -137,7 +149,11 @@ DEFAULT_RUBRIC = DiagnosisRubric(
         TaskType("writing", "Writing", _WRITING_CHECKLIST),
         TaskType("analysis", "Analysis", _ANALYSIS_CHECKLIST),
         TaskType("coding", "Coding", _CODING_CHECKLIST),
-    )
+        TaskType("research", "Research", _ANALYSIS_CHECKLIST),
+        TaskType("planning", "Planning", _PLANNING_CHECKLIST),
+        TaskType("chat", "Chat", _CHAT_CHECKLIST),
+    ),
+    gap_thresholds={"context": 0.87},
 )
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])(?:[\"'”’\)\]]*)(?=\s+|$)|\n{2,}")
@@ -231,7 +247,14 @@ class Diagnoser:
         rubric = self.rubric
         state = {"prompt": prompt}
         unknown = "unknown"
-        task_options = [task.key for task in rubric.task_types] + [unknown]
+        task_options = {
+            "general": "A general request outside the specialized groups.",
+            **{
+                group: "Contains " + ", ".join(children) + " requests."
+                for group, children in _TASK_TREE.items()
+            },
+            unknown: "The task type cannot be determined.",
+        }
         task_request = _request(
             "Which task type best describes the request?",
             state,
@@ -244,9 +267,26 @@ class Diagnoser:
         task_confidence = 0.0
         if task_results and isinstance(task_results[0], ChoiceDecision):
             task_result = task_results[0]
-            if task_result.selected != unknown:
+            if task_result.selected in {task.key for task in rubric.task_types}:
                 selected = task_result.selected
-            task_confidence = task_result.confidence
+                task_confidence = task_result.confidence
+            elif task_result.selected in _TASK_TREE:
+                branch = task_result.selected
+                children = _TASK_TREE[branch]
+                leaf_request = _request(
+                    f"Which {branch} task type best describes the request?",
+                    state,
+                    type="choice",
+                    options={
+                        **{child: next(task.label for task in rubric.task_types if task.key == child) for child in children},
+                        unknown: "Neither leaf can be determined confidently.",
+                    },
+                    key=f"task_type:{branch}",
+                )
+                leaf_results = self._decide((leaf_request,))
+                if leaf_results and isinstance(leaf_results[0], ChoiceDecision) and leaf_results[0].selected in children:
+                    selected = leaf_results[0].selected
+                    task_confidence = min(task_result.confidence, leaf_results[0].confidence)
 
         task = next((item for item in rubric.task_types if item.key == selected), rubric.task_types[0])
         gaps, sentences = self._diagnose_gaps(prompt, state, task, rubric)
@@ -281,8 +321,9 @@ class Diagnoser:
         for item, response in zip(task.checklist, responses, strict=False):
             if not isinstance(response, NoulDecision):
                 continue
+            threshold = rubric.gap_threshold_for(item.key)
             confident_missing = (
-                response.probability >= rubric.gap_threshold
+                response.probability >= threshold
                 and response.confidence >= rubric.confidence_threshold
                 and abs(response.probability - 0.5) >= rubric.uncertainty_margin
             )
@@ -294,7 +335,7 @@ class Diagnoser:
                         impact=item.impact,
                         missing_probability=response.probability,
                         confidence=response.confidence,
-                        threshold=rubric.gap_threshold,
+                        threshold=threshold,
                     )
                 )
         return tuple(gaps), split_sentences(str(state["prompt"]))

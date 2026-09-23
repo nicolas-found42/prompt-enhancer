@@ -9,15 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+from .catalog import DEFAULT_DEEP_WEAK_PANEL
 from .strategies import TierBudget, budget_for_tier
 
-DEFAULT_WEAK_PANEL: tuple[str, ...] = (
-    "meta-llama/llama-3.1-8b-instruct",
-    "mistralai/mistral-nemo",
-    "meta-llama/llama-3.2-3b-instruct",
-    "mimo-v2.6-flash",
-    "qwen3.8-flash",
-)
+DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_DEEP_WEAK_PANEL
 
 
 @dataclass(frozen=True)
@@ -133,12 +128,12 @@ def _output_text(value: Any) -> str:
     if isinstance(value, Mapping):
         if isinstance(value.get("message"), Mapping):
             return _output_text(value["message"])
-        for key in ("output", "text", "content", "response", "completion"):
-            if key in value and value[key] is not None:
-                return _output_text(value[key])
         choices = value.get("choices")
         if choices:
             return _output_text(choices[0])
+        for key in ("output", "text", "content", "response", "completion"):
+            if key in value and value[key] is not None:
+                return _output_text(value[key])
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return _output_text(value[0]) if value else ""
     return str(value)

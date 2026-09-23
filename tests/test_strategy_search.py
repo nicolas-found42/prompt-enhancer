@@ -1,7 +1,7 @@
 """Public behavior tests for strategy search, weak-panel evaluation, and ranking."""
 
 from prompt_enhancer.grading import grade_candidate
-from prompt_enhancer.runner import PanelResult, run_candidates
+from prompt_enhancer.runner import PanelResult, run_candidate_panel, run_candidates
 from prompt_enhancer.selector import rank_candidates
 from prompt_enhancer.strategies import (
     CandidateDraft,
@@ -76,6 +76,19 @@ def test_runner_is_parallel_order_stable_and_reproducible():
     assert [result.sample for result in first.by_candidate("rewrite")] == [0, 1, 0, 1]
     assert all(result.seed != 0 for result in first.results)
     assert len(seen) == 16
+
+
+def test_runner_reads_normalized_responses_text_before_raw_output():
+    class Gateway:
+        def chat(self, model, messages, **kwargs):
+            return {
+                "output": [{"type": "reasoning", "summary": []}],
+                "choices": [{"message": {"content": "OK"}}],
+            }
+
+    result = run_candidate_panel("Return OK", ["muse-spark-1.3-contributor"], Gateway())
+
+    assert result.results[0].output == "OK"
 
 
 def test_grading_reports_per_model_worst_mean_and_sample_spread():

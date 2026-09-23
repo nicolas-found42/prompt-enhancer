@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from .catalog import DEFAULT_GO_WRITER
 from .rewrite import _text as _completion_text
 
 
@@ -74,6 +75,7 @@ class RubricVersion:
     questions: tuple[RubricQuestion, ...]
     parent_version_id: str | None = None
     created_at: str | None = None
+    disabled_default_question_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.version_id.strip():
@@ -86,6 +88,7 @@ class RubricVersion:
             "questions",
             tuple(sorted(self.questions, key=lambda item: item.question_id)),
         )
+        object.__setattr__(self, "disabled_default_question_ids", tuple(sorted(set(self.disabled_default_question_ids))))
 
     def question(self, question_id: str) -> RubricQuestion | None:
         return next(
@@ -102,10 +105,12 @@ class RubricVersion:
         """Return the next immutable version after applying one change."""
 
         questions = {question.question_id: question for question in self.questions}
+        disabled_defaults = set(self.disabled_default_question_ids)
         if change.kind is RevisionKind.NEW:
             if change.after is None or change.after.question_id in questions:
                 raise StaleProposalError("a new question must have a new question ID")
             questions[change.after.question_id] = change.after
+            disabled_defaults.discard(change.after.question_id)
         elif change.kind is RevisionKind.REVISED:
             if (
                 change.after is None
@@ -115,6 +120,7 @@ class RubricVersion:
                     "the revised question is not the question in this rubric"
                 )
             questions[change.question_id] = change.after
+            disabled_defaults.discard(change.question_id)
         else:
             if (
                 change.after is not None
@@ -124,12 +130,14 @@ class RubricVersion:
                     "the dropped question is not the question in this rubric"
                 )
             del questions[change.question_id]
+            disabled_defaults.add(change.question_id)
 
         return RubricVersion(
             version_id=version_id,
             questions=tuple(questions.values()),
             parent_version_id=self.version_id,
             created_at=created_at,
+            disabled_default_question_ids=tuple(disabled_defaults),
         )
 
 
@@ -310,7 +318,7 @@ class MeasuredErrorProposer:
 class WriterRevisionProposer:
     """Ask a writer to turn measured errors into candidate Jev questions."""
 
-    def __init__(self, gateway: Any, *, writer_model: str = "deepseek-v4.1-flash") -> None:
+    def __init__(self, gateway: Any, *, writer_model: str = DEFAULT_GO_WRITER) -> None:
         self.gateway = gateway
         self.writer_model = writer_model
         self._evidence: dict[tuple[str, str, str | None, str | None, str | None], tuple[MeasuredError, ...]] = {}
@@ -678,6 +686,7 @@ def _rubric_from_dict(value: Mapping[str, Any]) -> RubricVersion:
         questions=tuple(_question_from_dict(item) for item in value["questions"]),
         parent_version_id=value["parent_version_id"],
         created_at=value["created_at"],
+        disabled_default_question_ids=tuple(value.get("disabled_default_question_ids", ())),
     )
 
 

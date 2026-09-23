@@ -20,8 +20,8 @@ from .harness import (
     EvaluationError,
     EvaluationHarness,
     HarnessOptions,
-    default_engine_factory,
 )
+from .recording import RecordingGateway
 
 
 def _json_assignment(raw: str) -> tuple[str, object]:
@@ -76,6 +76,7 @@ def _parser() -> argparse.ArgumentParser:
         help="explicitly allow the product's configured live provider gateway",
     )
     parser.add_argument("--output", type=Path, help="write JSON here instead of stdout")
+    parser.add_argument("--record", type=Path, help="capture live responses for strict replay; use with --live")
     parser.add_argument("--pretty", action="store_true", help="indent JSON output")
     parser.add_argument(
         "--engine-factory",
@@ -142,17 +143,30 @@ def main(
             fail_fast=args.fail_fast,
         )
         dataset = load_datasets(args.datasets)
+        if args.record and not args.live:
+            raise EvaluationError("--record requires --live")
+        if args.record and args.engine_factory:
+            raise EvaluationError("--record cannot be combined with --engine-factory")
+        recording = None
         if args.engine_factory:
             harness = EvaluationHarness(
                 engine_factory=_factory(args.engine_factory)
             )
         elif args.live:
-            # Construct only after the user explicitly selected --live.
-            harness = EvaluationHarness(default_engine_factory())
+            from ..optimizer import PromptOptimizer
+
+            engine = PromptOptimizer()
+            if args.record:
+                recording = RecordingGateway(engine.gateway, args.record)
+                recording.rubric_thresholds = dict(engine.diagnosis_rubric.gap_thresholds)
+                engine.gateway = recording
+            harness = EvaluationHarness(engine)
         else:
             # With no custom factory, the harness lazily creates ReplayGateway.
             harness = EvaluationHarness()
         report = harness.run(dataset, options=options, replay_path=args.replay)
+        if args.live and recording is not None:
+            recording.attach_case_metrics(report)
         rendered = report.to_json(pretty=args.pretty)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

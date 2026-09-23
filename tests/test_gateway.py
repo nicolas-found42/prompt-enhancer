@@ -4,10 +4,16 @@ import json
 
 import pytest
 
-from prompt_enhancer.catalog import JEV_MODEL, ModelInfo, StaticModelCatalog
+from prompt_enhancer.catalog import (
+    JEV_MODEL,
+    LiveModelCatalog,
+    ModelInfo,
+    StaticModelCatalog,
+)
 from prompt_enhancer.gateway import (
     GatewayConfig,
     ModelGateway,
+    ProviderError,
     ReplayGateway,
     ScriptedGateway,
 )
@@ -31,6 +37,70 @@ class QueueTransport:
     def request(self, url, **kwargs):
         self.requests.append({"url": url, **kwargs})
         return self.responses.pop(0)
+
+
+def test_default_go_route_uses_subscription_endpoint():
+    gateway = ModelGateway(config=GatewayConfig(), go_models=["go-writer"])
+
+    assert gateway.route_model("go-writer").url == "https://opencode.ai/zen/go/v1/chat/completions"
+    assert GatewayConfig.from_env({}).go_models_url == "https://opencode.ai/zen/go/v1/models"
+
+
+def test_known_go_defaults_do_not_fall_back_to_openrouter_without_catalog():
+    gateway = ModelGateway(config=GatewayConfig())
+
+    assert gateway.route_model("deepseek-v4.1-flash").provider == "go"
+    assert gateway.route_model("space-bunny-free").provider == "go"
+    assert gateway.route_model("glm-5.3-flash").provider == "go"
+    assert gateway.route_model("qwen3.8-flash").url.endswith("/messages")
+    assert gateway.route_model("muse-spark-1.3-contributor").url.endswith("/responses")
+
+
+def test_go_catalog_sends_its_user_agent():
+    transport = QueueTransport([Response(200, {"data": [{"id": "go-writer"}]}), Response(200, {"data": [{"id": "or-writer"}]})])
+    catalog = LiveModelCatalog(transport, go_url="https://go.test/models", openrouter_url="https://or.test/models")
+
+    assert catalog.fetch().go[0].id == "go-writer"
+    assert transport.requests[0]["headers"]["User-Agent"] == "prompt-enhancer/0.1"
+
+
+def test_go_anthropic_model_uses_messages_endpoint_and_normalizes_output():
+    transport = QueueTransport([Response(200, {"content": [{"type": "text", "text": "Done"}], "usage": {"input_tokens": 3, "output_tokens": 1}})])
+    gateway = ModelGateway(transport, config=GatewayConfig(go_api_key="go-test-key"), catalog=StaticModelCatalog(["qwen3.8-flash"]))
+
+    response = gateway.chat("qwen3.8-flash", [{"role": "system", "content": "Be concise"}, {"role": "user", "content": "Say done"}], seed=9)
+
+    request = transport.requests[0]
+    assert request["url"] == "https://opencode.ai/zen/go/v1/messages"
+    assert request["json"]["system"] == "Be concise"
+    assert "seed" not in request["json"]
+    assert request["headers"]["anthropic-version"] == "2023-06-01"
+    assert request["headers"]["x-api-key"] == "go-test-key"
+    assert "Authorization" not in request["headers"]
+    assert response["choices"][0]["message"]["content"] == "Done"
+    assert gateway.usage.for_role("writer")[0].output_tokens == 1
+
+
+def test_go_responses_model_uses_responses_endpoint_and_normalizes_output():
+    transport = QueueTransport([Response(200, {"output": [{"type": "message", "content": [{"type": "output_text", "text": "Done"}]}], "usage": {"input_tokens": 3, "output_tokens": 1}})])
+    gateway = ModelGateway(transport, catalog=StaticModelCatalog(["grok-4.6"]))
+
+    response = gateway.chat("grok-4.6", "Say done", max_tokens=32, seed=9)
+
+    request = transport.requests[0]
+    assert request["url"] == "https://opencode.ai/zen/go/v1/responses"
+    assert request["json"]["max_output_tokens"] == 32
+    assert "seed" not in request["json"]
+    assert response["choices"][0]["message"]["content"] == "Done"
+
+
+def test_muse_reserves_room_for_reasoning_before_visible_output():
+    transport = QueueTransport([Response(200, {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]})])
+    gateway = ModelGateway(transport, catalog=StaticModelCatalog(["muse-spark-1.3-contributor"]))
+
+    gateway.chat("muse-spark-1.3-contributor", "Return OK", role="weak")
+
+    assert transport.requests[0]["json"]["max_output_tokens"] == 4096
 
 
 def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
@@ -121,6 +191,20 @@ def test_scripted_and_replay_gateways_are_deterministic():
     replay = ReplayGateway({("chat", "m", "writer"): {"text": "replayed"}})
     assert replay.complete("m", "hello", role="writer") == {"text": "replayed"}
     assert replay.calls[0]["operation"] == "chat"
+
+
+def test_strict_replay_requires_the_recorded_request() -> None:
+    payload = {"model": "writer", "messages": [{"role": "user", "content": "First prompt"}]}
+    key = ReplayGateway.request_key("chat", "writer", payload, "writer")
+    replay = ReplayGateway({key: {"text": "First result"}}, strict=True)
+
+    assert replay.chat("writer", payload["messages"], role="writer") == {"text": "First result"}
+    with pytest.raises(ProviderError, match="no recorded response"):
+        replay.chat("writer", [{"role": "user", "content": "Another prompt"}], role="writer")
+
+    alias = ReplayGateway({"complete:writer": {"text": "generic"}}, strict=True)
+    with pytest.raises(ProviderError, match="no recorded response"):
+        alias.chat("writer", payload["messages"], role="writer")
 
 
 def test_usage_ledger_splits_roles():

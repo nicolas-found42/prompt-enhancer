@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from difflib import unified_diff
 from typing import Any, Protocol
 
+from .catalog import DEFAULT_GO_WRITER
+
 
 class ModelGateway(Protocol):
     """The subset of the model gateway used by this pass."""
@@ -157,7 +159,7 @@ class CandidateWriter:
         self,
         gateway: ModelGateway,
         *,
-        writer_model: str = "deepseek-v4.1-flash",
+        writer_model: str = DEFAULT_GO_WRITER,
         chat: Callable[..., Any] | None = None,
     ) -> None:
         self.gateway = gateway

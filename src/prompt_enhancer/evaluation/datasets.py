@@ -46,27 +46,25 @@ _CASE_METADATA_EXCLUSIONS = frozenset(
 )
 
 _GAP_TYPE_ALIASES = {
-    "missing context": "context",
     "missing_context": "context",
-    "output format": "output_format",
-    "missing output format": "output_format",
+    "missing_output_format": "output_format",
     "indices_&_ranges": "indices_ranges",
     "ordering_&_atomicity": "ordering_atomicity",
     "string_&_localization": "string_localization",
-    "definition of done": "done_criteria",
-    "success criteria": "done_criteria",
-    "done criterion": "done_criteria",
-    "unresolved reference": "unresolved_reference",
-    "unresolved references": "unresolved_reference",
+    "definition_of_done": "done_criteria",
+    "success_criteria": "done_criteria",
+    "done_criterion": "done_criteria",
+    "missing_done_criteria": "done_criteria",
+    "unresolved_references": "unresolved_reference",
     "vague": "vagueness",
-    "vague sentence": "vagueness",
-    "sentence vagueness": "vagueness",
+    "vague_sentence": "vagueness",
+    "sentence_vagueness": "vagueness",
     "contradiction": "contradiction",
     "contradictory": "contradiction",
     "contradictions": "contradiction",
-    "embedded instruction": "embedded_instructions",
-    "prompt injection": "embedded_instructions",
-    "instructions in pasted content": "embedded_instructions",
+    "embedded_instruction": "embedded_instructions",
+    "prompt_injection": "embedded_instructions",
+    "instructions_in_pasted_content": "embedded_instructions",
 }
 
 

@@ -1,19 +1,53 @@
 {
+  "case_latency_ms": {
+    "hand-analysis-001": 15.5,
+    "real-writing-001": 12.5,
+    "synthetic-coding-001": 18.0
+  },
   "responses": {
-    "decision:typesafe/jev-1.13": {
-      "choice": {
-        "type": "choice",
-        "choice": "none",
-        "probabilities": {"none": 1.0},
-        "confidence": 1.0
-      },
-      "noul": {
-        "type": "noul",
-        "probability_true": 0.1,
-        "confidence": 0.9
-      }
+    "10076b359682d2b35743fbea6f5eef96063081acb8cd05ebd12d753340a697d2": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
     },
-    "complete:writer": {
+    "18ed9acde6a84631899ce4127df12e45e53ec37ececd0a064cdde114398d86c0": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "2784df8bf103176ce59e07b3ab8efade857e23cc36f20785f9defa6854d9b4e2": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "28d5624265d666a023a641920a4f1db1bc58799a504212a97a1baca541f4bea0": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "2abf7a076b2d8f22e645c387a208d1806a5c5c5e709dc417bc86315302f3e7ab": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "35a1cf1c3c77bc35d7f1bd158532a12e52d971d774bd7cc7d42301dbdf2b05b1": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "3d303877de0bb90f16fc2af32ff26fcf4097fff38ab274287d92fc4055f219e7": {
       "choices": [
         {
           "message": {
@@ -22,28 +56,176 @@
         }
       ]
     },
-    "complete:weak-panel": {
+    "3eb5f9e16470be1309c46e6aead35e6e448db2e15a75d78e0038e75a0535a529": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "4b61a34b41a5c33c6b89a8b1fa63ba63e01d21baa12002e4e3d01d676dc3c9d0": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "556f3ea27869eaa815d375a4d51b1c454a359155d2a351ed4c40cfbf1f36f77d": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "687cffab4d90915da768401d8c47a133538dc7996a2feb7c6233a838aa1142e5": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "69fc29c0f2bc02813d6e1adb080faf1da2739ec938697b1cca06de96ac16d5b9": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "7368a7d1f383b2ef5ac884180f1e40dc8c64c77ec3a897d29e1d641c7f54037b": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "7c9100a608be2897fd65af777cb005fd23fc53d299be515bf48803545c5086e5": {
       "choices": [
         {
           "message": {
-            "content": "Candidate output"
+            "content": "{\"tests\":[]}"
           }
         }
       ]
     },
-    "complete:strong-check": {
+    "880e3fbe4ee49db8f0b0e41d302e5e85c555ce8efd6a30289c7c2c1e02abde2d": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "8eac02b5b1dd6a93773b39d94b53f72331296982041a0194e8c95e19308e2bf6": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "a9f902a2daaf7539aa807487968d41075979e15fd1724387e084bc5a17b54b26": {
       "choices": [
         {
           "message": {
-            "content": "Strong output"
+            "content": "{\"tests\":[]}"
           }
         }
       ]
+    },
+    "acfc9d74b4ac9b44c2bfde00fb2b64a3d50b08319b00e953e0d5de71ff78cdd0": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "b4d9a93777c15a191af59ed9e86de28f0e286a9c3cc60de8f1288ef2287358d9": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "b8458c2a27273925f351d6d7d443db0c54cdeb44091bb4671e94cdd2c6c62b11": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "b9b50016b48f1e1955729eae7e592e8ccb53ed9b2eb685defecf24603088bcc8": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "ba1ab22d288bb8b28e9e4166df8004829a620a44edb9868cd3f62fce60cb3e6e": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "bf2a4d99269d5775e97e899add5453b635dd12ca1bd48d468d650ceca1613c52": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "c72c21d4caa2663f379d5af2b6c59eeb41cb4e9c8a6914b09ef080aaae6dd004": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "c89d7c2e4f3c895fb01281a3ffd0a7e70e8834d35c2461e1e759bf253a32c5f4": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "ce14661c4eda743bbc6ab7959f06c3761feade98760ed215731692b0842ce8a7": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "dc0a6c2cd629d6d54bde0c9a63b8fe391f75a3a8629c02516ccd49a723436715": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "e3f7ce6bd20d4caa5efa0af76831400efcef76fbac722772058b9682617ae79e": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "e4f4acec980c5d7594d976664718aa5ad3f5c64ed03cb689b81fcdd335bc8ccb": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
+    },
+    "e9f63a97274233846ef1b7496958e8a0f3ef7326db275e407648773f1bd3c8bc": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "f6ff5b0ed7c6516949c9b0ca2f74032197c7ef7642ae6eed8c86ceb1299315bc": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "f7462a569717ca3fc7ec2538c7265a2da25d440b8e80f6cfb4bb2c9362ff398d": {
+      "choice": "none",
+      "confidence": 1.0,
+      "probabilities": {
+        "none": 1.0
+      },
+      "type": "choice"
+    },
+    "faa23f7453b9aef990677d820b99ad095e08634582d3f61426a80c941ee99b4b": {
+      "confidence": 0.9,
+      "probability_true": 0.1,
+      "type": "noul"
     }
-  },
-  "case_latency_ms": {
-    "real-writing-001": 12.5,
-    "synthetic-coding-001": 18.0,
-    "hand-analysis-001": 15.5
   }
 }

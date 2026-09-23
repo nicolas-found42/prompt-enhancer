@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from .catalog import (
+    DEFAULT_GO_STRONG,
+    DEFAULT_GO_WRITER,
     JEV_MODEL,
     CatalogSnapshot,
     ModelInfo,
@@ -28,7 +30,7 @@ from .catalog import (
 from .jev import batch_decision_payload, decision_payload
 from .usage import UsageLedger
 
-DEFAULT_GO_BASE_URL = "https://opencode.ai/zen/v1"
+DEFAULT_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_USER_AGENT = "prompt-enhancer/0.1"
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
@@ -56,7 +58,7 @@ class GatewayConfig:
     go_models_url: str | None = None
     openrouter_models_url: str | None = None
     decisions_path: str = "/alpha/decisions"
-    timeout: float = 30.0
+    timeout: float = 120.0
     max_retries: int = 2
     backoff: float = 0.0
     user_agent: str = DEFAULT_USER_AGENT
@@ -75,7 +77,7 @@ class GatewayConfig:
             openrouter_base_url=openrouter_base,
             go_models_url=env.get("OPENCODE_GO_MODELS_URL", f"{go_base}/models"),
             openrouter_models_url=env.get("OPENROUTER_MODELS_URL", f"{openrouter_base}/models"),
-            timeout=float(env.get("PROMPT_ENHANCER_TIMEOUT", "30")),
+            timeout=float(env.get("PROMPT_ENHANCER_TIMEOUT", "120")),
             max_retries=int(env.get("PROMPT_ENHANCER_MAX_RETRIES", "2")),
             backoff=float(env.get("PROMPT_ENHANCER_RETRY_BACKOFF", "0")),
             user_agent=env.get("PROMPT_ENHANCER_USER_AGENT", DEFAULT_USER_AGENT),
@@ -194,6 +196,13 @@ class ModelGateway:
         self._session = uuid.uuid4().hex
         self._sessions: dict[str, str] = {}
         self._go_model_ids: set[str] = {
+            DEFAULT_GO_WRITER,
+            "deepseek-v4.1-flash",
+            DEFAULT_GO_STRONG,
+            "mimo-v2.6-flash",
+            "qwen3.8-flash",
+            "muse-spark-1.3-contributor",
+        } | {
             item if isinstance(item, str) else item.id for item in (go_models or ())
         }
         self.calls: list[dict[str, Any]] = []
@@ -257,12 +266,22 @@ class ModelGateway:
                 provider = "go" if model in self._go_model_ids else "openrouter"
         base = self.config.go_base_url if provider == "go" else self.config.openrouter_base_url
         path = "/chat/completions"
+        if provider == "go":
+            if model.startswith(("qwen3.", "minimax-")):
+                path = "/messages"
+            elif model.startswith(("grok-", "gpt-", "muse-spark-")):
+                path = "/responses"
         headers: dict[str, str] = {"User-Agent": self.config.user_agent, "Accept": "application/json"}
         key = self.config.go_api_key if provider == "go" else self.config.openrouter_api_key
         if key:
             headers["Authorization"] = f"Bearer {key}"
         if provider == "go":
             headers["x-opencode-session"] = self.session_for(run_id)
+            if path == "/messages":
+                headers["anthropic-version"] = "2023-06-01"
+                if key:
+                    headers.pop("Authorization", None)
+                    headers["x-api-key"] = key
         else:
             headers["HTTP-Referer"] = self.config.referer
             headers["X-Title"] = self.config.title
@@ -342,11 +361,40 @@ class ModelGateway:
     ) -> Any:
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
-        payload: dict[str, Any] = {"model": model, "messages": list(messages)}
-        payload.update(params)
         decision = self.route_model(model, run_id=run_id)
+        payload: dict[str, Any] = {"model": model, "messages": list(messages), **params}
+        if decision.url.endswith("/messages"):
+            system = "\n".join(str(message.get("content", "")) for message in messages if message.get("role") == "system")
+            payload = {
+                "model": model,
+                "messages": [dict(message) for message in messages if message.get("role") != "system"],
+                "max_tokens": params.get("max_tokens", 1024),
+                **({"system": system} if system else {}),
+                **({"temperature": params["temperature"]} if "temperature" in params else {}),
+            }
+        elif decision.url.endswith("/responses"):
+            payload = {
+                "model": model,
+                "input": list(messages),
+                "max_output_tokens": params.get("max_tokens", 4096 if model.startswith("muse-spark-") else 1024),
+            }
         self.calls.append({"operation": "chat", "role": role, "model": model, "provider": decision.provider, "run_id": run_id})
-        return self._request(decision, payload, role=role)
+        response = self._request(decision, payload, role=role)
+        if decision.url.endswith("/messages") and isinstance(response, Mapping):
+            content = response.get("content", [])
+            text = "".join(str(item.get("text", "")) for item in content if isinstance(item, Mapping) and item.get("type") == "text") if isinstance(content, list) else ""
+            return {**response, "choices": [{"message": {"content": text}}]}
+        if decision.url.endswith("/responses") and isinstance(response, Mapping):
+            text = response.get("output_text")
+            if not isinstance(text, str):
+                output = response.get("output", [])
+                text = "".join(
+                    str(part.get("text", ""))
+                    for item in output if isinstance(item, Mapping)
+                    for part in item.get("content", []) if isinstance(part, Mapping) and part.get("type") == "output_text"
+                ) if isinstance(output, list) else ""
+            return {**response, "choices": [{"message": {"content": text}}]}
+        return response
 
     def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
         if isinstance(model, Mapping) and messages is None:
@@ -513,6 +561,12 @@ class ReplayGateway(ScriptedGateway):
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _lookup(self, responses: Mapping[Any, Any], operation: str, model: str, payload: Any, role: str) -> Any:
+        key = self.request_key(operation, model, payload, role)
+        self.replayed_keys.append(key)
+        if key in responses:
+            return responses[key]
+        if self.strict:
+            raise ProviderError("replay", model, None, "no recorded response")
         for key in ((operation, model, role), (model, role), (operation, model), model):
             if key in responses:
                 return responses[key]
@@ -523,10 +577,6 @@ class ReplayGateway(ScriptedGateway):
                 kind = str(payload.get("type", "noul")) if isinstance(payload, Mapping) else "noul"
                 value = value.get(kind, value)
             return value
-        key = self.request_key(operation, model, payload, role)
-        self.replayed_keys.append(key)
-        if key in responses:
-            return responses[key]
         if not self.strict and len(responses) == 1:
             return next(iter(responses.values()))
         raise ProviderError("replay", model, None, "no recorded response")

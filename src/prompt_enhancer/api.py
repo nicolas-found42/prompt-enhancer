@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -15,7 +14,6 @@ from .config import Settings
 from .history import RunNotFound
 from .optimizer import PromptOptimizer, RunNotFoundError
 from .repeat import _reject_provider_secrets
-from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
 
 
@@ -63,26 +61,12 @@ def create_app(
         if optimizer is not None
         else RunStore(app_settings.database_path)
     )
-    settings_store = None
-    if getattr(app_store, "path", ":memory:") != ":memory:":
-        settings_store = SettingsStore(
-            Path(app_store.path).with_suffix(".settings.json"),
-            defaults=ModelDefaults(
-                writer=app_settings.writer_model,
-                strong=app_settings.strong_check_model,
-                weak=app_settings.weak_models,
-            ),
-        )
-        defaults = settings_store.load().defaults
-        app_settings.writer_model = defaults.writer
-        app_settings.strong_check_model = defaults.strong
-        app_settings.weak_models = defaults.weak
     app_optimizer = optimizer or PromptOptimizer(store=app_store, config=app_settings)
+    app_settings = getattr(app_optimizer, "config", app_settings)
     app = FastAPI(title="Prompt Enhancer", version="0.1.0")
     app.state.optimizer = app_optimizer
     app.state.store = app_store
     app.state.settings = app_settings
-    app.state.settings_store = settings_store
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -212,29 +196,14 @@ def create_app(
 
     @app.get("/api/settings")
     def get_settings() -> dict[str, Any]:
-        return app_settings.public_dict()
+        return app_optimizer.get_model_settings()
 
     @app.put("/api/settings")
     def put_settings(values: dict[str, Any]) -> dict[str, Any]:
-        if "judge_model" in values and values["judge_model"] != app_settings.judge_model:
-            raise HTTPException(status_code=422, detail="judge model is fixed")
-        for key in ("writer_model", "strong_check_model"):
-            if key in values:
-                if not isinstance(values[key], str) or not values[key].strip():
-                    raise HTTPException(status_code=422, detail=f"{key} must be a model ID")
-                setattr(app_settings, key, values[key].strip())
-        if "weak_models" in values:
-            models = values["weak_models"]
-            if not isinstance(models, list) or not models or any(not isinstance(model, str) or not model for model in models):
-                raise HTTPException(status_code=422, detail="weak_models must be a non-empty model list")
-            app_settings.weak_models = tuple(models)
-        if settings_store is not None:
-            settings_store.save(ModelDefaults(
-                writer=app_settings.writer_model,
-                strong=app_settings.strong_check_model,
-                weak=app_settings.weak_models,
-            ))
-        return app_settings.public_dict()
+        try:
+            return app_optimizer.update_model_settings(values)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return app
 

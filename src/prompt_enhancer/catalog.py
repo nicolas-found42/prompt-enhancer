@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 JEV_MODEL = "typesafe/jev-1.13"
-DEFAULT_GO_WRITER = "deepseek-v4.1-flash"
+DEFAULT_GO_WRITER = "space-bunny-free"
 DEFAULT_GO_STRONG = "glm-5.3-flash"
 DEFAULT_WEAK_PANEL = (
     "meta-llama/llama-3.1-8b-instruct",
@@ -22,12 +22,11 @@ DEFAULT_WEAK_PANEL = (
 )
 DEFAULT_DEEP_WEAK_PANEL = DEFAULT_WEAK_PANEL + (
     "mimo-v2.6-flash",
-    "qwen3.8-flash",
+    "muse-spark-1.3-contributor",
 )
 
-# These models are available in some catalogs, but the product deliberately
-# does not put them in defaults because their provider policies retain or train
-# on prompts.  They remain visible for an explicit per-run choice.
+# The catalog flags models whose provider policies retain or train on prompts.
+# Muse is included in Deep only because the user explicitly selected it.
 _EXCLUDED_DEFAULT_FRAGMENTS = ("muse", "spark", "gpt-5.6-luna")
 
 
@@ -294,7 +293,7 @@ class LiveModelCatalog:
         return self._snapshot
 
     def _fetch_one(self, url: str, provider: str, key: str | None) -> tuple[ModelInfo, ...]:
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": "application/json", "User-Agent": "prompt-enhancer/0.1"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
         try:

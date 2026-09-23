@@ -252,6 +252,8 @@ class _ReplayBundle:
     digest: str
     gateway_recordings: Mapping[str, Any] | str | Path
     case_latency_ms: Mapping[str, float]
+    case_costs: Mapping[str, tuple[float, Mapping[str, float]]]
+    rubric_thresholds: Mapping[str, float] | None
 
 
 @dataclass(slots=True)
@@ -395,12 +397,16 @@ class EvaluationHarness:
             )
             observation.cost, observation.cost_by_role = _cost(result)
             if replay is not None:
+                if case.id in replay.case_costs:
+                    observation.cost, observation.cost_by_role = replay.case_costs[case.id]
                 observation.latency_ms = replay.case_latency_ms.get(case.id)
             else:
                 observation.latency_ms = _latency_ms(result, report)
                 if observation.latency_ms is None:
                     observation.latency_ms = (perf_counter() - started) * 1000
             observation.status = _status(result)
+            if observation.status == "failed":
+                observation.error = _optional_string(report.get("error")) or "engine returned failed"
         except Exception as exc:
             if options.fail_fast:
                 raise
@@ -413,6 +419,9 @@ class EvaluationHarness:
 def default_engine_factory(replay_path: Path | None = None) -> Engine:
     """Build the product optimizer with a strict replay gateway when requested."""
 
+    from dataclasses import replace
+
+    from ..diagnosis import DEFAULT_RUBRIC
     from ..optimizer import PromptOptimizer
 
     if replay_path is None:
@@ -421,7 +430,11 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
     from ..gateway import ReplayGateway
 
     recordings = cast(Mapping[Any, Any], bundle.gateway_recordings)
-    return PromptOptimizer(gateway=ReplayGateway(recordings, strict=True))
+    rubric = (
+        replace(DEFAULT_RUBRIC, gap_thresholds=bundle.rubric_thresholds)
+        if bundle.rubric_thresholds is not None else DEFAULT_RUBRIC
+    )
+    return PromptOptimizer(gateway=ReplayGateway(recordings, strict=True), diagnosis_rubric=rubric)
 
 
 def _load_replay(path: str | Path) -> _ReplayBundle:
@@ -437,9 +450,13 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         if not isinstance(recordings, (Mapping, list)):
             raise EvaluationError("replay responses must be an object or list")
         raw_latencies = raw.get("case_latency_ms", {})
+        raw_costs = raw.get("case_costs", {})
+        raw_thresholds = raw.get("rubric_thresholds")
     else:
         recordings = replay_path
         raw_latencies = {}
+        raw_costs = {}
+        raw_thresholds = None
     if not isinstance(raw_latencies, Mapping):
         raise EvaluationError("replay case_latency_ms must be an object")
     latencies: dict[str, float] = {}
@@ -451,11 +468,32 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         if not math.isfinite(float(value)) or float(value) < 0:
             raise EvaluationError(f"replay latency for {case_id!r} must be finite and non-negative")
         latencies[case_id] = float(value)
+    if not isinstance(raw_costs, Mapping):
+        raise EvaluationError("replay case_costs must be an object")
+    costs: dict[str, tuple[float, Mapping[str, float]]] = {}
+    for case_id, value in raw_costs.items():
+        if not isinstance(case_id, str) or not case_id or not isinstance(value, Mapping):
+            raise EvaluationError("replay case costs require non-empty case ids and objects")
+        total, roles = _cost({"cost": value})
+        if total is None or total < 0 or any(amount < 0 for amount in roles.values()):
+            raise EvaluationError(f"replay cost for {case_id!r} must be finite and non-negative")
+        costs[case_id] = (total, roles)
+    thresholds: dict[str, float] | None = None
+    if raw_thresholds is not None:
+        if not isinstance(raw_thresholds, Mapping):
+            raise EvaluationError("replay rubric_thresholds must be an object")
+        thresholds = {}
+        for question_id, value in raw_thresholds.items():
+            if not isinstance(question_id, str) or not question_id or not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or not 0 <= float(value) <= 1:
+                raise EvaluationError("replay rubric thresholds require question ids and probabilities")
+            thresholds[question_id] = float(value)
     return _ReplayBundle(
         path=replay_path,
         digest=digest,
         gateway_recordings=recordings,
         case_latency_ms=latencies,
+        case_costs=costs,
+        rubric_thresholds=thresholds,
     )
 
 

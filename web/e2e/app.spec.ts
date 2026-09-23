@@ -38,3 +38,32 @@ test("clarification, assumption editing, history, and feedback use the local API
   await page.getByRole("list", { name: "Saved optimization runs" }).getByRole("button").click();
   await expect(page.getByText("Saved feedback: accept")).toBeVisible();
 });
+
+test("a retained original shows its available pass rates as the selected result", async ({ page }) => {
+  await page.route("**/api/optimize", async (route) => {
+    await route.fulfill({
+      json: {
+        status: "completed", run_id: "no-change-1", original_prompt: "Write a report.",
+        final_prompt: "Write a report.", original_kept: true,
+        report: {
+          summary: "No candidate beat the original.",
+          diagnosis: { task_type: "writing", confirmed_gaps: [], problem_sentences: [] },
+          tests: [{ id: "test-1", question: "Does the answer address the report?" }],
+          selection_evidence: {
+            original_score: { per_model: { "weak-one": 0.75 }, spread: 0.25 },
+            winner_score: null, rejected_candidates: [],
+          },
+          strong_check: { original_score: 0.8, candidates: [] },
+        },
+        cost: { total: 0, cost_by_role: {} }, timing: { total_ms: 5 },
+      },
+    });
+  });
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill("Write a report.");
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  await page.getByText("View report").click();
+  const row = page.getByRole("row", { name: /weak-one/ });
+  await expect(row.getByRole("cell")).toHaveText(["weak-one", "75%", "75%"]);
+  await expect(page.getByText("Sample spread: original 25%, selected 25%")).toBeVisible();
+});

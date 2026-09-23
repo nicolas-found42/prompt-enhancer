@@ -57,7 +57,7 @@ def test_candidate_writer_preserves_language_and_keeps_input_in_state() -> None:
     )
 
     assert candidate.text == "Escribe un resumen específico."
-    assert gateway.chat_calls[0]["model"] == "deepseek-v4.1-flash"
+    assert gateway.chat_calls[0]["model"] == "space-bunny-free"
     messages = gateway.chat_calls[0]["messages"]
     assert "Escribe un resumen." not in messages[0]["content"]
     assert "Escribe un resumen." in messages[1]["content"]

@@ -4,6 +4,52 @@ The evaluation harness accepts real, synthetic, and hand-labeled cases. The
 three-case fixture in `tests/fixtures/evaluation/` only checks the harness
 contract; it is too small to calibrate Jev thresholds.
 
+The local evaluation working directory is `.local/evaluation/`. It is ignored
+by Git because source prompts, agent-session text, and provider responses can
+contain private content. The live CLI can create a strict request-keyed replay:
+
+```sh
+uv run --env-file .env python -m prompt_enhancer.evaluation .local/evaluation/soar-150.json \
+  --live --record .local/evaluation/soar-live-replay.json \
+  --tier fast --output .local/evaluation/soar-live-report.json
+uv run python -m prompt_enhancer.evaluation .local/evaluation/soar-150.json \
+  --replay .local/evaluation/soar-live-replay.json \
+  --tier fast --output .local/evaluation/soar-replayed-report.json
+```
+
+The recording also stores each case's measured cost and latency. Replay uses
+those observations while recomputing diagnosis and improvement from recorded
+model responses; it never makes provider calls.
+
+The current model split is OpenCode Go for `space-bunny-free` (writer),
+`glm-5.3-flash` (strong check), `mimo-v2.6-flash`, and
+`muse-spark-1.3-contributor` (the two additional Deep weak models). OpenRouter
+supplies `typesafe/jev-1.13` and the three default Llama/Mistral weak models.
+The Muse default reflects the user's explicit selection; [OpenCode Go's model
+notes](https://opencode.ai/docs/go/) state that Contributor prompts and
+completions may be used to train Meta models.
+
+## Local coding-agent sessions
+
+An inspection of the local Codex, Claude Code, and oh-my-pi histories found
+735, 1,589, and 40,950 prompt/result pairs, respectively. Filtering for
+substantive prompt length and likely secret or control text left 207 Codex,
+755 Claude Code, and 27,577 oh-my-pi eligible pairs. A private batch at
+`.local/evaluation/local-agent-review-batch.json` samples 50 pairs from each
+source across 150 distinct sessions. Historical assistant results are included
+for review; they are not correctness or gap labels. Its `human_labels` fields
+remain null until a person reviews them. These cases cannot be counted as a
+hand-labeled diagnosis benchmark yet.
+
+For each batch item, a reviewer should inspect the prompt and historical
+result, then enter checklist keys for gaps actually present in the prompt
+(`goal`, `context`, `constraints`, `output_format`, `done_criteria`, plus any
+task-specific keys). An empty list means the prompt has no such gap; an
+uncertain judgment should be marked for adjudication rather than guessed.
+Reviewers should not infer prompt quality from the historical result alone.
+This batch is the route to labels for the checklist questions that SOAR does
+not cover directly.
+
 ## Ready-to-import datasets
 
 | Dataset | What its prompts represent | Human labels | Best use |
@@ -54,6 +100,9 @@ LiveCodeBench tasks have separate terms. A real evaluation replay must contain
 responses for each selected request; the small fixture replay is for the smoke
 dataset only. These importers create evaluation inputs, not model responses or
 measured precision, recall, cost, and latency.
+
+The 2026-09-23 full live and replayed SOAR results, context calibration, and
+writer comparison are in [the evaluation report](evaluation-results-2026-09-23.md).
 
 Other sources considered: [WildChat](https://huggingface.co/datasets/allenai/WildChat)
 has broad real user prompts but no human gap labels;

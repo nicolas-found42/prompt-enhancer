@@ -42,7 +42,7 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const tests = items(report.tests);
   const selection = record(report.selection_evidence);
   const originalScore = record(selection.original_score);
-  const winnerScore = record(selection.winner_score);
+  const winnerScore = record(selection.winner_score ?? (selection.original_kept || result.original_kept ? selection.original_score : null));
   const originalRates = record(originalScore.per_model);
   const winnerRates = record(winnerScore.per_model);
   const strong = record(report.strong_check);
