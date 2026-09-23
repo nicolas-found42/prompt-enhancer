@@ -32,14 +32,18 @@ completions may be used to train Meta models.
 ## Local coding-agent sessions
 
 An inspection of the local Codex, Claude Code, and oh-my-pi histories found
-735, 1,589, and 40,950 prompt/result pairs, respectively. Filtering for
-substantive prompt length and likely secret or control text left 207 Codex,
-755 Claude Code, and 27,577 oh-my-pi eligible pairs. A private batch at
-`.local/evaluation/local-agent-review-batch.json` samples 50 pairs from each
-source across 150 distinct sessions. Historical assistant results are included
-for review; they are not correctness or gap labels. Its `human_labels` fields
-remain null until a person reviews them. These cases cannot be counted as a
-hand-labeled diagnosis benchmark yet.
+735, 1,589, and 1,682 user/assistant prompt/result pairs, respectively. The
+oh-my-pi count uses 700 main session logs only; an initial scan also counted
+`__advisor.jsonl` notes as user prompts, so that scan and its sample were
+discarded. The corrected source has 973 pairs that pass the batch's length,
+result, and likely-secret screens, spread across 162 sessions. A private batch
+at `.local/evaluation/local-agent-review-batch.json` samples 50 pairs from
+each source across 150 distinct sessions. Historical assistant results are
+included for review; they are not correctness or gap labels. Its
+`human_labels` fields remain null until a person reviews them. Many prompts
+refer to local files, codebases, or prior conversation, so live evaluation
+would also need that missing context to measure task success fairly. These
+cases cannot be counted as a hand-labeled diagnosis benchmark yet.
 
 For each batch item, a reviewer should inspect the prompt and historical
 result, then enter checklist keys for gaps actually present in the prompt
