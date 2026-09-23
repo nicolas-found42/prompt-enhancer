@@ -89,6 +89,35 @@ cost, mainly Jev; it does not price Go subscription consumption. The requested
 default remains Space Bunny Free. DeepSeek's strict replay digest is
 `c47c3e1f1b44fe1e7a30a1577e235a5460b2c2ba73658c0afcf524b530f8b342`.
 
+## Planted-defect pilot
+
+The checked-in [`evaluation/planted-pilot.json`](../evaluation/planted-pilot.json)
+contains six controlled edits across writing, analysis, coding, and planning.
+Each case records the requirement withheld from a fuller version of its prompt.
+These are exploratory synthetic cases, not spontaneous user prompts or an
+independent human diagnosis set. Both writer runs used the same Fast panel and
+the default 0.87 `context` cutoff. Their six live outcomes each matched strict
+replay on status, diagnosed gaps, final prompt, scores, cost, and latency.
+
+| Writer | Cases completed | Planted gaps detected | Cases with comparable scores | Improved | Unchanged | Regressed | Cases without comparable scores | Median latency | Metered OpenRouter cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Space Bunny Free | 6/6 | 2/6 | 1 | 0 | 1 | 0 | 5 | 24.6 s | $0.00122 |
+| DeepSeek V4.1 Flash | 6/6 | 2/6 | 1 | 0 | 1 | 0 | 5 | 22.3 s | $0.00148 |
+
+The sole comparable case asked the agent to fix a failing repository test
+without the relevant repository context. Both writers proposed a rewrite, but
+the candidate failed fidelity and the strong check; both weak-panel scores
+were 0.0 and the original was retained. The five unscored cases have no
+measured improvement outcome. The intentionally withheld details make some
+labels less determinable from the visible prompt than a human-reviewed gap
+label; use this pilot to exercise live paths and task breadth, not as a
+general accuracy estimate or writer ranking.
+
+The pilot replay digests are `4df11be61a2329b8edf5b93cc706bb661706a4e1aeb1aded7a93e1ec578ea955`
+for Space Bunny and `1a228a69168c7c5bdd4e0bebf97f7b3ddee1d6816f35a38902482ae1b877a7a7`
+for DeepSeek. The OpenCode Go subscription calls are not priced in the metered
+cost column.
+
 ## Reproduction
 
 ```sh
@@ -104,6 +133,13 @@ uv run python -m prompt_enhancer.evaluation .local/evaluation/soar-150.json \
   --replay .local/evaluation/deepseek-merged-replay.json \
   --tier fast --writer-model deepseek-v4.1-flash \
   --output .local/evaluation/deepseek-full-replayed-report.json
+uv run python -m prompt_enhancer.evaluation evaluation/planted-pilot.json \
+  --replay .local/evaluation/planted-pilot-replay.json --tier fast \
+  --output .local/evaluation/planted-pilot-replayed-report.json
+uv run python -m prompt_enhancer.evaluation evaluation/planted-pilot.json \
+  --replay .local/evaluation/planted-pilot-deepseek-replay.json --tier fast \
+  --writer-model deepseek-v4.1-flash \
+  --output .local/evaluation/planted-pilot-deepseek-replayed-report.json
 ```
 
 The replay files are retained locally and ignored by Git. The calibrated

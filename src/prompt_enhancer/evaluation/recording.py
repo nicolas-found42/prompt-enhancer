@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..catalog import JEV_MODEL
-from ..gateway import ReplayGateway
+from ..gateway import ReplayGateway, _completion_chat_request
 
 
 class RecordingGateway:
@@ -63,16 +63,8 @@ class RecordingGateway:
 
     def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
         if isinstance(model, Mapping) and messages is None:
-            request = dict(model)
-            model_id = str(request.get("model", ""))
-            state = request.get("state")
-            instructions = str(request.get("instructions", ""))
-            messages = (
-                [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)}]
-                if state is not None
-                else [{"role": "user", "content": instructions}]
-            )
-            kwargs.setdefault("role", str(request.get("role", "writer")))
+            model_id, messages, role = _completion_chat_request(model)
+            kwargs.setdefault("role", role)
             return self.chat(model_id, messages, **kwargs)
         return self.chat(str(model), messages, **kwargs)
 

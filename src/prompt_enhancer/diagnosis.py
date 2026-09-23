@@ -156,6 +156,18 @@ DEFAULT_RUBRIC = DiagnosisRubric(
     gap_thresholds={"context": 0.87},
 )
 
+
+def gap_question(item: ChecklistItem) -> str:
+    return f"Is the required piece '{item.label}' confidently missing from the request?"
+
+
+def default_gap_question(key: str) -> str:
+    item = next((item for task in DEFAULT_RUBRIC.task_types for item in task.checklist if item.key == key), None)
+    if item is None:
+        raise KeyError(key)
+    return gap_question(item)
+
+
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])(?:[\"'”’\)\]]*)(?=\s+|$)|\n{2,}")
 _PROBLEM_QUESTIONS = {
     ProblemKind.VAGUENESS: "Is this sentence vague enough to produce materially different interpretations?",
@@ -309,7 +321,7 @@ class Diagnoser:
         del prompt  # The caller's exact text is already isolated in state.
         requests = [
             _request(
-                f"Is the required piece '{item.label}' confidently missing from the request?",
+                gap_question(item),
                 state,
                 type="noul",
                 key=f"gap:{item.key}",

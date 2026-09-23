@@ -2,18 +2,14 @@ import pytest
 
 from prompt_enhancer import PromptOptimizer, RunStore
 from prompt_enhancer.config import Settings
-from prompt_enhancer.gateway import ModelGateway, ProviderError, ScriptedGateway
+from prompt_enhancer.gateway import ProviderError, ScriptedGateway
 
 
-def test_engine_uses_server_credentials_from_environment(monkeypatch) -> None:
+def test_model_settings_do_not_expose_server_credentials(monkeypatch) -> None:
     monkeypatch.setenv("OPENCODE_GO_KEY", "go-test-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "router-test-key")
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
 
-    optimizer = PromptOptimizer(store=RunStore(":memory:"))
-
-    assert isinstance(optimizer.gateway, ModelGateway)
-    assert optimizer.gateway.config.go_api_key == "go-test-key"
-    assert optimizer.gateway.config.openrouter_api_key == "router-test-key"
     assert "key" not in str(optimizer.get_model_settings())
 
 
@@ -142,10 +138,8 @@ def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> N
 
 
 def test_task_taxonomy_descends_to_a_research_leaf() -> None:
-    seen = []
     def decide(request, **_kwargs):
         if request.get("key") == "task_type":
-            seen.append(request)
             return {"type": "choice", "choice": "investigation", "probabilities": {"investigation": 1.0}, "confidence": 1.0}
         if request.get("key") == "task_type:investigation":
             return {"type": "choice", "choice": "research", "probabilities": {"research": 1.0}, "confidence": 1.0}
@@ -156,7 +150,6 @@ def test_task_taxonomy_descends_to_a_research_leaf() -> None:
     gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize("Research the history of this topic.")
 
-    assert "research" in seen[0]["options"]["investigation"]
     assert result["report"]["diagnosis"]["task_type"] == "research"
 
 

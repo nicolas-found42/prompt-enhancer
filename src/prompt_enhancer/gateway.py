@@ -36,6 +36,19 @@ DEFAULT_USER_AGENT = "prompt-enhancer/0.1"
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 
+def _completion_chat_request(request: Mapping[str, Any]) -> tuple[str, list[dict[str, str]], str]:
+    """Translate a stateful completion request into the shared chat shape."""
+    model = str(request.get("model", ""))
+    instructions = str(request.get("instructions", ""))
+    state = request.get("state")
+    messages = (
+        [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)}]
+        if state is not None
+        else [{"role": "user", "content": instructions}]
+    )
+    return model, messages, str(request.get("role", "writer"))
+
+
 class GatewayTransport(Protocol):
     def request(
         self,
@@ -398,18 +411,8 @@ class ModelGateway:
 
     def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
         if isinstance(model, Mapping) and messages is None:
-            request = dict(model)
-            model_id = str(request.get("model", ""))
-            state = request.get("state")
-            instructions = str(request.get("instructions", ""))
-            if state is not None:
-                messages = [
-                    {"role": "system", "content": instructions},
-                    {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)},
-                ]
-            else:
-                messages = [{"role": "user", "content": instructions}]
-            kwargs.setdefault("role", str(request.get("role", "writer")))
+            model_id, messages, role = _completion_chat_request(model)
+            kwargs.setdefault("role", role)
             return self.chat(model_id, messages, **kwargs)
         return self.chat(str(model), messages, **kwargs)
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
@@ -511,16 +514,8 @@ class ScriptedGateway:
 
     def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
         if isinstance(model, Mapping) and messages is None:
-            request = dict(model)
-            model_id = str(request.get("model", ""))
-            state = request.get("state")
-            instructions = str(request.get("instructions", ""))
-            messages = (
-                [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)}]
-                if state is not None
-                else [{"role": "user", "content": instructions}]
-            )
-            kwargs.setdefault("role", str(request.get("role", "writer")))
+            model_id, messages, role = _completion_chat_request(model)
+            kwargs.setdefault("role", role)
             return self.chat(model_id, messages, **kwargs)
         return self.chat(str(model), messages, **kwargs)
 

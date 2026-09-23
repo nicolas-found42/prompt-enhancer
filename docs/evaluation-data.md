@@ -103,6 +103,10 @@ measured precision, recall, cost, and latency.
 
 The 2026-09-23 full live and replayed SOAR results, context calibration, and
 writer comparison are in [the evaluation report](evaluation-results-2026-09-23.md).
+It also records a six-case live pilot using
+[`evaluation/planted-pilot.json`](../evaluation/planted-pilot.json) across four
+task types. The pilot contains controlled edits with recorded withheld
+requirements, so its labels do not replace review of spontaneous prompts.
 
 Other sources considered: [WildChat](https://huggingface.co/datasets/allenai/WildChat)
 has broad real user prompts but no human gap labels;

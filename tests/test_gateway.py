@@ -46,6 +46,13 @@ def test_default_go_route_uses_subscription_endpoint():
     assert GatewayConfig.from_env({}).go_models_url == "https://opencode.ai/zen/go/v1/models"
 
 
+def test_gateway_reads_provider_credentials_from_environment():
+    gateway = ModelGateway.from_env({"OPENCODE_GO_KEY": "go-test-key", "OPENROUTER_API_KEY": "router-test-key"})
+
+    assert gateway.config.go_api_key == "go-test-key"
+    assert gateway.config.openrouter_api_key == "router-test-key"
+
+
 def test_known_go_defaults_do_not_fall_back_to_openrouter_without_catalog():
     gateway = ModelGateway(config=GatewayConfig())
 

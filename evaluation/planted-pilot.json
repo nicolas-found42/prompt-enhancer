@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "name": "planted-pilot-6",
+  "metadata": {
+    "source_scope": "Locally authored controlled edits: each prompt omits the recorded withheld requirement from its full version. Exploratory pilot, not spontaneous user prompts."
+  },
+  "cases": [
+    {
+      "id": "missing-context-writing",
+      "source": "synthetic",
+      "prompt": "Summarize the attached article in exactly three bullet points.",
+      "expected_gaps": [
+        "context"
+      ],
+      "evaluation_gaps": [
+        "context"
+      ],
+      "withheld_requirement": "The article text is: The team launched a new support portal in June. Median response time fell from six hours to four hours, while ticket volume rose by 10%.",
+      "full_prompt": "Summarize the attached article in exactly three bullet points. The article text is: The team launched a new support portal in June. Median response time fell from six hours to four hours, while ticket volume rose by 10%."
+    },
+    {
+      "id": "missing-context-analysis",
+      "source": "synthetic",
+      "prompt": "Using the sales spreadsheet I mentioned, identify the top three revenue drivers and report each percentage.",
+      "expected_gaps": [
+        "context"
+      ],
+      "evaluation_gaps": [
+        "context"
+      ],
+      "withheld_requirement": "The spreadsheet rows are: Product A, $120,000, up $20,000; Product B, $80,000, up $15,000; Product C, $50,000, up $5,000.",
+      "full_prompt": "Using the sales spreadsheet I mentioned, identify the top three revenue drivers and report each percentage. The spreadsheet rows are: Product A, $120,000, up $20,000; Product B, $80,000, up $15,000; Product C, $50,000, up $5,000."
+    },
+    {
+      "id": "missing-context-coding",
+      "source": "synthetic",
+      "prompt": "Fix the failing login test in my repository and explain the change in two sentences.",
+      "expected_gaps": [
+        "context"
+      ],
+      "evaluation_gaps": [
+        "context"
+      ],
+      "withheld_requirement": "The failing test is tests/test_login.py::test_expired_session; it expects a 401 response for an expired token but currently receives 200.",
+      "full_prompt": "Fix the failing login test in my repository and explain the change in two sentences. The failing test is tests/test_login.py::test_expired_session; it expects a 401 response for an expired token but currently receives 200."
+    },
+    {
+      "id": "missing-output-writing",
+      "source": "synthetic",
+      "prompt": "Write a concise onboarding guide for new support agents covering account setup and escalation.",
+      "expected_gaps": [
+        "output_format"
+      ],
+      "evaluation_gaps": [
+        "output_format"
+      ],
+      "withheld_requirement": "Return a numbered checklist.",
+      "full_prompt": "Write a concise onboarding guide for new support agents covering account setup and escalation. Return a numbered checklist."
+    },
+    {
+      "id": "missing-constraints-planning",
+      "source": "synthetic",
+      "prompt": "Plan a migration from PostgreSQL 14 to PostgreSQL 16 for a production web app. Include a rollback step.",
+      "expected_gaps": [
+        "constraints"
+      ],
+      "evaluation_gaps": [
+        "constraints"
+      ],
+      "withheld_requirement": "Keep production downtime under five minutes.",
+      "full_prompt": "Plan a migration from PostgreSQL 14 to PostgreSQL 16 for a production web app. Include a rollback step. Keep production downtime under five minutes."
+    },
+    {
+      "id": "missing-done-coding",
+      "source": "synthetic",
+      "prompt": "Implement a CSV importer that skips malformed rows and reports the number imported.",
+      "expected_gaps": [
+        "done_criteria"
+      ],
+      "evaluation_gaps": [
+        "done_criteria"
+      ],
+      "withheld_requirement": "Done means the existing importer test suite passes.",
+      "full_prompt": "Implement a CSV importer that skips malformed rows and reports the number imported. Done means the existing importer test suite passes."
+    }
+  ]
+}

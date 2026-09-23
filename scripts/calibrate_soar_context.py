@@ -13,10 +13,11 @@ from pathlib import Path
 from typing import Any
 
 from prompt_enhancer.catalog import JEV_MODEL
+from prompt_enhancer.diagnosis import default_gap_question
 from prompt_enhancer.evaluation.datasets import load_dataset, replay_digest
 from prompt_enhancer.gateway import ReplayGateway
 
-CONTEXT_QUESTION = "Is the required piece 'relevant context' confidently missing from the request?"
+CONTEXT_QUESTION = default_gap_question("context")
 THRESHOLDS = tuple(round(0.8 + index / 100, 2) for index in range(16))
 Row = tuple[str, float, bool, bool]
 
