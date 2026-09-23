@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "name": "mixed-maintainer-smoke-set",
+  "metadata": {
+    "purpose": "Small real, planted-defect, and hand-labeled fixture set",
+    "license": "test-only synthetic text"
+  },
+  "cases": [
+    {
+      "id": "real-writing-001",
+      "source": "real",
+      "prompt": "Write a concise release note for version 2.1. Keep it under 120 words and target existing customers."
+    },
+    {
+      "id": "synthetic-coding-001",
+      "source": "synthetic",
+      "prompt": "Fix the bug.",
+      "known_defects": [
+        {
+          "type": "missing context"
+        },
+        {
+          "type": "missing output format"
+        },
+        {
+          "type": "missing done criteria"
+        }
+      ],
+      "notes": "Planted defects are the expected gap types."
+    },
+    {
+      "id": "hand-analysis-001",
+      "source": "hand-labeled",
+      "prompt": "Analyze these quarterly figures for our leadership team.",
+      "labels": {
+        "context": true,
+        "constraints": false,
+        "output_format": true
+      },
+      "notes": "Unlisted gap types are known not to be present."
+    }
+  ]
+}

@@ -1,0 +1,324 @@
+{
+  "runs": [
+    {
+      "run_id": "run-fail-1",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.96
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.04,
+            "high": 0.96
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.96,
+          "spread": 0.18
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": false
+          },
+          {
+            "passed": false
+          },
+          {
+            "passed": false
+          },
+          {
+            "passed": true
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-fail-2",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.88
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.1,
+            "high": 0.9
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.9,
+          "spread": 0.2
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": false
+          },
+          {
+            "passed": false
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-fail-3",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.79
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.2,
+            "high": 0.8
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.8,
+          "spread": 0.22
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": false
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-fail-4",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.68
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.3,
+            "high": 0.7
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.7,
+          "spread": 0.25
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": false
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": false
+          },
+          {
+            "passed": true
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-pass-1",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.42
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.55,
+            "high": 0.45
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.45,
+          "spread": 0.28
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-pass-2",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.25
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.74,
+            "high": 0.26
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.26,
+          "spread": 0.2
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-pass-3",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.14
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.85,
+            "high": 0.15
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.15,
+          "spread": 0.12
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": false
+          }
+        ]
+      }
+    },
+    {
+      "run_id": "run-pass-4",
+      "jev_answers": [
+        {
+          "kind": "noul",
+          "question_id": "goal.missing",
+          "probability": 0.05
+        },
+        {
+          "kind": "score",
+          "question_id": "fidelity",
+          "level_probabilities": {
+            "low": 0.94,
+            "high": 0.06
+          }
+        }
+      ],
+      "score_summaries": {
+        "fidelity": {
+          "mean": 0.06,
+          "spread": 0.08
+        }
+      },
+      "original_weak_panel": {
+        "outcomes": [
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          },
+          {
+            "passed": true
+          }
+        ]
+      }
+    }
+  ]
+}

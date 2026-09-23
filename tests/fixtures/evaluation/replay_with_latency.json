@@ -1,0 +1,44 @@
+{
+  "responses": {
+    "decision:typesafe/jev-1.13": {
+      "choice": {
+        "value": "coding"
+      },
+      "noul": {
+        "probability_of_no": 0.9
+      }
+    },
+    "complete:writer": {
+      "choices": [
+        {
+          "message": {
+            "content": "Enhanced prompt"
+          }
+        }
+      ]
+    },
+    "complete:weak-panel": {
+      "choices": [
+        {
+          "message": {
+            "content": "Candidate output"
+          }
+        }
+      ]
+    },
+    "complete:strong-check": {
+      "choices": [
+        {
+          "message": {
+            "content": "Strong output"
+          }
+        }
+      ]
+    }
+  },
+  "case_latency_ms": {
+    "real-writing-001": 12.5,
+    "synthetic-coding-001": 18.0,
+    "hand-analysis-001": 15.5
+  }
+}
