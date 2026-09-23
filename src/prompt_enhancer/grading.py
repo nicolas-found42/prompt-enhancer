@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from statistics import fmean
 from typing import Any
 
+from .jev import ChoiceDecision, NoulDecision, ScoreDecision, parse_decision
+
 
 @dataclass(frozen=True)
 class GradeRequest:
@@ -135,6 +137,13 @@ def _score(value: Any) -> float:
     if value is None:
         return 0.0
     if isinstance(value, Mapping):
+        if "noul" in value or value.get("type") == "noul":
+            try:
+                decision = parse_decision(value)
+                if isinstance(decision, NoulDecision):
+                    return decision.probability
+            except ValueError:
+                return 0.0
         for key in ("pass", "passed", "success"):
             if key in value:
                 result = _number(value[key])
@@ -187,8 +196,7 @@ def metrics_from_scores(
         values = tuple(float(value) for value in per_model_scores[model])
         samples[model] = values
         rates[model] = fmean(1.0 if value >= threshold else 0.0 for value in values) if values else 0.0
-    all_scores = [value for values in samples.values() for value in values]
-    mean = fmean(all_scores) if all_scores else 0.0
+    mean = fmean(rates.values()) if rates else 0.0
     worst = min(rates.values(), default=0.0)
     sample_means = [
         fmean(values[index] for values in samples.values() if index < len(values))
@@ -268,6 +276,85 @@ def grade_candidates(
             threshold=threshold,
         )
     return result
+
+
+def grade_panel_with_jev(
+    panel_runs: Any,
+    tests: Sequence[Mapping[str, Any]],
+    gateway: Any,
+    *,
+    judge_model: str,
+    run_id: str,
+) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
+    """Batch every output/test decision and its reversed consistency check."""
+    panel = _runs(panel_runs)
+    requests: list[dict[str, Any]] = []
+    for output_index, run in enumerate(panel):
+        for test_index, test in enumerate(tests):
+            state = {"prompt": _field(run, "prompt", default=""), "output": _field(run, "output", default=""), "test": dict(test)}
+            kind = str(test.get("kind", "noul"))
+            options = tuple(str(item) for item in (test.get("options") if kind == "choice" else test.get("levels")) or ())
+            for second in (False, True):
+                question = "Is the answer to the success criterion in state.test yes?"
+                if kind == "noul" and second:
+                    question = "Is the answer to the success criterion in state.test no?"
+                requests.append({
+                    "key": f"grade_{output_index}_{test_index}_{'second' if second else 'first'}",
+                    "model": judge_model,
+                    "type": kind,
+                    "state": state,
+                    "question": question if kind == "noul" else "Answer the success criterion in state.test using the provided criteria.",
+                    **({"criteria": {option: option for option in (reversed(options) if second else options)}} if kind == "choice" else {}),
+                    **({"criteria": list(reversed(options) if second else options)} if kind == "score" else {}),
+                })
+    responses: list[Any] = []
+    batch = getattr(gateway, "jev_batch", None)
+    for offset in range(0, len(requests), 40):
+        chunk = requests[offset : offset + 40]
+        responses.extend(
+            batch(chunk, role="judge", run_id=run_id)
+            if callable(batch)
+            else [gateway.decide(item, role="judge", run_id=run_id) for item in chunk]
+        )
+    if len(responses) != len(requests):
+        raise ValueError("Jev returned an incomplete grading batch")
+    evidence = [
+        {"question": request, "answer": response}
+        for request, response in zip(requests, responses, strict=True)
+    ]
+    scores: dict[tuple[str, str, int, int], float] = {}
+    for output_index, run in enumerate(panel):
+        test_scores = []
+        for test_index in range(len(tests)):
+            pair_index = 2 * (output_index * len(tests) + test_index)
+            test = tests[test_index]
+            kind = str(test.get("kind", "noul"))
+            expected = str(test.get("expected", "yes"))
+            if kind == "noul":
+                direct = _score(responses[pair_index])
+                reverse = _score(responses[pair_index + 1])
+                test_scores.append(min(reverse, 1.0 - direct) if expected.casefold() in {"no", "false"} else min(direct, 1.0 - reverse))
+            else:
+                try:
+                    first = parse_decision(responses[pair_index])
+                    second = parse_decision(responses[pair_index + 1])
+                    if kind == "choice" and isinstance(first, ChoiceDecision) and isinstance(second, ChoiceDecision) or kind == "score" and isinstance(first, ScoreDecision) and isinstance(second, ScoreDecision):
+                        test_scores.append(min(first.probabilities.get(expected, 0.0), second.probabilities.get(expected, 0.0)))
+                    else:
+                        test_scores.append(0.0)
+                except ValueError:
+                    test_scores.append(0.0)
+        scores[(str(_field(run, "candidate_id")), str(_field(run, "model")), int(_field(run, "sample")), int(_field(run, "seed")))] = min(test_scores, default=0.0)
+    grades = {
+        candidate_id: grade_candidate(
+            {"candidate_id": candidate_id},
+            panel_runs,
+            lambda request: scores[(request.candidate_id, request.model, request.sample, request.seed)],
+            tests=tests,
+        )
+        for candidate_id in dict.fromkeys(str(_field(run, "candidate_id")) for run in panel)
+    }
+    return grades, evidence
 
 
 __all__ = [

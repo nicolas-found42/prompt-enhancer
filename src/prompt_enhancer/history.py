@@ -149,6 +149,23 @@ def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | N
         feedback_value = _feedback(_first(result_map, "feedback", "decision", default=None))
     if feedback_value is None:
         feedback_value = _feedback(_first(report_map, "feedback", "decision", default=None))
+    candidates = pick("candidates", default=[])
+    grades = pick("grades", default=[])
+    if not grades and isinstance(candidates, list):
+        grades = [
+            {"candidate_id": candidate.get("candidate_id"), "grade": candidate["grade"]}
+            for candidate in candidates
+            if isinstance(candidate, Mapping) and candidate.get("grade") is not None
+        ]
+    outputs = pick("outputs", default=[])
+    if not outputs:
+        per_model = pick("per_model", "perModel", default={})
+        if isinstance(per_model, Mapping):
+            panel = per_model.get("panel", {})
+            if isinstance(panel, Mapping):
+                outputs = panel.get("results", panel.get("outputs", []))
+            if not outputs and per_model:
+                outputs = per_model
     return {
         "run_id": str(_first(source, "run_id", "runId", "id", default="")),
         "id": str(_first(source, "run_id", "runId", "id", default="")),
@@ -165,9 +182,9 @@ def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | N
         "tests": pick("tests", default=[]),
         "questions": pick("questions", default=[]),
         "answers": pick("answers", default={}),
-        "candidates": pick("candidates", default=[]),
-        "outputs": pick("outputs", "per_model", "perModel", default=[]),
-        "grades": pick("grades", default=[]),
+        "candidates": candidates,
+        "outputs": outputs,
+        "grades": grades,
         "cost": pick("cost", "cost_breakdown", "costBreakdown", default={}),
         "timing": pick("timing", "timings", "duration", default={}),
         "timings": pick("timing", "timings", "duration", default={}),
@@ -221,7 +238,7 @@ class RunHistory:
         run_id = _first(payload, "run_id", "runId", "id")
         if run_id is not None:
             run_id = str(run_id)
-            existing = self._get(run_id)
+            existing = self.store.get_run(run_id)
             # The base store treats a save as a replacement.  Preserve durable
             # feedback and creation metadata when a later engine phase saves a
             # partial/needs-input record.
@@ -343,9 +360,10 @@ class RunHistory:
             raise ValueError("feedback is only available for a completed result")
         if detail.get("final_prompt") is None:
             raise ValueError("feedback is only available for a completed result")
-        detail["feedback"] = value
-        detail["feedback_at"] = _utc_now()
-        self.store.save_run(detail)
+        original = self.store.get_run(str(run_id))
+        if original is None:
+            raise RunNotFound(f"run {run_id!r} was not found")
+        self.store.save_run({**original, "feedback": value, "feedback_at": _utc_now()})
         return self.require_run(str(run_id))
 
     def close(self) -> None:
@@ -400,7 +418,7 @@ def register_history_routes(app: Any, store: Any) -> Any:
             raise HTTPException(status_code=422, detail="decision is required")
         try:
             return history.record_feedback(run_id, str(decision))
-        except KeyError as exc:
+        except RunNotFound as exc:
             raise HTTPException(status_code=404, detail="run not found") from exc
         except ValueError as exc:
             status = 409 if "completed" in str(exc) else 422

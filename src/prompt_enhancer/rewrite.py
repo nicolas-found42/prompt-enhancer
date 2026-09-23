@@ -26,6 +26,8 @@ class ModelGateway(Protocol):
 
     def decide(self, payload: Mapping[str, Any], **kwargs: Any) -> Any: ...
 
+    def complete(self, request: Mapping[str, Any]) -> Any: ...
+
 
 @dataclass(frozen=True)
 class Candidate:
@@ -215,6 +217,29 @@ class CandidateWriter:
         if not text:
             text = prompt
         return Candidate(text=text, strategy=strategy, edits=edits)
+
+    def generate_candidates(self, request: Any) -> Mapping[str, str]:
+        """Write every selected strategy in one structured model call."""
+        state = request.to_dict()
+        response = self.gateway.complete(
+            {
+                "model": self.writer_model,
+                "role": "writer",
+                "instructions": (
+                    "Return JSON only: an object mapping each strategy name in state.strategies "
+                    "to one complete rewritten prompt. Use a distinct strategy for each. "
+                    "Preserve the user's language, intent, and unflagged wording. "
+                    "Use state.previous_failures to address prior round failures."
+                ),
+                "state": state,
+            }
+        )
+        payload = json.loads(_text(response))
+        if not isinstance(payload, Mapping):
+            raise TypeError("candidate writer must return a JSON object")
+        if any(not isinstance(payload.get(strategy.name), str) or not payload[strategy.name].strip() for strategy in request.strategies):
+            raise ValueError("candidate writer omitted a selected strategy")
+        return {strategy.name: payload[strategy.name].strip() for strategy in request.strategies}
 
 
 class VerifiedRewrite:
@@ -564,6 +589,8 @@ def _text(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, Mapping):
+        if isinstance(value.get("message"), Mapping):
+            return _text(value["message"])
         for key in ("content", "text", "output", "completion", "answer"):
             if isinstance(value.get(key), str):
                 return value[key]

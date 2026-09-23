@@ -41,6 +41,7 @@ _CASE_METADATA_EXCLUSIONS = frozenset(
         "kind",
         "notes",
         "evaluation_notes",
+        "labels_present",
     }
 )
 
@@ -49,6 +50,9 @@ _GAP_TYPE_ALIASES = {
     "missing_context": "context",
     "output format": "output_format",
     "missing output format": "output_format",
+    "indices_&_ranges": "indices_ranges",
+    "ordering_&_atomicity": "ordering_atomicity",
+    "string_&_localization": "string_localization",
     "definition of done": "done_criteria",
     "success criteria": "done_criteria",
     "done criterion": "done_criteria",
@@ -175,6 +179,7 @@ class EvaluationCase:
     expected_gaps: tuple[str, ...] = ()
     notes: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    labels_present: bool = False
 
     @classmethod
     def from_dict(
@@ -208,6 +213,7 @@ class EvaluationCase:
             expected_gaps=expected,
             notes=notes,
             metadata=metadata,
+            labels_present=bool(value.get("labels_present", any(field in value for field in _GAP_FIELDS))),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -215,6 +221,7 @@ class EvaluationCase:
             "id": self.id,
             "prompt": self.prompt,
             "source": self.source,
+            "labels_present": self.labels_present,
         }
         if self.expected_gaps:
             value["expected_gaps"] = list(self.expected_gaps)

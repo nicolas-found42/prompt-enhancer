@@ -59,6 +59,50 @@ class ScoreDecision:
 JevDecision: TypeAlias = NoulDecision | ChoiceDecision | ScoreDecision
 
 
+def decision_question(request: Mapping[str, Any]) -> dict[str, Any]:
+    """Build one Decisions API question from a provider-neutral request."""
+    kind = str(request.get("type") or "noul")
+    instructions = str(request.get("query") or request.get("question") or request.get("instructions") or "").strip()
+    if not instructions:
+        raise ValueError("Jev question instructions are required")
+    question: dict[str, Any] = {"type": kind, "instructions": instructions}
+    criteria = request.get("criteria")
+    if criteria is None and kind == "choice":
+        options = request.get("options", ())
+        criteria = dict(options) if isinstance(options, Mapping) else {str(option): str(option) for option in options}
+    elif criteria is None and kind == "score":
+        criteria = list(request.get("levels", ()))
+    if criteria is not None:
+        question["criteria"] = criteria
+    return question
+
+
+def decision_payload(request: Mapping[str, Any], *, model: str) -> tuple[str, dict[str, Any]]:
+    """Keep user-controlled text in state when building a single Jev call."""
+    key = str(request.get("key") or "decision")
+    state = request.get("state", request.get("prompt"))
+    return key, {"model": model, "state": state, "questions": {key: decision_question(request)}}
+
+
+def batch_decision_payload(
+    requests: Sequence[Mapping[str, Any]], *, model: str
+) -> tuple[list[str], dict[str, Any]]:
+    """Build a batch envelope, addressing each question's corresponding state."""
+    keys = [str(request.get("key") or f"decision_{index}") for index, request in enumerate(requests)]
+    if len(set(keys)) != len(keys):
+        raise ValueError("Jev batch question keys must be unique")
+    states = [request.get("state", request.get("prompt")) for request in requests]
+    shared_state = all(state == states[0] for state in states)
+    state = states[0] if shared_state else {"items": dict(zip(keys, states, strict=True))}
+    questions = {}
+    for key, request in zip(keys, requests, strict=True):
+        question = decision_question(request)
+        if not shared_state:
+            question["instructions"] = f"For state.items[{key!r}]: {question['instructions']}"
+        questions[key] = question
+    return keys, {"model": model, "state": state, "questions": questions}
+
+
 def _payload(payload: Any) -> Mapping[str, Any]:
     if isinstance(payload, Mapping):
         return payload
@@ -156,10 +200,11 @@ def parse_decision(payload: Any) -> JevDecision:
             kind = "score"
 
     if kind == "noul" or ("probability_true" in body and "options" not in body):
-        raw_probability = body.get("probability_true", body.get("probability"))
+        raw_probability = body.get("noul", body.get("probability_true", body.get("probability")))
+        probability = _probability(raw_probability, field="noul")
         return NoulDecision(
-            probability=_probability(raw_probability, field="probability_true"),
-            confidence=_confidence(body),
+            probability=probability,
+            confidence=_confidence(body) if "confidence" in body or "certainty" in body else max(probability, 1 - probability),
         )
 
     if kind == "choice":
@@ -192,7 +237,7 @@ def parse_decision(payload: Any) -> JevDecision:
                 level_value = float(selected)
             except ValueError:
                 level_value = selected
-        if level_value not in {option.level for option in levels}:
+        if str(level_value) not in {str(option.level) for option in levels}:
             raise JevResponseError("score must name one of the returned levels")
         return ScoreDecision(level=level_value, levels=levels, confidence=_confidence(body))
 

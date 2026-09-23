@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { requestJson } from "./api";
 
 export type RunSummary = {
   run_id: string;
@@ -29,21 +30,8 @@ export type RunDetail = RunSummary & {
 
 type HistoryProps = {
   onSelect?: (run: RunDetail) => void;
+  refreshKey?: string;
 };
-
-async function readJson<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) message = body.detail;
-    } catch {
-      // Keep the HTTP status when the server did not return JSON.
-    }
-    throw new Error(message);
-  }
-  return (await response.json()) as T;
-}
 
 function valueText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -52,7 +40,7 @@ function valueText(value: unknown): string {
 }
 
 /** A small history browser backed only by the local HTTP API. */
-export function History({ onSelect }: HistoryProps) {
+export function History({ onSelect, refreshKey }: HistoryProps) {
   const [query, setQuery] = useState("");
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<RunDetail | null>(null);
@@ -65,9 +53,8 @@ export function History({ onSelect }: HistoryProps) {
     try {
       const params = new URLSearchParams();
       if (search.trim()) params.set("search", search.trim());
-      const response = await fetch(`/api/runs?${params.toString()}`);
-      const body = await readJson<{ runs: RunSummary[] }>(response);
-      setRuns(body.runs ?? []);
+      const body = await requestJson<RunSummary[]>(`/api/runs?${params.toString()}`);
+      setRuns(body);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load history");
     } finally {
@@ -78,8 +65,7 @@ export function History({ onSelect }: HistoryProps) {
   async function openRun(runId: string) {
     setError(null);
     try {
-      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}`);
-      const run = await readJson<RunDetail>(response);
+      const run = await requestJson<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`);
       setSelected(run);
       onSelect?.(run);
     } catch (cause) {
@@ -91,12 +77,11 @@ export function History({ onSelect }: HistoryProps) {
     if (!selected) return;
     setError(null);
     try {
-      const response = await fetch(`/api/runs/${encodeURIComponent(selected.run_id)}/feedback`, {
+      const run = await requestJson<RunDetail>(`/api/runs/${encodeURIComponent(selected.run_id)}/feedback`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ decision }),
       });
-      const run = await readJson<RunDetail>(response);
       setSelected(run);
       setRuns((current) => current.map((item) => (item.run_id === run.run_id ? { ...item, feedback: run.feedback } : item)));
     } catch (cause) {
@@ -106,9 +91,9 @@ export function History({ onSelect }: HistoryProps) {
 
   useEffect(() => {
     void loadRuns("");
-    // The initial history load is intentionally independent of the search box.
+    // Refresh when the active optimization changes, including a resumed run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [refreshKey]);
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

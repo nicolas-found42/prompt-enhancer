@@ -38,7 +38,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
         [
             Response(200, {"usage": {"prompt_tokens": 2, "completion_tokens": 3}}),
             Response(200, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}),
-            Response(200, {"ok": True}),
+            Response(200, {"answers": {"decision": {"type": "noul", "noul": 0.9}}}),
         ]
     )
     catalog = StaticModelCatalog(
@@ -144,3 +144,49 @@ def test_usage_ledger_splits_roles():
     report = ledger.to_dict()
     assert report["cost_by_role"]["writer"] == pytest.approx(2.0)
     assert report["cost_by_role"]["strong"] == pytest.approx(0.04)
+
+
+def test_jev_requests_use_decisions_api_and_return_typed_answer_payload():
+    transport = QueueTransport([
+        Response(200, {
+            "answers": {"meaning": {"type": "noul", "noul": 0.95}},
+            "usage": {"input_tokens": 100, "output_tokens": 1, "cost": 0.0000042},
+        }),
+    ])
+    gateway = ModelGateway(
+        transport,
+        config=GatewayConfig(openrouter_api_key="or-secret", max_retries=0),
+    )
+
+    answer = gateway.decide({
+        "key": "meaning",
+        "type": "noul",
+        "query": "Does the rewrite preserve the request?",
+        "state": {"original": "A", "rewrite": "B"},
+    })
+
+    assert answer == {"type": "noul", "noul": 0.95}
+    request = transport.requests[0]
+    assert request["url"] == "https://openrouter.ai/api/alpha/decisions"
+    assert request["json"] == {
+        "model": JEV_MODEL,
+        "state": {"original": "A", "rewrite": "B"},
+        "questions": {"meaning": {"type": "noul", "instructions": "Does the rewrite preserve the request?"}},
+    }
+    assert gateway.usage_report()["total"] == pytest.approx(0.0000042)
+
+
+def test_jev_batch_sends_one_request_for_multiple_questions():
+    transport = QueueTransport([
+        Response(200, {"answers": {
+            "gap:goal": {"type": "noul", "noul": 0.91},
+            "gap:context": {"type": "noul", "noul": 0.12},
+        }}),
+    ])
+    gateway = ModelGateway(transport, config=GatewayConfig(max_retries=0))
+    answers = gateway.jev_batch([
+        {"key": "gap:goal", "type": "noul", "query": "Is goal missing?", "state": {"prompt": "A"}},
+        {"key": "gap:context", "type": "noul", "query": "Is context missing?", "state": {"prompt": "A"}},
+    ])
+    assert [answer["noul"] for answer in answers] == [0.91, 0.12]
+    assert len(transport.requests) == 1

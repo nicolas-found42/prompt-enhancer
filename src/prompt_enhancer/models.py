@@ -7,7 +7,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 from uuid import uuid4
 
 Tier = Literal["fast", "standard", "deep"]
-RunStatus = Literal["completed", "needs_input"]
+RunStatus = Literal["completed", "needs_input", "failed"]
 
 
 class CostBreakdown(TypedDict, total=False):

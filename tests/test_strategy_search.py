@@ -131,10 +131,19 @@ def test_selector_orders_worst_mean_spread_then_length_and_reports_reasons():
 def test_selector_keeps_original_when_no_candidate_beats_it():
     result = rank_candidates(
         {"id": "original", "text": "original", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}},
-        [{"id": "candidate", "text": "shorter", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}}],
+        [{"id": "candidate", "text": "a longer candidate", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}}],
     )
 
     assert result.original_kept
     assert result.selected_candidate_id is None
     assert result.final_prompt == "original"
     assert "does not beat the original" in result.rejection_reasons["candidate"][0]
+
+
+def test_selector_prefers_shorter_prompt_when_grades_are_equal():
+    result = rank_candidates(
+        {"id": "original", "text": "an original prompt", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}},
+        [{"id": "candidate", "text": "shorter", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}}],
+    )
+
+    assert result.selected_candidate_id == "candidate"

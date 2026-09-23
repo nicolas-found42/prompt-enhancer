@@ -426,6 +426,7 @@ def search_strategies(
     previous_round_failures: Sequence[str] | None = None,
     include_crutch: bool = True,
     recheck: Callable[[RewriteStrategy], Any] | None = None,
+    priority_strategy: str | None = None,
 ) -> StrategySearchResult:
     """Rank strategies, apply the budget, and generate one candidate each.
 
@@ -450,6 +451,7 @@ def search_strategies(
     ranked = sorted(
         available,
         key=lambda strategy: (
+            strategy.name != priority_strategy,
             -_strategy_score(strategy, prompt, diagnosis, failures),
             available.index(strategy),
         ),
@@ -488,6 +490,13 @@ def search_strategies(
     generated: list[str] | None = None
     if writer is not None:
         generated = _writer_texts(_call_writer(writer, request), eligible)
+    if writer is not None and (generated is None or len(generated) < len(eligible)):
+        return StrategySearchResult(
+            (), (), tuple(rejected) + tuple(
+                StrategyRejection(strategy.name, "writer did not return a complete candidate", _strategy_score(strategy, prompt, diagnosis, failures))
+                for strategy in eligible
+            ), selected_budget, failures,
+        )
     if generated is None or len(generated) < len(eligible):
         generated = [text or "" for text in (generated or [])]
         generated.extend(

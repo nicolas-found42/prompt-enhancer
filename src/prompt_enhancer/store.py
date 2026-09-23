@@ -37,7 +37,8 @@ class RunStore:
                 cost_json TEXT NOT NULL,
                 timing_json TEXT NOT NULL,
                 feedback_json TEXT,
-                feedback_at TEXT
+                feedback_at TEXT,
+                evidence_json TEXT
             )
             """
         )
@@ -49,6 +50,8 @@ class RunStore:
             self._connection.execute("ALTER TABLE runs ADD COLUMN feedback_json TEXT")
         if "feedback_at" not in columns:
             self._connection.execute("ALTER TABLE runs ADD COLUMN feedback_at TEXT")
+        if "evidence_json" not in columns:
+            self._connection.execute("ALTER TABLE runs ADD COLUMN evidence_json TEXT")
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS runs_created_at_idx ON runs(created_at DESC)"
         )
@@ -64,13 +67,15 @@ class RunStore:
         result = dict(record.get("result") or {})
         feedback = record.get("feedback", result.get("feedback"))
         feedback_at = record.get("feedback_at", result.get("feedback_at"))
+        known = {"run_id", "created_at", "prompt", "tier", "options", "result", "cost", "timing", "feedback", "feedback_at"}
+        evidence = {key: value for key, value in record.items() if key not in known}
         with self._lock:
             self._connection.execute(
                 """
                 INSERT OR REPLACE INTO runs
                     (run_id, created_at, prompt, tier, options_json,
-                     result_json, cost_json, timing_json, feedback_json, feedback_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     result_json, cost_json, timing_json, feedback_json, feedback_at, evidence_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -91,6 +96,7 @@ class RunStore:
                     if feedback is not None
                     else None,
                     str(feedback_at) if feedback_at is not None else None,
+                    json.dumps(evidence, ensure_ascii=False),
                 ),
             )
             self._connection.commit()
@@ -110,6 +116,14 @@ class RunStore:
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", (bounded,)
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def all_runs(self) -> list[dict[str, Any]]:
+        """Read every locally persisted run for offline training."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM runs ORDER BY created_at, run_id"
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -134,6 +148,8 @@ class RunStore:
             record["feedback"] = json.loads(row["feedback_json"])
         if "feedback_at" in keys and row["feedback_at"] is not None:
             record["feedback_at"] = row["feedback_at"]
+        if "evidence_json" in keys and row["evidence_json"] is not None:
+            record.update(json.loads(row["evidence_json"]))
         return record
 
 

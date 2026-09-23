@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Protocol
 
 from .jev import NoulDecision, parse_decision
+from .rewrite import _text
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,12 +150,8 @@ class SuccessTestCompiler:
 
     @classmethod
     def _parse_tests(cls, response: Any) -> tuple[SuccessTest, ...]:
-        content = response
-        if isinstance(response, Mapping):
-            content = response.get("content", response.get("text", response.get("output")))
-            if isinstance(content, Mapping):
-                content = content.get("content", content.get("text", content))
-        if not isinstance(content, str):
+        content = _text(response)
+        if not content:
             raise TypeError("writer response must contain JSON text")
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
         payload = json.loads(content)

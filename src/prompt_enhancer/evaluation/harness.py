@@ -103,12 +103,14 @@ class DiagnosisSummary:
     expected_gap_occurrences: int
     micro: GapMetrics
     per_gap: Mapping[str, GapMetrics]
+    excluded_failed_cases: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "labeled_cases": self.labeled_cases,
             "predicted_gap_occurrences": self.predicted_gap_occurrences,
             "expected_gap_occurrences": self.expected_gap_occurrences,
+            "excluded_failed_cases": self.excluded_failed_cases,
             "micro": self.micro.to_dict(),
             "per_gap": {
                 name: metric.to_dict()
@@ -184,6 +186,7 @@ class CaseEvaluation:
     cost_by_role: Mapping[str, float]
     latency_ms: float | None
     error: str | None = None
+    labels_present: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -202,6 +205,7 @@ class CaseEvaluation:
             "cost_by_role": dict(sorted(self.cost_by_role.items())),
             "latency_ms": self.latency_ms,
             "error": self.error,
+            "labels_present": self.labels_present,
         }
 
 
@@ -256,6 +260,7 @@ class _CaseObservation:
     source: str
     status: str
     expected_gaps: tuple[str, ...]
+    labels_present: bool = False
     predicted_gaps: tuple[str, ...] = ()
     original_kept: bool | None = None
     final_prompt: str | None = None
@@ -285,6 +290,7 @@ class _CaseObservation:
             source=self.source,
             status=self.status,
             expected_gaps=self.expected_gaps,
+            labels_present=self.labels_present,
             predicted_gaps=self.predicted_gaps,
             original_kept=self.original_kept,
             final_prompt=self.final_prompt,
@@ -368,12 +374,20 @@ class EvaluationHarness:
             source=case.source,
             status="error",
             expected_gaps=case.expected_gaps,
+            labels_present=case.labels_present,
         )
         started = perf_counter()
         try:
             result = _as_mapping(engine.optimize(case.prompt, options.optimize_options()))
             report = _as_mapping(result.get("report", {}))
             observation.predicted_gaps = _predicted_gaps(result, report)
+            if _status(result) == "needs_input":
+                observation.predicted_gaps = tuple(sorted({*observation.predicted_gaps, "clarification_need"}))
+            evaluation_gaps = case.metadata.get("evaluation_gaps")
+            if isinstance(evaluation_gaps, list):
+                scope = {normalize_gap_type(item) for item in evaluation_gaps}
+                observation.expected_gaps = tuple(gap for gap in observation.expected_gaps if gap in scope)
+                observation.predicted_gaps = tuple(gap for gap in observation.predicted_gaps if gap in scope)
             observation.original_kept = _optional_bool(result.get("original_kept"))
             observation.final_prompt = _optional_string(result.get("final_prompt"))
             observation.original_score, observation.winner_score = _scores(
@@ -492,8 +506,12 @@ def _diagnosis_summary(cases: Sequence[CaseEvaluation]) -> DiagnosisSummary:
     labeled_cases = 0
     predicted_occurrences = 0
     expected_occurrences = 0
+    excluded_failed_cases = 0
     for case in cases:
-        if not case.expected_gaps:
+        if not case.labels_present:
+            continue
+        if case.status in {"failed", "error"}:
+            excluded_failed_cases += 1
             continue
         labeled_cases += 1
         expected = set(case.expected_gaps)
@@ -521,6 +539,7 @@ def _diagnosis_summary(cases: Sequence[CaseEvaluation]) -> DiagnosisSummary:
         labeled_cases=labeled_cases,
         predicted_gap_occurrences=predicted_occurrences,
         expected_gap_occurrences=expected_occurrences,
+        excluded_failed_cases=excluded_failed_cases,
         micro=micro,
         per_gap=per_gap,
     )
@@ -679,7 +698,7 @@ def _scores(
     original_kept: bool | None,
 ) -> tuple[float | None, float | None]:
     ranking: Mapping[str, Any] = {}
-    for candidate in (report.get("ranking"), report.get("selection")):
+    for candidate in (report.get("selection_evidence"), report.get("ranking"), report.get("selection")):
         if isinstance(candidate, Mapping):
             ranking = candidate
             break
@@ -741,7 +760,7 @@ def _cost(result: Mapping[str, Any]) -> tuple[float | None, Mapping[str, float]]
             total = float(candidate)
             break
     roles: dict[str, float] = {}
-    raw_roles = value.get("by_role", value.get("roles", {}))
+    raw_roles = value.get("cost_by_role", value.get("by_role", value.get("roles", {})))
     if isinstance(raw_roles, Mapping):
         for role, amount in raw_roles.items():
             if (
@@ -865,6 +884,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             source=str(item.get("source", "real")),
             status=str(item.get("status", "unknown")),
             expected_gaps=tuple(item.get("expected_gaps", [])),
+            labels_present=bool(item.get("labels_present", bool(item.get("expected_gaps")))),
             predicted_gaps=tuple(item.get("predicted_gaps", [])),
             original_kept=item.get("original_kept"),
             final_prompt=item.get("final_prompt"),
@@ -913,6 +933,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             expected_gap_occurrences=int(
                 diagnosis_data.get("expected_gap_occurrences", 0)
             ),
+            excluded_failed_cases=int(diagnosis_data.get("excluded_failed_cases", 0)),
             micro=micro,
             per_gap=gap_metrics,
         ),

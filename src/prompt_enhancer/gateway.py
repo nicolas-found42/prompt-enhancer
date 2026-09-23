@@ -25,6 +25,7 @@ from .catalog import (
     ModelInfo,
     StaticModelCatalog,
 )
+from .jev import batch_decision_payload, decision_payload
 from .usage import UsageLedger
 
 DEFAULT_GO_BASE_URL = "https://opencode.ai/zen/v1"
@@ -54,7 +55,7 @@ class GatewayConfig:
     openrouter_base_url: str = DEFAULT_OPENROUTER_BASE_URL
     go_models_url: str | None = None
     openrouter_models_url: str | None = None
-    decisions_path: str = "/decisions"
+    decisions_path: str = "/alpha/decisions"
     timeout: float = 30.0
     max_retries: int = 2
     backoff: float = 0.0
@@ -196,6 +197,7 @@ class ModelGateway:
             item if isinstance(item, str) else item.id for item in (go_models or ())
         }
         self.calls: list[dict[str, Any]] = []
+        self.decision_log: list[dict[str, Any]] = []
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None, **kwargs: Any) -> ModelGateway:
@@ -207,6 +209,8 @@ class ModelGateway:
 
     def new_run(self, run_id: str | None = None) -> str:
         """Set a stable Go session value and return it."""
+        self.usage = UsageLedger()
+        self.decision_log = []
         if run_id:
             session = str(run_id)
         else:
@@ -299,6 +303,12 @@ class ModelGateway:
                     input_cost_per_token=model_info.input_cost_per_token if model_info else None,
                     output_cost_per_token=model_info.output_cost_per_token if model_info else None,
                     cap=model_info.monthly_cap if model_info else None,
+                    cost=(
+                        float(usage["usage"]["cost"])
+                        if isinstance(usage.get("usage"), Mapping)
+                        and usage["usage"].get("cost") is not None
+                        else None
+                    ),
                 )
                 return decoded
             except ProviderError:
@@ -355,21 +365,43 @@ class ModelGateway:
             return self.chat(model_id, messages, **kwargs)
         return self.chat(str(model), messages, **kwargs)
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
-        # A Jev prompt must live in state.  Accept the common ``prompt`` input
-        # as a convenience, but never silently put caller text in instructions.
         request = dict(payload)
-        if "state" not in request and "prompt" in request:
-            request["state"] = request.pop("prompt")
-        request["model"] = JEV_MODEL
-        decision = self.route_model(JEV_MODEL, run_id=run_id)
+        key, envelope = decision_payload(request, model=JEV_MODEL)
+        decision = self._decisions_route(run_id)
         self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "provider": "openrouter", "run_id": run_id})
-        return self._request(decision, request, role=role)
+        response = self._request(
+            decision,
+            envelope,
+            role=role,
+        )
+        answer = response["answers"][key]
+        self.decision_log.append({"question": request, "answer": answer})
+        return answer
 
     decision = decide
     jev = decide
 
     def jev_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
-        return [self.jev(request, role=role, run_id=run_id) for request in requests]
+        if not requests:
+            return []
+        keys, envelope = batch_decision_payload(requests, model=JEV_MODEL)
+        self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "provider": "openrouter", "run_id": run_id})
+        response = self._request(
+            self._decisions_route(run_id),
+            envelope,
+            role=role,
+        )
+        answers = [response["answers"][key] for key in keys]
+        self.decision_log.extend(
+            {"question": request, "answer": answer}
+            for request, answer in zip(requests, answers, strict=True)
+        )
+        return answers
+
+    def _decisions_route(self, run_id: str | None) -> RouteDecision:
+        route = self.route_model(JEV_MODEL, run_id=run_id)
+        base = self.config.openrouter_base_url.rstrip("/").removesuffix("/v1")
+        return RouteDecision(route.provider, route.model, f"{base}{self.config.decisions_path}", route.headers)
 
     def usage_report(self) -> dict[str, Any]:
         return self.usage.to_dict()
@@ -397,9 +429,12 @@ class ScriptedGateway:
         self.catalog = catalog or StaticModelCatalog((), ())
         self.usage = usage or UsageLedger()
         self.calls: list[dict[str, Any]] = []
+        self.decision_log: list[dict[str, Any]] = []
         self._run_id: str | None = None
 
     def new_run(self, run_id: str | None = None) -> str:
+        self.usage = UsageLedger()
+        self.decision_log = []
         self._run_id = str(run_id) if run_id is not None else "scripted"
         return self._run_id
 
@@ -443,7 +478,9 @@ class ScriptedGateway:
 
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
         self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "run_id": run_id})
-        return self._next(self.decision_handler, dict(payload), role=role, run_id=run_id)
+        answer = self._next(self.decision_handler, dict(payload), role=role, run_id=run_id)
+        self.decision_log.append({"question": dict(payload), "answer": answer})
+        return answer
 
     decision = decide
     jev = decide
@@ -465,8 +502,9 @@ class ReplayGateway(ScriptedGateway):
     network access.
     """
 
-    def __init__(self, responses: Mapping[Any, Any] | Iterable[Any], **kwargs: Any) -> None:
+    def __init__(self, responses: Mapping[Any, Any] | Iterable[Any], *, strict: bool = False, **kwargs: Any) -> None:
         super().__init__(responses, **kwargs)
+        self.strict = strict
         self.replayed_keys: list[str] = []
 
     @staticmethod
@@ -478,11 +516,18 @@ class ReplayGateway(ScriptedGateway):
         for key in ((operation, model, role), (model, role), (operation, model), model):
             if key in responses:
                 return responses[key]
+        alias = f"{'decision' if operation == 'decide' else 'complete'}:{model if operation == 'decide' else role}"
+        if alias in responses:
+            value = responses[alias]
+            if operation == "decide" and isinstance(value, Mapping):
+                kind = str(payload.get("type", "noul")) if isinstance(payload, Mapping) else "noul"
+                value = value.get(kind, value)
+            return value
         key = self.request_key(operation, model, payload, role)
         self.replayed_keys.append(key)
         if key in responses:
             return responses[key]
-        if len(responses) == 1:
+        if not self.strict and len(responses) == 1:
             return next(iter(responses.values()))
         raise ProviderError("replay", model, None, "no recorded response")
 
@@ -500,11 +545,16 @@ class ReplayGateway(ScriptedGateway):
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
         self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "run_id": run_id})
-        if self.decision_handler is not None or callable(self.responses):
-            return self._next(self.decision_handler, request, role=role, run_id=run_id)
-        return self._lookup(
-            cast(Mapping[Any, Any], self.responses), "decide", JEV_MODEL, request, role
+        answer = (
+            self._next(self.decision_handler, request, role=role, run_id=run_id)
+            if self.decision_handler is not None or callable(self.responses)
+            else self._lookup(cast(Mapping[Any, Any], self.responses), "decide", JEV_MODEL, request, role)
         )
+        self.decision_log.append({"question": request, "answer": answer})
+        return answer
+
+    decision = decide
+    jev = decide
 
 
 __all__ = [

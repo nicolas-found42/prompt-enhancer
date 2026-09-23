@@ -1,0 +1,90 @@
+# Evaluation data
+
+The evaluation harness accepts real, synthetic, and hand-labeled cases. The
+three-case fixture in `tests/fixtures/evaluation/` only checks the harness
+contract; it is too small to calibrate Jev thresholds.
+
+## Ready-to-import datasets
+
+| Dataset | What its prompts represent | Human labels | Best use |
+| --- | --- | --- | --- |
+| [SOAR Lab prompt knowledge gaps](https://github.com/SOAR-Lab/prompt-knowledge-gap) (MSR 2025) | Real developer–ChatGPT turns shared in GitHub issues | No gap, missing context, missing specification, unclear instruction, multiple context | Primary 150-case real-prompt gap evaluation |
+| [ClariQ](https://github.com/aliannejadi/ClariQ) | Real conversational search requests | Clarification need, rated 1–4 | Independent 150-case binary clarification evaluation |
+| [ClarifyCodeBench](https://github.com/fangz-cs/ClarifyCodeBench) (2026) | LiveCodeBench tasks manually edited by deleting required details | 11 fine-grained underspecification types, with key questions and answers | Separate 150-case coding stress set; these are controlled edits, not spontaneous prompts |
+
+`scripts/prepare_soar_prompt_gaps.py` selects 150 distinct conversations from
+the 433-conversation SOAR Lab corpus. It takes the source's per-turn labels and
+stratifies by gap type. Multi-label cases keep all their labels, so the final
+per-label counts can exceed a selection quota. Prompts longer than 8,000
+characters are excluded without truncating them. The source replaces some code
+and error text with placeholders; the importer preserves that representation.
+The four source gap labels do not all match the optimizer's current checklist
+keys. Each SOAR case retains its source labels, but the harness scores only
+`context` against SOAR's missing-context annotation. It counts explicit
+"No gap" cases as negatives when calculating false positives.
+
+`scripts/prepare_clariq.py` converts 150 distinct real user requests. It maps
+rating 1 to no `clarification_need` label and ratings 2–4 to that single label.
+It does not claim the annotators identified specific rubric gaps. The harness
+scores `clarification_need` from whether the run actually needs user input;
+run this dataset with `--clarification-allowed`. The selection
+is stratified 25/50/50/25 at levels 1/2/3/4. ClariQ's 50 distinct development
+topics remain available for a holdout.
+
+`scripts/prepare_clarifycodebench.py` selects 150 of 419 human-annotated tasks.
+The source labels are kept at their original granularity, while the harness
+scores `output_format`, the type shared with the optimizer's checklist. The source includes
+the clarification question and answer for each removed detail. The importer
+marks these cases `synthetic` because the ambiguities were introduced by
+human editing.
+
+Run locally:
+
+```sh
+python3 scripts/prepare_soar_prompt_gaps.py --output /tmp/soar-evaluation-150.json
+python3 scripts/prepare_clariq.py --output /tmp/clariq-evaluation-150.json
+python3 scripts/prepare_clarifycodebench.py --output /tmp/clarifycodebench-evaluation-150.json
+.venv/bin/python -m prompt_enhancer.evaluation /tmp/soar-evaluation-150.json --replay path/to/recorded-responses.json --output /tmp/soar-report.json
+.venv/bin/python -m prompt_enhancer.evaluation /tmp/clariq-evaluation-150.json --clarification-allowed --replay path/to/clariq-recorded-responses.json --output /tmp/clariq-report.json
+```
+
+SOAR Lab and ClariQ declare no repository license, so their generated prompt
+files stay local. ClarifyCodeBench's annotations use MIT, while the underlying
+LiveCodeBench tasks have separate terms. A real evaluation replay must contain
+responses for each selected request; the small fixture replay is for the smoke
+dataset only. These importers create evaluation inputs, not model responses or
+measured precision, recall, cost, and latency.
+
+Other sources considered: [WildChat](https://huggingface.co/datasets/allenai/WildChat)
+has broad real user prompts but no human gap labels;
+[LMSYS-Chat-1M](https://huggingface.co/datasets/lmsys/lmsys-chat-1m) is gated;
+[HumanEvalComm](https://github.com/jie-jw-wu/human-eval-comm) has 762 human
+verified ambiguity, inconsistency, and incompleteness variants, but they are
+controlled coding benchmark modifications;
+[MIMICS-Manual](https://arxiv.org/abs/2006.10174) has more than 2,000 real Bing
+queries with human ratings of clarification questions and answers, rather than
+prompt gap types; [PromptAmbiguityDataset](https://github.com/SCAlabUnical/PromptAmbiguityDataset)
+includes annotated coding, analysis, and writing examples but does not establish
+that they were spontaneous user prompts or declare a license. These are useful
+for targeted coverage but are not interchangeable gold sets.
+
+## Further 2026 datasets for targeted evaluation
+
+- [MARCH](https://github.com/jeonghyunpark2002/MARCH) (ACL 2026) releases
+  2,209 multi-hop questions with semantic, syntactic, or constraint ambiguity,
+  clarified interpretations, and answers. Its repository is MIT licensed and
+  was last pushed in April 2026. The creators report human validation on a
+  sampled 60 instances, so the full set should not be treated as 2,209
+  individually human-verified gap labels. Use it to stress clarification of
+  multi-hop questions, outside the primary real-prompt accuracy score.
+- [Clarify-Then-Search Hard518](https://clarify-then-search.github.io/)
+  (KDD 2026) releases 518 paired information-seeking queries based on real
+  Baidu queries. It supplies an underspecified query, hidden clear intent,
+  and static answer nuggets, making it useful for downstream clarification
+  utility. The underspecified queries are deliberately blurred from fused
+  intents, so they are a controlled benchmark rather than spontaneous user
+  prompts; its labels do not map directly to the current gap checklist.
+- [MTRAG-UN](https://github.com/IBM/mt-rag-benchmark) (ACL 2026) extends the
+  human-generated MTRAG conversations for multi-turn retrieval and uncertainty
+  behavior. It can test whether clarification helps in context, but it does
+  not provide per-prompt labels for this optimizer's gap types.

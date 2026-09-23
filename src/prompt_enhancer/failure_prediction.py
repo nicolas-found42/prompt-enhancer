@@ -384,7 +384,9 @@ def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
     probability_values: list[float] = []
     jev_answers = _answer_sequence(run.get("jev_answers") or run.get("answers"))
     for index, raw_answer in enumerate(jev_answers):
-        answer = _as_mapping(raw_answer)
+        logged = _as_mapping(raw_answer)
+        answer = _as_mapping(logged.get("answer")) if isinstance(logged.get("answer"), Mapping) else logged
+        question = _as_mapping(logged.get("question")) if isinstance(logged.get("question"), Mapping) else {}
         kind = (
             str(
                 answer.get("kind")
@@ -396,7 +398,8 @@ def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
             .lower()
         )
         question_id = _identifier(
-            answer.get("question_id")
+            question.get("key")
+            or answer.get("question_id")
             or answer.get("question")
             or answer.get("id")
             or f"answer_{index + 1}"
@@ -430,7 +433,7 @@ def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
 
 
 def _answer_probability(answer: Mapping[str, Any]) -> float | None:
-    for key in ("noul_probability", "probability", "value"):
+    for key in ("noul", "noul_probability", "probability_true", "probability", "value"):
         if key not in answer:
             continue
         value = answer[key]

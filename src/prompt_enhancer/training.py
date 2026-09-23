@@ -1,9 +1,9 @@
-"""Maintainer CLI for offline failure-predictor training.
+"""Maintainer CLI for offline CatBoost prompt-quality training.
 
 Run with::
 
-    python -m prompt_enhancer.training --input logged-runs.json \
-        --artifact failure-predictor.json --report training-report.json
+    python -m prompt_enhancer.training --database runs.sqlite3 \
+        --artifact prompt-quality.cbm --report training-report.json
 
 The command only reads a local JSON export and writes local artifacts.  It has
 no provider credentials, gateway, or optimizer options.
@@ -23,23 +23,26 @@ from .failure_prediction import (
     load_logged_runs,
     train_and_save,
 )
+from .quality_model import train_quality_model
+from .store import RunStore
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train the offline weak-panel failure predictor from logged runs."
     )
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument(
         "--input",
-        required=True,
         type=Path,
         help="Local JSON export containing a list of logged runs.",
     )
+    source.add_argument("--database", type=Path, help="Local RunStore SQLite database.")
     parser.add_argument(
         "--artifact",
         type=Path,
-        default=Path("failure-predictor.json"),
-        help="Output path for the portable predictor artifact.",
+        default=Path("prompt-quality.cbm"),
+        help="Output path for the CatBoost model artifact.",
     )
     parser.add_argument(
         "--report",
@@ -54,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--learning-rate", type=float, default=0.1)
     parser.add_argument("--min-split-gain", type=float, default=1e-4)
     parser.add_argument("--calibration-bins", type=int, default=10)
+    parser.add_argument("--iterations", type=int, default=100)
+    parser.add_argument("--legacy-stumps", action="store_true", help="Run the older binary stump trainer for compatibility.")
     parser.add_argument(
         "--code-version",
         help="Release, commit, or other caller-supplied immutable code version.",
@@ -64,6 +69,32 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.database is not None:
+            store = RunStore(args.database)
+            try:
+                runs = store.all_runs()
+            finally:
+                store.close()
+        else:
+            runs = load_logged_runs(args.input)
+        if not args.legacy_stumps:
+            report = train_quality_model(
+                runs,
+                artifact_path=args.artifact,
+                report_path=args.report,
+                seed=args.seed,
+                holdout_fraction=args.holdout_fraction,
+                iterations=args.iterations,
+                code_version=args.code_version,
+            )
+            print(json.dumps({
+                "artifact": report["manifest"]["artifact"],
+                "report": str(args.report),
+                "held_out_runs": len(report["evaluation"]["held_out_runs"]),
+                "model_mae": report["evaluation"]["model"]["mae"],
+                "baseline_mae": report["evaluation"]["baseline"]["mae"],
+            }, sort_keys=True))
+            return 0
         config = TrainingConfig(
             seed=args.seed,
             holdout_fraction=args.holdout_fraction,
@@ -75,7 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             code_version=args.code_version,
         )
         report = train_and_save(
-            load_logged_runs(args.input),
+            runs,
             artifact_path=args.artifact,
             report_path=args.report,
             config=config,

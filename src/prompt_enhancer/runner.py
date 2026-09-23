@@ -131,6 +131,8 @@ def _output_text(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, Mapping):
+        if isinstance(value.get("message"), Mapping):
+            return _output_text(value["message"])
         for key in ("output", "text", "content", "response", "completion"):
             if key in value and value[key] is not None:
                 return _output_text(value[key])

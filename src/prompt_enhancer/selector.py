@@ -286,11 +286,6 @@ def _key(candidate: RankingCandidate) -> tuple[float, float, float, int]:
     )
 
 
-def _performance_key(candidate: RankingCandidate) -> tuple[float, float, float]:
-    worst, mean, spread, _ = _key(candidate)
-    return (worst, mean, spread)
-
-
 def _original(value: Any, original_grade: Any = None) -> RankingCandidate:
     if isinstance(value, RankingCandidate) and original_grade is None:
         return value
@@ -327,7 +322,7 @@ def rank_candidates(
     """Rank eligible candidates by worst, mean, spread, then prompt length.
 
     The original is retained unless the best eligible candidate is strictly
-    better on worst, mean, or spread.  ``strong_check`` is an external report or
+    better on worst, mean, spread, or length. ``strong_check`` is an external report or
     outcome map; this function only consumes its ``passed``/``eligible``
     decision and never repeats the strong-model comparison.
     """
@@ -357,7 +352,7 @@ def rank_candidates(
     best = eligible[0] if eligible else None
     selected = (
         best
-        if best is not None and _performance_key(best) < _performance_key(baseline)
+        if best is not None and _key(best) < _key(baseline)
         else None
     )
     selected_id = selected.candidate_id if selected else None

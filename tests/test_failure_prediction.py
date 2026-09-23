@@ -89,6 +89,7 @@ def test_cli_trains_from_local_json_without_credentials(
         [
             "--input",
             str(FIXTURE),
+            "--legacy-stumps",
             "--artifact",
             str(artifact),
             "--report",
@@ -109,3 +110,41 @@ def test_cli_trains_from_local_json_without_credentials(
     assert report["manifest"]["code_version"] == "cli-revision"
     assert report["manifest"]["artifact"]["path"] == str(artifact)
     assert artifact.exists()
+
+
+def test_catboost_cli_trains_continuous_pass_rate_from_local_run_store(tmp_path: Path, capsys) -> None:
+    import pytest
+    pytest.importorskip("catboost")
+    from catboost import CatBoostRegressor
+
+    from prompt_enhancer.store import RunStore
+
+    database = tmp_path / "runs.sqlite3"
+    store = RunStore(database)
+    for run in load_logged_runs(FIXTURE):
+        store.save_run({**run, "prompt": f"Original prompt for {run['run_id']}"})
+    store.close()
+    artifact = tmp_path / "quality.cbm"
+    report_path = tmp_path / "quality-report.json"
+
+    exit_code = main([
+        "--database", str(database), "--artifact", str(artifact),
+        "--report", str(report_path), "--iterations", "20", "--seed", "7",
+    ])
+
+    assert exit_code == 0
+    output = json.loads(capsys.readouterr().out)
+    report = json.loads(report_path.read_text())
+    assert output["held_out_runs"] == 2
+    assert report["manifest"]["algorithm"] == "CatBoostRegressor"
+    assert report["manifest"]["label"] == "original_weak_panel.mean_pass_rate"
+    assert report["manifest"]["code_version"].startswith("sha256:")
+    assert report["manifest"]["run_set"]["count"] == 8
+    assert report["manifest"]["run_set"]["sha256"].startswith("sha256:")
+    assert report["manifest"]["config"]["depth"] == 4
+    assert {"discrimination", "calibration", "coverage"} <= report["evaluation"]["model"].keys()
+    assert report["evaluation"]["model"]["mae"] >= 0
+    assert artifact.exists()
+    model = CatBoostRegressor()
+    model.load_model(str(artifact))
+    assert model.tree_count_ > 0

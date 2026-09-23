@@ -2,17 +2,22 @@
   "responses": {
     "decision:typesafe/jev-1.13": {
       "choice": {
-        "value": "coding"
+        "type": "choice",
+        "choice": "none",
+        "probabilities": {"none": 1.0},
+        "confidence": 1.0
       },
       "noul": {
-        "probability_of_no": 0.9
+        "type": "noul",
+        "probability_true": 0.1,
+        "confidence": 0.9
       }
     },
     "complete:writer": {
       "choices": [
         {
           "message": {
-            "content": "Enhanced prompt"
+            "content": "{\"tests\":[]}"
           }
         }
       ]

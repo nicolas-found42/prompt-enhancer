@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import UTC
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
+
+from .rewrite import _text as _completion_text
 
 
 class RevisionKind(str, Enum):
@@ -49,6 +51,7 @@ class RubricQuestion:
     text: str
     response_type: str = "noul"
     threshold: float = 0.5
+    missing_when: str = "no"
 
     def __post_init__(self) -> None:
         if not self.question_id.strip():
@@ -59,6 +62,8 @@ class RubricQuestion:
             raise ValueError("response_type must not be empty")
         if not 0.0 <= self.threshold <= 1.0:
             raise ValueError("threshold must be between 0 and 1")
+        if self.missing_when not in {"yes", "no"}:
+            raise ValueError("missing_when must be yes or no")
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +307,76 @@ class MeasuredErrorProposer:
         return changes
 
 
+class WriterRevisionProposer:
+    """Ask a writer to turn measured errors into candidate Jev questions."""
+
+    def __init__(self, gateway: Any, *, writer_model: str = "deepseek-v4.1-flash") -> None:
+        self.gateway = gateway
+        self.writer_model = writer_model
+        self._evidence: dict[tuple[str, str, str | None, str | None, str | None], tuple[MeasuredError, ...]] = {}
+
+    def propose(
+        self, rubric: RubricVersion, errors: Sequence[MeasuredError]
+    ) -> Sequence[RubricQuestionChange]:
+        response = self.gateway.complete({
+            "model": self.writer_model,
+            "role": "writer",
+            "instructions": (
+                "Propose at most one new, revised, or dropped Jev diagnosis question per measured error. "
+                "Return JSON only as {\"suggestions\":[{\"error_id\":\"...\",\"action\":\"new|revised|dropped\","
+                "\"question\":{\"question_id\":\"...\",\"text\":\"...\",\"response_type\":\"noul\","
+                "\"threshold\":0.8,\"missing_when\":\"yes|no\"}}]}. "
+                "For dropped, omit question. Use only errors and rubric in state as evidence."
+            ),
+            "state": {
+                "rubric": [asdict(question) for question in rubric.questions],
+                "errors": [asdict(error) for error in errors],
+            },
+        })
+        payload = json.loads(_completion_text(response))
+        suggestions = payload.get("suggestions") if isinstance(payload, Mapping) else None
+        if not isinstance(suggestions, list):
+            raise TypeError("writer revision response must contain suggestions")
+        by_id = {error.error_id: error for error in errors}
+        proposed_errors: list[MeasuredError] = []
+        for item in suggestions:
+            if not isinstance(item, Mapping):
+                raise TypeError("each writer suggestion must be an object")
+            error_id = str(item.get("error_id", ""))
+            if error_id not in by_id:
+                raise ValueError("writer suggestion cites an unknown measured error")
+            error = by_id[error_id]
+            action = item.get("action")
+            if action not in {"new", "revised", "dropped"}:
+                raise ValueError("writer suggestion has an unsupported action")
+            current = rubric.question(error.current_question_id) if error.current_question_id else None
+            if action == "new" and current is not None or action != "new" and current is None:
+                raise ValueError("writer suggestion does not match the current rubric")
+            question_data = item.get("question")
+            if action == "dropped":
+                if question_data is not None:
+                    raise ValueError("dropped questions must not include a replacement")
+                question = None
+            else:
+                if not isinstance(question_data, Mapping):
+                    raise ValueError("writer suggestion requires a question")
+                question = RubricQuestion(**question_data)
+                if question.response_type != "noul":
+                    raise ValueError("diagnosis revision questions must use noul")
+            proposed_errors.append(replace(error, proposed_question=question))
+        changes = tuple(MeasuredErrorProposer().propose(rubric, proposed_errors))
+        self._evidence = {
+            change.signature: tuple(error for error in proposed_errors if
+                error.current_question_id == change.question_id or
+                error.proposed_question is not None and error.proposed_question.question_id == change.question_id)
+            for change in changes
+        }
+        return changes
+
+    def evidence_for(self, change: RubricQuestionChange) -> tuple[MeasuredError, ...]:
+        return self._evidence.get(change.signature, ())
+
+
 @dataclass(frozen=True, slots=True)
 class EvaluationMetrics:
     precision: float
@@ -309,6 +384,8 @@ class EvaluationMetrics:
     total_cost_usd: float
     regression_count: int
     case_count: int
+    evaluated_case_ids: tuple[str, ...] = ()
+    regressed_case_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.precision <= 1.0:
@@ -321,6 +398,10 @@ class EvaluationMetrics:
             raise ValueError("regression count is outside the evaluated case set")
         if self.case_count <= 0:
             raise ValueError("evaluation must include at least one case")
+        if self.evaluated_case_ids and len(self.evaluated_case_ids) != self.case_count:
+            raise ValueError("case ids do not match the evaluated case count")
+        if self.evaluated_case_ids and not set(self.regressed_case_ids) <= set(self.evaluated_case_ids):
+            raise ValueError("regression ids must belong to the evaluated case set")
 
     @property
     def f1(self) -> float:
@@ -371,11 +452,17 @@ class RevisionEvaluation:
             raise ValueError(
                 "baseline and candidate must use the same evaluation cases"
             )
+        if baseline.evaluated_case_ids and candidate.evaluated_case_ids and set(baseline.evaluated_case_ids) != set(candidate.evaluated_case_ids):
+            raise ValueError("baseline and candidate evaluated different case ids")
         precision_delta = candidate.precision - baseline.precision
         recall_delta = candidate.recall - baseline.recall
         f1_delta = candidate.f1 - baseline.f1
         cost_delta = round(candidate.total_cost_usd - baseline.total_cost_usd, 12)
-        additional_regressions = candidate.regression_count - baseline.regression_count
+        additional_regressions = (
+            len(set(candidate.regressed_case_ids) - set(baseline.regressed_case_ids))
+            if baseline.evaluated_case_ids and candidate.evaluated_case_ids
+            else candidate.regression_count - baseline.regression_count
+        )
         risk = (
             RegressionRisk.ELEVATED
             if additional_regressions > 0
@@ -840,6 +927,7 @@ class RubricRevisionService:
         evaluator: RevisionEvaluator,
         *,
         proposer: RevisionProposer | None = None,
+        writer_gateway: Any | None = None,
         policy: EvaluationPolicy | None = None,
         clock: Callable[[], str] | None = None,
         id_factory: Callable[[], str] | None = None,
@@ -847,7 +935,7 @@ class RubricRevisionService:
         self.store = store
         self.error_source = error_source
         self.evaluator = evaluator
-        self.proposer = proposer or MeasuredErrorProposer()
+        self.proposer = proposer or (WriterRevisionProposer(writer_gateway) if writer_gateway is not None else MeasuredErrorProposer())
         self.policy = policy or EvaluationPolicy()
         self.clock = clock or _utc_now
         self.id_factory = id_factory or (lambda: str(uuid4()))
@@ -881,6 +969,13 @@ class RubricRevisionService:
             key = self._error_change_key(rubric, error)
             if key is not None:
                 evidence_by_change.setdefault(key, []).append(error)
+        writer_evidence = getattr(self.proposer, "evidence_for", None)
+        if callable(writer_evidence):
+            for change in changes:
+                existing = evidence_by_change.setdefault(change.signature, [])
+                for error in writer_evidence(change):
+                    if error.error_id not in {item.error_id for item in existing}:
+                        existing.append(error)
 
         proposals: list[RevisionProposal] = []
         for change in changes:
@@ -1175,19 +1270,19 @@ class HarnessRevisionEvaluator:
         self.dataset = dataset
         self.replay_path = replay_path
         self.options = options
-        self._baseline_cache: dict[str, EvaluationMetrics] = {}
+        self._baseline_cache: dict[tuple[str, str], EvaluationMetrics] = {}
 
     def evaluate_baseline(
         self,
         rubric: RubricVersion,
         evaluation_set: EvaluationSet,
     ) -> EvaluationMetrics:
-        del evaluation_set
-        if rubric.version_id not in self._baseline_cache:
-            self._baseline_cache[rubric.version_id] = self._metrics_from_engine(
-                self.engine_factory(rubric)
+        cache_key = (rubric.version_id, evaluation_set.input_digest)
+        if cache_key not in self._baseline_cache:
+            self._baseline_cache[cache_key] = self._metrics_from_engine(
+                self.engine_factory(rubric), evaluation_set
             )
-        return self._baseline_cache[rubric.version_id]
+        return self._baseline_cache[cache_key]
 
     def evaluate_revision(
         self,
@@ -1196,15 +1291,15 @@ class HarnessRevisionEvaluator:
         evaluation_set: EvaluationSet,
         baseline: EvaluationMetrics,
     ) -> EvaluationMetrics:
-        del evaluation_set, baseline
+        del baseline
         candidate = rubric.apply(
             change,
             version_id=f"candidate-{change.kind.value}-{change.question_id}",
             created_at="offline-evaluation",
         )
-        return self._metrics_from_engine(self.engine_factory(candidate))
+        return self._metrics_from_engine(self.engine_factory(candidate), evaluation_set)
 
-    def _metrics_from_engine(self, engine: Any) -> EvaluationMetrics:
+    def _metrics_from_engine(self, engine: Any, evaluation_set: EvaluationSet) -> EvaluationMetrics:
         if self.options is None:
             report = engine.run(self.dataset, replay_path=self.replay_path)
         else:
@@ -1214,7 +1309,10 @@ class HarnessRevisionEvaluator:
                 replay_path=self.replay_path,
             )
         payload = report.to_dict() if hasattr(report, "to_dict") else report
-        return self.metrics_from_report(payload)
+        metrics = self.metrics_from_report(payload)
+        if not metrics.evaluated_case_ids or set(metrics.evaluated_case_ids) != set(evaluation_set.case_ids):
+            raise ValueError("evaluation report does not cover the fixed evaluation case set")
+        return metrics
 
     @staticmethod
     def metrics_from_report(payload: Mapping[str, Any]) -> EvaluationMetrics:
@@ -1240,8 +1338,19 @@ class HarnessRevisionEvaluator:
             and not isinstance(cases, (str, bytes))
             and cases
         ):
+            if any(isinstance(case, Mapping) and case.get("status") in {"failed", "error"} for case in cases):
+                raise ValueError("evaluation report includes failed cases")
             case_count = len(cases)
+            case_ids = tuple(str(case["case_id"]) for case in cases if isinstance(case, Mapping))
+            if len(case_ids) != case_count or len(set(case_ids)) != case_count:
+                raise ValueError("evaluation report needs unique case ids")
+            regressed_case_ids = tuple(
+                str(case["case_id"]) for case in cases
+                if isinstance(case, Mapping) and case.get("outcome") == "regressed"
+            )
         else:
+            case_ids = ()
+            regressed_case_ids = ()
             case_count = (
                 int(improvement.get("improved", 0))
                 + int(improvement.get("unchanged", 0))
@@ -1253,6 +1362,8 @@ class HarnessRevisionEvaluator:
             total_cost_usd=float(cost["total"]),
             regression_count=regression_count,
             case_count=case_count,
+            evaluated_case_ids=case_ids,
+            regressed_case_ids=regressed_case_ids,
         )
 
 

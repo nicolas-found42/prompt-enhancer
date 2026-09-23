@@ -87,6 +87,7 @@ class DiagnosisReport:
     task_type_confidence: float
     confirmed_gaps: tuple[ConfirmedGap, ...]
     problem_sentences: tuple[ProblemSentence, ...]
+    rubric_version: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -312,19 +313,23 @@ class Diagnoser:
             **state,
             "sentences": [{"id": item.id, "text": item.text} for item in sentences],
         }
-        pointer_requests = [
-            _request(
-                f"Which sentence best contains this problem: {kind.value.replace('_', ' ')}?",
-                sentence_state,
-                type="choice",
-                options=[item.id for item in sentences] + ["none"],
-                key=f"pointer:{kind.value}",
-            )
-            for kind in _PROBLEM_QUESTIONS
-        ]
+        pointer_requests = []
+        pointer_kinds = []
+        for window_index, start in enumerate(range(0, len(sentences), 254)):
+            window = sentences[start : start + 254]
+            window_state = {**sentence_state, "sentences": [{"id": item.id, "text": item.text} for item in window]}
+            for kind in _PROBLEM_QUESTIONS:
+                pointer_requests.append(_request(
+                    f"Which sentence best contains this problem: {kind.value.replace('_', ' ')}?",
+                    window_state,
+                    type="choice",
+                    options=[item.id for item in window] + ["none"],
+                    key=f"pointer:{kind.value}:{window_index}",
+                ))
+                pointer_kinds.append(kind)
         pointer_results = self._decide(pointer_requests)
         selected: list[tuple[ProblemKind, Sentence]] = []
-        for kind, pointer in zip(_PROBLEM_QUESTIONS, pointer_results, strict=False):
+        for kind, pointer in zip(pointer_kinds, pointer_results, strict=False):
             if not isinstance(pointer, ChoiceDecision) or pointer.selected == "none":
                 continue
             if pointer.confidence < rubric.pointer_threshold:
@@ -340,7 +345,7 @@ class Diagnoser:
                 _PROBLEM_QUESTIONS[kind],
                 {**sentence_state, "selected_sentence_id": sentence.id},
                 type="noul",
-                key=f"problem:{kind.value}",
+                key=f"problem:{kind.value}:{sentence.id}",
             )
             for kind, sentence in selected
         ]

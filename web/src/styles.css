@@ -111,6 +111,24 @@ button:focus-visible {
   margin: 0 !important;
 }
 
+.effort-estimate {
+  color: #8b949e;
+  font-size: 0.83rem;
+  margin: 10px 0 0;
+}
+
+.deep-offer {
+  background: #18212d;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  margin: 14px 0;
+  padding: 12px 16px;
+}
+
+.deep-offer p {
+  margin: 0 0 8px;
+}
+
 select {
   background: #21262d;
   border: 1px solid #30363d;
@@ -194,6 +212,49 @@ button:disabled {
 
 .report pre {
   font-size: 0.8rem;
+}
+
+.report-content section {
+  margin: 20px 0;
+}
+
+.report-content h3 {
+  color: #c9d1d9;
+  font-size: 1rem;
+}
+
+.report-content table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.report-content th,
+.report-content td {
+  border-bottom: 1px solid #30363d;
+  padding: 8px;
+  text-align: left;
+}
+
+.original-prompt {
+  white-space: pre-wrap;
+}
+
+mark {
+  background: #9e6a03;
+  color: #fff;
+}
+
+.model-picker {
+  margin-top: 18px;
+}
+
+.model-picker fieldset {
+  border: 1px solid #30363d;
+  margin: 14px 0;
+}
+
+.model-picker fieldset label {
+  font-weight: 400;
 }
 
 .run-meta {

@@ -129,9 +129,9 @@ def main(
         if args.writer_model:
             overrides["writer"] = args.writer_model
         if args.strong_check_model:
-            overrides["strong_check"] = args.strong_check_model
+            overrides["strong"] = args.strong_check_model
         if args.weak_model:
-            overrides["weak_panel"] = list(args.weak_model)
+            overrides["weak"] = list(args.weak_model)
         options = HarnessOptions(
             tier=args.tier,
             seed=args.seed,
@@ -159,6 +159,10 @@ def main(
             args.output.write_text(rendered + "\n", encoding="utf-8")
         else:
             print(rendered, file=out)
+        failed_cases = [case.case_id for case in report.cases if case.status in {"failed", "error"}]
+        if failed_cases:
+            print(f"evaluation error: {len(failed_cases)} case(s) failed: {', '.join(failed_cases)}", file=err)
+            return 2
         return 0
     except (DatasetError, EvaluationError, OSError) as exc:
         print(f"evaluation error: {exc}", file=err)
