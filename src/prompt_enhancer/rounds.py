@@ -23,7 +23,7 @@ from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .models import Tier, utc_now
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
-from .selector import RankingResult, rank_candidates
+from .selector import RankingCandidate, RankingResult, rank_candidates
 from .strategies import (
     STRATEGY_LIBRARY,
     RewriteStrategy,
@@ -317,41 +317,38 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
     )
     stage("grading")
     panel_grades, grading_answers = grade_panel_with_jev(
-        panel, list(tests), gateway,
+        panel.results, list(tests), gateway,
         judge_model=settings.judge_model, run_id=plan.run_id,
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
     ranking_candidates = [
-        {
-            "candidate_id": candidate.candidate_id,
-            "text": candidate.text,
-            "prompt": candidate.text,
-            "strategy": candidate.strategy.name,
-            "strategy_kind": candidate.strategy.kind,
-            "grade": panel_grades[candidate.candidate_id],
-            "fidelity": (fidelity := check_candidate_fidelity(
+        RankingCandidate(
+            candidate_id=candidate.candidate_id,
+            text=candidate.text,
+            strategy=candidate.strategy.name,
+            strategy_kind=candidate.strategy.kind,
+            grade=panel_grades[candidate.candidate_id],
+            eligible=(fidelity := check_candidate_fidelity(
                 gateway, working_prompt, candidate.text, model_view,
                 candidate.strategy.name, run_id=plan.run_id,
                 judge_model=settings.judge_model,
-            )).to_dict(),
-            "eligible": fidelity.passed,
-            "rejection_reasons": [] if fidelity.passed else ["candidate failed fidelity checks"],
-            "metadata": {"fidelity": fidelity.to_dict()},
-        }
+            )).passed,
+            rejection_reasons=() if fidelity.passed else ("candidate failed fidelity checks",),
+            metadata={"fidelity": fidelity.to_dict()},
+        )
         for candidate in candidates
     ]
     stage("strong_check")
     strong = StrongCheckPolicy(settings.strong_check_model).check(
         working_prompt,
-        [candidate for candidate in ranking_candidates if candidate["eligible"]],
+        [candidate for candidate in ranking_candidates if candidate.eligible],
         list(tests),
         lambda candidate_prompt, _tests: _strong_score(gateway, candidate_prompt, _tests, plan),
     )
     ranking = rank_candidates(
-        {"candidate_id": "original", "text": working_prompt, "grade": original_grade},
+        RankingCandidate("original", working_prompt, "original", "baseline", original_grade),
         ranking_candidates,
-        original_grade=original_grade,
         strong_check=strong,
     )
     final_prompt = ranking.final_prompt
@@ -374,7 +371,7 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
                 candidate_id=item.candidate.candidate_id,
                 strategy=item.candidate.strategy,
                 reasons=tuple(str(reason) for reason in item.rejection_reasons if reason),
-                weak_pass_rates={str(model): float(rate) for model, rate in item.candidate.grade.per_model.items()},
+                weak_pass_rates=dict(item.candidate.grade.per_model) if item.candidate.grade is not None else {},
                 candidate_prompt=item.candidate.text,
             )
             for item in ranking.ranked

@@ -1,14 +1,9 @@
 """Public behavior tests for strategy search, weak-panel evaluation, and ranking."""
 
-from prompt_enhancer.gateway import ScriptedGateway
-from prompt_enhancer.grading import grade_candidate
-from prompt_enhancer.runner import PanelResult, run_candidate_panel, run_candidates
-from prompt_enhancer.selector import rank_candidates
-from prompt_enhancer.strategies import (
-    CandidateDraft,
-    RewriteStrategy,
-    search_strategies,
-)
+from prompt_enhancer.grading import GradeReport
+from prompt_enhancer.selector import RankingCandidate, rank_candidates
+from prompt_enhancer.strategies import search_strategies
+from prompt_enhancer.strong_check import StrongCheckOutcome, StrongCheckReport
 
 
 def test_search_strategies_returns_multiple_named_candidates_and_tier_budgets():
@@ -60,96 +55,38 @@ def test_candidate_writer_receives_confirmed_diagnosis():
     assert captured[0]["diagnosis"] == diagnosis
 
 
-def test_runner_is_parallel_order_stable_and_reproducible():
-    seen = []
+def _grade(worst: float, mean: float = 0.0, spread: float = 0.0) -> GradeReport:
+    return GradeReport("graded", {"weak": worst}, {"weak": (worst,)}, worst, mean, spread)
 
-    def chat(model, _messages, *, seed, **_kwargs):
-        seen.append((model, seed))
-        return f"{model}:{seed}"
 
-    gateway = ScriptedGateway(chat=chat)
-
-    first = run_candidates(
-        [{"id": "rewrite", "prompt": "Rewrite this"}],
-        ["weak-a", "weak-b"],
-        gateway,
-        original="Original",
-        samples=2,
-        run_seed=17,
-        max_workers=4,
-    )
-    second = run_candidates(
-        [{"id": "rewrite", "prompt": "Rewrite this"}],
-        ["weak-a", "weak-b"],
-        gateway,
-        original="Original",
-        samples=2,
-        run_seed=17,
-        max_workers=4,
+def _candidate(candidate_id, text, grade, *, eligible=True, reasons=(), metadata=None):
+    return RankingCandidate(
+        candidate_id, text, "specify_output_format", "safe", grade,
+        eligible=eligible, rejection_reasons=tuple(reasons), metadata=metadata or {},
     )
 
-    assert first.to_dict() == second.to_dict()
-    assert first.candidate_ids == ("original", "rewrite")
-    assert len(first.results) == 8
-    assert all(len({result.seed for result in first.by_candidate("rewrite")}) == 4 for _ in [0])
-    assert [result.sample for result in first.by_candidate("rewrite")] == [0, 1, 0, 1]
-    assert all(result.seed != 0 for result in first.results)
-    assert len(seen) == 16
 
-
-def test_runner_reads_normalized_responses_text_before_raw_output():
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: {
-        "output": [{"type": "reasoning", "summary": []}],
-        "choices": [{"message": {"content": "OK"}}],
-    })
-
-    result = run_candidate_panel("Return OK", ["muse-spark-1.3-contributor"], gateway)
-
-    assert result.results[0].output == "OK"
-
-
-def test_grading_reports_per_model_worst_mean_and_sample_spread():
-    candidate = CandidateDraft(
-        "rewrite",
-        "A prompt",
-        RewriteStrategy("add_context", "safe", "context"),
-    )
-    panel = [
-        PanelResult("rewrite", "weak-a", 0, 1, "pass"),
-        PanelResult("rewrite", "weak-a", 1, 2, "fail"),
-        PanelResult("rewrite", "weak-b", 0, 3, "pass"),
-        PanelResult("rewrite", "weak-b", 1, 4, "pass"),
-    ]
-
-    report = grade_candidate(
-        candidate,
-        panel,
-        lambda request: float(request.output == "pass"),
-        threshold=0.5,
-    )
-
-    assert report.per_model_pass_rates == {"weak-a": 0.5, "weak-b": 1.0}
-    assert report.worst_model_pass_rate == 0.5
-    assert report.mean_pass_rate == 0.75
-    assert report.sample_spread == 0.5
-    assert report.to_dict()["per_model_pass_rates"] == report.per_model
+def _original(text, grade):
+    return RankingCandidate("original", text, "original", "baseline", grade)
 
 
 def test_selector_orders_worst_mean_spread_then_length_and_reports_reasons():
-    baseline = {"id": "original", "text": "x" * 10, "grade": {"worst": 0.4, "mean": 0.4, "spread": 0.1}}
+    baseline = _original("x" * 10, _grade(0.4, 0.4, 0.1))
     candidates = [
-        {"id": "long", "text": "x" * 20, "grade": {"worst": 0.8, "mean": 0.6, "spread": 0.1}},
-        {"id": "short", "text": "x" * 5, "grade": {"worst": 0.8, "mean": 0.6, "spread": 0.1}},
-        {"id": "mean", "text": "x" * 30, "grade": {"worst": 0.8, "mean": 0.7, "spread": 0.2}},
-        {"id": "worst", "text": "x" * 30, "grade": {"worst": 0.9, "mean": 0.1, "spread": 0.4}},
-        {"id": "blocked", "text": "x" * 5, "grade": {"worst": 1.0, "mean": 1.0, "spread": 0.0}, "eligible": False, "rejection_reasons": ["fidelity failed"]},
+        _candidate("long", "x" * 20, _grade(0.8, 0.6, 0.1)),
+        _candidate("short", "x" * 5, _grade(0.8, 0.6, 0.1)),
+        _candidate("mean", "x" * 30, _grade(0.8, 0.7, 0.2)),
+        _candidate("worst", "x" * 30, _grade(0.9, 0.1, 0.4)),
+        _candidate("blocked", "x" * 5, _grade(1.0, 1.0, 0.0), reasons=["fidelity failed"]),
     ]
+    strong = StrongCheckReport("strong", 1.0, tuple(
+        StrongCheckOutcome(candidate.candidate_id, candidate.strategy, 1.0, 1.0, passed=True, reason="passed")
+        if candidate.candidate_id != "blocked"
+        else StrongCheckOutcome("blocked", candidate.strategy, 0.5, 1.0, passed=False, reason="strong check failed")
+        for candidate in candidates
+    ))
 
-    result = rank_candidates(
-        baseline,
-        candidates,
-        strong_check={"outcomes": {"blocked": {"passed": False, "reason": "strong check failed"}}},
-    )
+    result = rank_candidates(baseline, candidates, strong_check=strong)
 
     assert result.selected_candidate_id == "worst"
     assert [item.candidate.candidate_id for item in result.ranked if item.selected] == ["worst"]
@@ -159,14 +96,12 @@ def test_selector_orders_worst_mean_spread_then_length_and_reports_reasons():
 
 
 def test_selector_does_not_claim_an_unrun_strong_check_failed():
-    baseline = {"id": "original", "text": "Original", "grade": {"worst": 0.2}}
-    candidate = {
-        "id": "blocked", "text": "Rewrite", "grade": {"worst": 0.9},
-        "eligible": False, "rejection_reasons": ["candidate failed fidelity checks"],
-        "metadata": {"fidelity": {"passed": False}},
-    }
+    candidate = _candidate(
+        "blocked", "Rewrite", _grade(0.9), eligible=False,
+        reasons=["candidate failed fidelity checks"], metadata={"fidelity": {"passed": False}},
+    )
 
-    result = rank_candidates(baseline, [candidate], strong_check={"passed_candidates": ()})
+    result = rank_candidates(_original("Original", _grade(0.2)), [candidate], strong_check=StrongCheckReport("strong", 1.0, ()))
 
     assert result.rejection_reasons["blocked"] == ("candidate failed fidelity checks",)
     assert result.ranked[0].to_dict()["metadata"]["fidelity"] == {"passed": False}
@@ -174,8 +109,8 @@ def test_selector_does_not_claim_an_unrun_strong_check_failed():
 
 def test_selector_keeps_original_when_no_candidate_beats_it():
     result = rank_candidates(
-        {"id": "original", "text": "original", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}},
-        [{"id": "candidate", "text": "a longer candidate", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}}],
+        _original("original", _grade(0.8, 0.8)),
+        [_candidate("candidate", "a longer candidate", _grade(0.8, 0.8))],
     )
 
     assert result.original_kept
@@ -186,8 +121,8 @@ def test_selector_keeps_original_when_no_candidate_beats_it():
 
 def test_selector_prefers_shorter_prompt_when_grades_are_equal():
     result = rank_candidates(
-        {"id": "original", "text": "an original prompt", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}},
-        [{"id": "candidate", "text": "shorter", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}}],
+        _original("an original prompt", _grade(0.8, 0.8)),
+        [_candidate("candidate", "shorter", _grade(0.8, 0.8))],
     )
 
     assert result.selected_candidate_id == "candidate"

@@ -15,28 +15,7 @@ from .jev import (
     ScoreDecision,
     parse_decision,
 )
-
-
-@dataclass(frozen=True)
-class GradeRequest:
-    """A single candidate/model/sample item for the judge seam."""
-
-    candidate_id: str
-    model: str
-    sample: int
-    seed: int
-    output: str
-    tests: tuple[Any, ...] = ()
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "candidate_id": self.candidate_id,
-            "model": self.model,
-            "sample": self.sample,
-            "seed": self.seed,
-            "output": self.output,
-            "tests": list(self.tests),
-        }
+from .runner import PanelResult
 
 
 @dataclass(frozen=True)
@@ -89,44 +68,6 @@ class GradeReport:
         }
 
 
-def _field(value: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if isinstance(value, Mapping):
-            if name in value:
-                return value[name]
-        elif hasattr(value, name):
-            return getattr(value, name)
-    return default
-
-
-def _runs(runs: Any) -> list[Any]:
-    if hasattr(runs, "results"):
-        return list(runs.results)
-    if isinstance(runs, Mapping):
-        return list(runs.get("outputs", runs.get("results", ())))
-    return list(runs)
-
-
-def _candidate_id(candidate: Any, runs: Sequence[Any]) -> str:
-    value = _field(candidate, "candidate_id", "id")
-    if value is not None:
-        return str(value)
-    if runs:
-        value = _field(runs[0], "candidate_id", "id")
-        if value is not None:
-            return str(value)
-    return "candidate"
-
-
-def _run_fields(run: Any) -> tuple[str, str, int, int, str]:
-    candidate_id = str(_field(run, "candidate_id", "id", default="candidate"))
-    model = str(_field(run, "model", "model_id", default="unknown"))
-    sample = int(_field(run, "sample", "sample_index", default=0))
-    seed = int(_field(run, "seed", default=0))
-    output = str(_field(run, "output", "text", "completion", default=""))
-    return candidate_id, model, sample, seed, output
-
-
 def _noul_probability(answer: Any) -> float:
     """A Jev yes/no answer as a probability; unusable answers score zero."""
     try:
@@ -167,35 +108,24 @@ def metrics_from_scores(
 
 
 def grade_candidate(
-    candidate: Any,
-    panel_runs: Any,
-    judge: Callable[[GradeRequest], float],
+    candidate_id: str,
+    panel: Sequence[PanelResult],
+    score: Callable[[PanelResult], float],
     *,
-    tests: Sequence[Any] = (),
     threshold: float = 0.5,
 ) -> GradeReport:
-    """Grade every panel output and return robust aggregate metrics.
+    """Grade one candidate's panel outputs into robust aggregate metrics.
 
-    ``judge`` scores one :class:`GradeRequest` between 0 and 1.  No gateway
-    calls happen here; ``grade_panel_with_jev`` supplies scores from Jev.
+    ``score`` rates one output between 0 and 1. No gateway calls happen here;
+    ``grade_panel_with_jev`` supplies scores from Jev.
     """
 
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold must be between 0 and 1")
-    runs = _runs(panel_runs)
-    runs = [
-        run
-        for run in runs
-        if _field(run, "candidate_id", "id", default=_candidate_id(candidate, runs))
-        == _candidate_id(candidate, runs)
-    ]
-    candidate_id = _candidate_id(candidate, runs)
+    runs = [run for run in panel if run.candidate_id == candidate_id]
     per_model_scores: dict[str, list[float]] = {}
     for run in runs:
-        _, model, sample, seed, output = _run_fields(run)
-        request = GradeRequest(candidate_id, model, sample, seed, output, tuple(tests))
-        score = float(judge(request))
-        per_model_scores.setdefault(model, []).append(score)
+        per_model_scores.setdefault(run.model, []).append(float(score(run)))
     rates, model_samples, worst, mean, spread, sample_scores = metrics_from_scores(
         per_model_scores, threshold=threshold
     )
@@ -213,7 +143,7 @@ def grade_candidate(
 
 
 def grade_panel_with_jev(
-    panel_runs: Any,
+    panel: Sequence[PanelResult],
     tests: Sequence[Mapping[str, Any]],
     gateway: Gateway,
     *,
@@ -221,11 +151,10 @@ def grade_panel_with_jev(
     run_id: str,
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
     """Batch every output/test decision and its reversed consistency check."""
-    panel = _runs(panel_runs)
     requests: list[dict[str, Any]] = []
     for output_index, run in enumerate(panel):
         for test_index, test in enumerate(tests):
-            state = {"prompt": _field(run, "prompt", default=""), "output": _field(run, "output", default=""), "test": dict(test)}
+            state = {"prompt": run.prompt, "output": run.output, "test": dict(test)}
             kind = str(test.get("kind", "noul"))
             options = tuple(str(item) for item in (test.get("options") if kind == "choice" else test.get("levels")) or ())
             for second in (False, True):
@@ -272,22 +201,20 @@ def grade_panel_with_jev(
                         test_scores.append(0.0)
                 except ValueError:
                     test_scores.append(0.0)
-        scores[(str(_field(run, "candidate_id")), str(_field(run, "model")), int(_field(run, "sample")), int(_field(run, "seed")))] = min(test_scores, default=0.0)
+        scores[(run.candidate_id, run.model, run.sample, run.seed)] = min(test_scores, default=0.0)
     grades = {
         candidate_id: grade_candidate(
-            {"candidate_id": candidate_id},
-            panel_runs,
-            lambda request: scores[(request.candidate_id, request.model, request.sample, request.seed)],
-            tests=tests,
+            candidate_id,
+            panel,
+            lambda run: scores[(run.candidate_id, run.model, run.sample, run.seed)],
         )
-        for candidate_id in dict.fromkeys(str(_field(run, "candidate_id")) for run in panel)
+        for candidate_id in dict.fromkeys(run.candidate_id for run in panel)
     }
     return grades, evidence
 
 
 __all__ = [
     "GradeReport",
-    "GradeRequest",
     "grade_candidate",
     "grade_panel_with_jev",
     "metrics_from_scores",

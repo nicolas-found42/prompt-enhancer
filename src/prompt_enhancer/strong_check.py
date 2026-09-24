@@ -16,10 +16,13 @@ using a different rubric for the original and candidates.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from math import isfinite
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .selector import RankingCandidate
 
 EvaluatePrompt = Callable[[str, Any], float]
 
@@ -124,7 +127,7 @@ class StrongCheckPolicy:
     def check(
         self,
         original_prompt: str,
-        candidates: Sequence[Any],
+        candidates: Sequence[RankingCandidate],
         tests: Any,
         evaluate_prompt: EvaluatePrompt,
     ) -> StrongCheckReport:
@@ -139,7 +142,7 @@ class StrongCheckPolicy:
 
 def run_strong_checks(
     original_prompt: str,
-    candidates: Sequence[Any],
+    candidates: Sequence[RankingCandidate],
     tests: Any,
     evaluate_prompt: EvaluatePrompt,
     *,
@@ -147,11 +150,9 @@ def run_strong_checks(
 ) -> StrongCheckReport:
     """Evaluate the original and candidates against one strong reference.
 
-    ``candidates`` should contain the promising candidates only.  Each object
-    may be a mapping or an object with ``id``/``candidate_id``, ``prompt``,
-    ``strategy`` and ``crutch``/``is_crutch`` attributes.  The callback is
-    invoked with ``(prompt, tests)`` and must return a finite numeric score.
-    The same ``tests`` object is passed for every invocation.
+    ``candidates`` should contain the promising candidates only.  The callback
+    is invoked with ``(prompt, tests)`` and must return a finite numeric
+    score.  The same ``tests`` object is passed for every invocation.
     """
 
     original_score = _score(evaluate_prompt(original_prompt, tests), "original")
@@ -159,7 +160,8 @@ def run_strong_checks(
     seen_ids: set[str] = set()
 
     for candidate in candidates:
-        candidate_id, prompt, strategy, crutch = _candidate_parts(candidate)
+        candidate_id, prompt, strategy = candidate.candidate_id, candidate.text, candidate.strategy
+        crutch = candidate.is_crutch
         if candidate_id in seen_ids:
             raise ValueError(f"duplicate strong-check candidate id: {candidate_id}")
         seen_ids.add(candidate_id)
@@ -206,56 +208,6 @@ def run_strong_checks(
     )
 
 
-def retain_original(
-    report: StrongCheckReport,
-    reason: str = "original_retained: selector found no safe improvement",
-) -> StrongCheckReport:
-    """Annotate a report when a later selector retains the original."""
-
-    return report.with_fallback_reason(reason)
-
-
-def eligible_candidates(
-    candidates: Iterable[Any], report: StrongCheckReport
-) -> list[Any]:
-    """Filter candidates by the strong gate while preserving input order."""
-
-    passed = {outcome.candidate_id for outcome in report.passed_candidates}
-    result: list[Any] = []
-    for candidate in candidates:
-        candidate_id, _, _, _ = _candidate_parts(candidate)
-        if candidate_id in passed:
-            result.append(candidate)
-    return result
-
-
-def _candidate_parts(candidate: Any) -> tuple[str, str, str | None, bool]:
-    if isinstance(candidate, Mapping):
-        candidate_id = candidate.get("id", candidate.get("candidate_id"))
-        prompt = candidate.get("prompt")
-        strategy = candidate.get("strategy")
-        crutch = candidate.get("crutch")
-        if crutch is None:
-            crutch = candidate.get("is_crutch", False)
-    else:
-        candidate_id = getattr(candidate, "id", None)
-        if candidate_id is None:
-            candidate_id = getattr(candidate, "candidate_id", None)
-        prompt = getattr(candidate, "prompt", None)
-        strategy = getattr(candidate, "strategy", None)
-        crutch = getattr(candidate, "crutch", None)
-        if crutch is None:
-            crutch = getattr(candidate, "is_crutch", False)
-
-    if not isinstance(candidate_id, str) or not candidate_id:
-        raise ValueError("strong-check candidates need a non-empty string id")
-    if not isinstance(prompt, str):
-        raise TypeError(f"strong-check candidate {candidate_id!r} needs prompt text")
-    if strategy is not None and not isinstance(strategy, str):
-        strategy = str(strategy)
-    return candidate_id, prompt, strategy, bool(crutch)
-
-
 def _score(value: Any, label: str) -> float:
     if isinstance(value, bool):
         raise TypeError(f"{label} strong score must be numeric, not bool")
@@ -273,7 +225,5 @@ __all__ = [
     "StrongCheckOutcome",
     "StrongCheckPolicy",
     "StrongCheckReport",
-    "eligible_candidates",
-    "retain_original",
     "run_strong_checks",
 ]
