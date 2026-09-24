@@ -63,10 +63,20 @@ class Gateway(Protocol):
         **params: Any,
     ) -> Any: ...
 
-    def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any: ...
+    def decide(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> Any: ...
 
     def decide_batch(
-        self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None
+        self,
+        requests: Sequence[Mapping[str, Any]],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
     ) -> list[Any]: ...
 
     def new_run(self, run_id: str | None = None) -> str: ...
@@ -86,7 +96,10 @@ def writer_messages(instructions: str, state: Any = None) -> list[dict[str, str]
         return [{"role": "user", "content": instructions}]
     return [
         {"role": "system", "content": instructions},
-        {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)},
+        {
+            "role": "user",
+            "content": json.dumps(state, ensure_ascii=False, sort_keys=True),
+        },
     ]
 
 
@@ -105,6 +118,7 @@ def completion_text(value: Any) -> str:
             return completion_text(choices[0])
     raise ValueError("model gateway returned no text completion")
 
+
 class GatewayTransport(Protocol):
     def request(
         self,
@@ -114,8 +128,7 @@ class GatewayTransport(Protocol):
         headers: Mapping[str, str] | None = None,
         json: Any | None = None,
         timeout: float | None = None,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 @dataclass(slots=True)
@@ -139,14 +152,18 @@ class GatewayConfig:
     def from_env(cls, environ: Mapping[str, str] | None = None) -> GatewayConfig:
         env = os.environ if environ is None else environ
         go_base = env.get("OPENCODE_GO_BASE_URL", DEFAULT_GO_BASE_URL).rstrip("/")
-        openrouter_base = env.get("OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL).rstrip("/")
+        openrouter_base = env.get(
+            "OPENROUTER_BASE_URL", DEFAULT_OPENROUTER_BASE_URL
+        ).rstrip("/")
         return cls(
             go_api_key=env.get("OPENCODE_GO_KEY") or env.get("OPENCODE_GO_API_KEY"),
             openrouter_api_key=env.get("OPENROUTER_API_KEY"),
             go_base_url=go_base,
             openrouter_base_url=openrouter_base,
             go_models_url=env.get("OPENCODE_GO_MODELS_URL", f"{go_base}/models"),
-            openrouter_models_url=env.get("OPENROUTER_MODELS_URL", f"{openrouter_base}/models"),
+            openrouter_models_url=env.get(
+                "OPENROUTER_MODELS_URL", f"{openrouter_base}/models"
+            ),
             timeout=float(env.get("PROMPT_ENHANCER_TIMEOUT", "120")),
             max_retries=int(env.get("PROMPT_ENHANCER_MAX_RETRIES", "2")),
             jev_model=env.get("PROMPT_ENHANCER_JEV_MODEL", JEV_MODEL),
@@ -188,7 +205,11 @@ class ProviderError(RuntimeError):
         # ``http`` has a status; ``network`` never reached a response; and
         # ``invalid_response`` means a reply arrived but could not be used.
         self.kind = kind or ("http" if status is not None else "network")
-        detail = {"http": f"HTTP {status}", "network": "no response", "invalid_response": "invalid response"}.get(self.kind, self.kind)
+        detail = {
+            "http": f"HTTP {status}",
+            "network": "no response",
+            "invalid_response": "invalid response",
+        }.get(self.kind, self.kind)
         super().__init__(f"{provider} request for {model} failed ({detail}): {message}")
 
     def to_dict(self) -> dict[str, Any]:
@@ -226,12 +247,22 @@ class HttpTransport:
         try:
             with self._opener(request, timeout=timeout) as response:
                 body = response.read()
-                status = getattr(response, "status", getattr(response, "status_code", 200))
+                status = getattr(
+                    response, "status", getattr(response, "status_code", 200)
+                )
                 parsed = _decode_body(body)
-                return {"status_code": status, "json": parsed, "headers": dict(response.headers.items())}
+                return {
+                    "status_code": status,
+                    "json": parsed,
+                    "headers": dict(response.headers.items()),
+                }
         except urllib.error.HTTPError as exc:
             body = exc.read() if hasattr(exc, "read") else b""
-            return {"status_code": exc.code, "json": _decode_body(body), "headers": dict(exc.headers.items())}
+            return {
+                "status_code": exc.code,
+                "json": _decode_body(body),
+                "headers": dict(exc.headers.items()),
+            }
         # URLError, timeout, and connection errors intentionally propagate to
         # HttpGateway, which retries and wraps them as ProviderError.
 
@@ -279,7 +310,14 @@ def _retry_after_seconds(value: Any) -> float | None:
 def _decision_answers(response: Any, keys: Sequence[str]) -> list[Any]:
     answers = response.get("answers") if isinstance(response, Mapping) else None
     if not isinstance(answers, Mapping) or any(key not in answers for key in keys):
-        raise ProviderError("openrouter", JEV_MODEL, None, "decision answers are missing", role="judge", kind="invalid_response")
+        raise ProviderError(
+            "openrouter",
+            JEV_MODEL,
+            None,
+            "decision answers are missing",
+            role="judge",
+            kind="invalid_response",
+        )
     return [answers[key] for key in keys]
 
 
@@ -318,16 +356,20 @@ class HttpGateway:
             "mimo-v2.6-flash",
             "qwen3.8-flash",
             "muse-spark-1.3-contributor",
-        } | {
-            item if isinstance(item, str) else item.id for item in (go_models or ())
-        }
+        } | {item if isinstance(item, str) else item.id for item in (go_models or ())}
         self.calls: list[dict[str, Any]] = []
         self.decision_log: list[dict[str, Any]] = []
         self._provider_status: dict[str, dict[str, Any]] = {}
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None, **kwargs: Any) -> HttpGateway:
-        return cls(transport=kwargs.pop("transport", None), config=GatewayConfig.from_env(environ), **kwargs)
+    def from_env(
+        cls, environ: Mapping[str, str] | None = None, **kwargs: Any
+    ) -> HttpGateway:
+        return cls(
+            transport=kwargs.pop("transport", None),
+            config=GatewayConfig.from_env(environ),
+            **kwargs,
+        )
 
     @property
     def session_id(self) -> str:
@@ -381,15 +423,26 @@ class HttpGateway:
                 provider = "go" if model in snapshot.go_ids else "openrouter"
             except (RuntimeError, TypeError):
                 provider = "go" if model in self._go_model_ids else "openrouter"
-        base = self.config.go_base_url if provider == "go" else self.config.openrouter_base_url
+        base = (
+            self.config.go_base_url
+            if provider == "go"
+            else self.config.openrouter_base_url
+        )
         path = "/chat/completions"
         if provider == "go":
             if model.startswith(("qwen3.", "minimax-")):
                 path = "/messages"
             elif model.startswith(("grok-", "gpt-", "muse-spark-")):
                 path = "/responses"
-        headers: dict[str, str] = {"User-Agent": self.config.user_agent, "Accept": "application/json"}
-        key = self.config.go_api_key if provider == "go" else self.config.openrouter_api_key
+        headers: dict[str, str] = {
+            "User-Agent": self.config.user_agent,
+            "Accept": "application/json",
+        }
+        key = (
+            self.config.go_api_key
+            if provider == "go"
+            else self.config.openrouter_api_key
+        )
         if key:
             headers["Authorization"] = f"Bearer {key}"
         if provider == "go":
@@ -413,7 +466,9 @@ class HttpGateway:
             timeout=self.config.timeout,
         )
 
-    def _request(self, decision: RouteDecision, payload: Mapping[str, Any], *, role: str) -> Any:
+    def _request(
+        self, decision: RouteDecision, payload: Mapping[str, Any], *, role: str
+    ) -> Any:
         attempts = max(0, self.config.max_retries) + 1
         last_status: int | None = None
         for attempt in range(attempts):
@@ -423,8 +478,23 @@ class HttpGateway:
                 last_status = status
                 if status is not None and status >= 400:
                     if status in RETRYABLE_STATUS and attempt + 1 < attempts:
-                        headers = response.get("headers", {}) if isinstance(response, Mapping) else getattr(response, "headers", {})
-                        retry_after = next((value for key, value in headers.items() if key.lower() == "retry-after"), None) if isinstance(headers, Mapping) else None
+                        headers = (
+                            response.get("headers", {})
+                            if isinstance(response, Mapping)
+                            else getattr(response, "headers", {})
+                        )
+                        retry_after = (
+                            next(
+                                (
+                                    value
+                                    for key, value in headers.items()
+                                    if key.lower() == "retry-after"
+                                ),
+                                None,
+                            )
+                            if isinstance(headers, Mapping)
+                            else None
+                        )
                         delay = _retry_after_seconds(retry_after)
                         if delay is not None:
                             self._sleep(delay)
@@ -432,8 +502,12 @@ class HttpGateway:
                             self._backoff(attempt)
                         continue
                     if status in ACCESS_DENIED_STATUS:
-                        self._note_provider(decision.provider, "unavailable", status, decision.model)
-                    raise ProviderError(decision.provider, decision.model, status, role=role)
+                        self._note_provider(
+                            decision.provider, "unavailable", status, decision.model
+                        )
+                    raise ProviderError(
+                        decision.provider, decision.model, status, role=role
+                    )
                 self._note_provider(decision.provider, "ok", status, decision.model)
                 decoded = _response_json(response)
                 usage = decoded if isinstance(decoded, Mapping) else {}
@@ -443,8 +517,12 @@ class HttpGateway:
                     provider=decision.provider,
                     model=decision.model,
                     response=usage,
-                    input_cost_per_token=model_info.input_cost_per_token if model_info else None,
-                    output_cost_per_token=model_info.output_cost_per_token if model_info else None,
+                    input_cost_per_token=model_info.input_cost_per_token
+                    if model_info
+                    else None,
+                    output_cost_per_token=model_info.output_cost_per_token
+                    if model_info
+                    else None,
                     cap=model_info.monthly_cap if model_info else None,
                     cost=(
                         float(usage["usage"]["cost"])
@@ -458,11 +536,15 @@ class HttpGateway:
                 raise
             except Exception as exc:
                 if attempt + 1 >= attempts:
-                    raise ProviderError(decision.provider, decision.model, last_status, role=role) from exc
+                    raise ProviderError(
+                        decision.provider, decision.model, last_status, role=role
+                    ) from exc
                 self._backoff(attempt)
         raise ProviderError(decision.provider, decision.model, last_status, role=role)
 
-    def _note_provider(self, provider: str, status: str, http_status: int | None, model: str) -> None:
+    def _note_provider(
+        self, provider: str, status: str, http_status: int | None, model: str
+    ) -> None:
         self._provider_status[provider] = {
             "status": status,
             "http_status": http_status,
@@ -474,9 +556,17 @@ class HttpGateway:
         # Sent straight through the transport so the probe never lands in the
         # usage ledger of a run that may be in progress.
         decision = self.route_model(model)
-        payload: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": "Reply with OK."}], "max_tokens": 16}
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+            "max_tokens": 16,
+        }
         if decision.url.endswith("/responses"):
-            payload = {"model": model, "input": payload["messages"], "max_output_tokens": 16}
+            payload = {
+                "model": model,
+                "input": payload["messages"],
+                "max_output_tokens": 16,
+            }
         try:
             status = _response_status(self._attempt(decision, payload))
         except (OSError, ValueError):
@@ -489,7 +579,9 @@ class HttpGateway:
         else:
             self._note_provider(decision.provider, "ok", status, model)
 
-    def provider_health(self, *, probe_models: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
+    def provider_health(
+        self, *, probe_models: Iterable[str] = ()
+    ) -> dict[str, dict[str, Any]]:
         """Return the last known access state of each provider.
 
         A provider that has not been used recently is probed with a one-line
@@ -500,11 +592,16 @@ class HttpGateway:
         for model in probe_models:
             provider = self.route_model(model).provider
             known = self._provider_status.get(provider)
-            if known is not None and now - float(known["checked_at"]) < PROVIDER_STATUS_TTL:
+            if (
+                known is not None
+                and now - float(known["checked_at"]) < PROVIDER_STATUS_TTL
+            ):
                 continue
             self._probe(model)
         return {
-            provider: {key: value for key, value in state.items() if key != "checked_at"}
+            provider: {
+                key: value for key, value in state.items() if key != "checked_at"
+            }
             for provider, state in self._provider_status.items()
         }
 
@@ -534,43 +631,94 @@ class HttpGateway:
         decision = self.route_model(model, run_id=run_id)
         payload: dict[str, Any] = {"model": model, "messages": list(messages), **params}
         if decision.url.endswith("/messages"):
-            system = "\n".join(str(message.get("content", "")) for message in messages if message.get("role") == "system")
+            system = "\n".join(
+                str(message.get("content", ""))
+                for message in messages
+                if message.get("role") == "system"
+            )
             payload = {
                 "model": model,
-                "messages": [dict(message) for message in messages if message.get("role") != "system"],
+                "messages": [
+                    dict(message)
+                    for message in messages
+                    if message.get("role") != "system"
+                ],
                 "max_tokens": params.get("max_tokens", 1024),
                 **({"system": system} if system else {}),
-                **({"temperature": params["temperature"]} if "temperature" in params else {}),
+                **(
+                    {"temperature": params["temperature"]}
+                    if "temperature" in params
+                    else {}
+                ),
             }
         elif decision.url.endswith("/responses"):
             payload = {
                 "model": model,
                 "input": list(messages),
-                "max_output_tokens": params.get("max_tokens", 4096 if model.startswith("muse-spark-") else 1024),
+                "max_output_tokens": params.get(
+                    "max_tokens", 4096 if model.startswith("muse-spark-") else 1024
+                ),
             }
-        self.calls.append({"operation": "chat", "role": role, "model": model, "provider": decision.provider, "run_id": run_id})
+        self.calls.append(
+            {
+                "operation": "chat",
+                "role": role,
+                "model": model,
+                "provider": decision.provider,
+                "run_id": run_id,
+            }
+        )
         response = self._request(decision, payload, role=role)
         if decision.url.endswith("/messages") and isinstance(response, Mapping):
             content = response.get("content", [])
-            text = "".join(str(item.get("text", "")) for item in content if isinstance(item, Mapping) and item.get("type") == "text") if isinstance(content, list) else ""
+            text = (
+                "".join(
+                    str(item.get("text", ""))
+                    for item in content
+                    if isinstance(item, Mapping) and item.get("type") == "text"
+                )
+                if isinstance(content, list)
+                else ""
+            )
             return {**response, "choices": [{"message": {"content": text}}]}
         if decision.url.endswith("/responses") and isinstance(response, Mapping):
             text = response.get("output_text")
             if not isinstance(text, str):
                 output = response.get("output", [])
-                text = "".join(
-                    str(part.get("text", ""))
-                    for item in output if isinstance(item, Mapping)
-                    for part in item.get("content", []) if isinstance(part, Mapping) and part.get("type") == "output_text"
-                ) if isinstance(output, list) else ""
+                text = (
+                    "".join(
+                        str(part.get("text", ""))
+                        for item in output
+                        if isinstance(item, Mapping)
+                        for part in item.get("content", [])
+                        if isinstance(part, Mapping)
+                        and part.get("type") == "output_text"
+                    )
+                    if isinstance(output, list)
+                    else ""
+                )
             return {**response, "choices": [{"message": {"content": text}}]}
         return response
 
-    def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
+    def decide(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> Any:
         request = dict(payload)
         key, envelope = decision_payload(request, model=self.config.jev_model)
         decision = self._decisions_route(run_id)
-        self.calls.append({"operation": "decide", "role": role, "model": self.config.jev_model, "provider": "openrouter", "run_id": run_id})
+        self.calls.append(
+            {
+                "operation": "decide",
+                "role": role,
+                "model": self.config.jev_model,
+                "provider": "openrouter",
+                "run_id": run_id,
+            }
+        )
         response = self._request(
             decision,
             envelope,
@@ -580,11 +728,25 @@ class HttpGateway:
         self.decision_log.append(self._decision_entry(request, answer, response))
         return answer
 
-    def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
+    def decide_batch(
+        self,
+        requests: Sequence[Mapping[str, Any]],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> list[Any]:
         if not requests:
             return []
         keys, envelope = batch_decision_payload(requests, model=self.config.jev_model)
-        self.calls.append({"operation": "decide", "role": role, "model": self.config.jev_model, "provider": "openrouter", "run_id": run_id})
+        self.calls.append(
+            {
+                "operation": "decide",
+                "role": role,
+                "model": self.config.jev_model,
+                "provider": "openrouter",
+                "run_id": run_id,
+            }
+        )
         response = self._request(
             self._decisions_route(run_id),
             envelope,
@@ -600,14 +762,34 @@ class HttpGateway:
     def _decisions_route(self, run_id: str | None) -> RouteDecision:
         route = self.route_model(self.config.jev_model, run_id=run_id)
         base = self.config.openrouter_base_url.rstrip("/").removesuffix("/v1")
-        return RouteDecision(route.provider, route.model, f"{base}{self.config.decisions_path}", route.headers)
+        return RouteDecision(
+            route.provider,
+            route.model,
+            f"{base}{self.config.decisions_path}",
+            route.headers,
+        )
 
-    def _decision_entry(self, request: Mapping[str, Any], answer: Any, response: Any) -> dict[str, Any]:
+    def _decision_entry(
+        self, request: Mapping[str, Any], answer: Any, response: Any
+    ) -> dict[str, Any]:
         model = response.get("model") if isinstance(response, Mapping) else None
         if not isinstance(model, str) or not model:
-            raise ProviderError("openrouter", self.config.jev_model, None, "decision response is missing model snapshot", role="judge", kind="invalid_response")
-        return {"question": dict(request), "answer": answer, "answered_by": model,
-                "usage": response.get("usage") if isinstance(response.get("usage"), Mapping) else {}}
+            raise ProviderError(
+                "openrouter",
+                self.config.jev_model,
+                None,
+                "decision response is missing model snapshot",
+                role="judge",
+                kind="invalid_response",
+            )
+        return {
+            "question": dict(request),
+            "answer": answer,
+            "answered_by": model,
+            "usage": response.get("usage")
+            if isinstance(response.get("usage"), Mapping)
+            else {},
+        }
 
     def usage_report(self) -> dict[str, Any]:
         return self.usage.to_dict()
@@ -647,30 +829,80 @@ class ScriptedGateway:
         self._run_id = str(run_id) if run_id is not None else "scripted"
         return self._run_id
 
-    def _next(self, handler: Callable[..., Any] | None, *args: Any, **kwargs: Any) -> Any:
+    def _next(
+        self, handler: Callable[..., Any] | None, *args: Any, **kwargs: Any
+    ) -> Any:
         if handler is not None:
             return handler(*args, **kwargs)
         if not self.responses:
-            raise ProviderError("scripted", "response", None, "no scripted response remains")
+            raise ProviderError(
+                "scripted", "response", None, "no scripted response remains"
+            )
         return self.responses.pop(0)
 
-    def chat(self, model: str, messages: Any, *, role: str = "writer", run_id: str | None = None, **params: Any) -> Any:
-        self.calls.append({"operation": "chat", "role": role, "model": model, "run_id": run_id})
-        return self._next(self.chat_handler, model, messages, role=role, run_id=run_id, **params)
+    def chat(
+        self,
+        model: str,
+        messages: Any,
+        *,
+        role: str = "writer",
+        run_id: str | None = None,
+        **params: Any,
+    ) -> Any:
+        self.calls.append(
+            {"operation": "chat", "role": role, "model": model, "run_id": run_id}
+        )
+        return self._next(
+            self.chat_handler, model, messages, role=role, run_id=run_id, **params
+        )
 
-    def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
-        self.calls.append({"operation": "decide", "role": role, "model": self.jev_model, "run_id": run_id})
-        answer = self._next(self.decision_handler, dict(payload), role=role, run_id=run_id)
-        self.decision_log.append({"question": dict(payload), "answer": answer, "answered_by": self.jev_model, "usage": {}})
+    def decide(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> Any:
+        self.calls.append(
+            {
+                "operation": "decide",
+                "role": role,
+                "model": self.jev_model,
+                "run_id": run_id,
+            }
+        )
+        answer = self._next(
+            self.decision_handler, dict(payload), role=role, run_id=run_id
+        )
+        self.decision_log.append(
+            {
+                "question": dict(payload),
+                "answer": answer,
+                "answered_by": self.jev_model,
+                "usage": {},
+            }
+        )
         return answer
 
-    def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
+    def decide_batch(
+        self,
+        requests: Sequence[Mapping[str, Any]],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> list[Any]:
         return [self.decide(request, role=role, run_id=run_id) for request in requests]
 
     def list_models(self, *, refresh: bool = False) -> CatalogSnapshot:
-        return self.catalog.fetch(force=refresh) if hasattr(self.catalog, "fetch") else self.catalog
+        return (
+            self.catalog.fetch(force=refresh)
+            if hasattr(self.catalog, "fetch")
+            else self.catalog
+        )
 
-    def provider_health(self, *, probe_models: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
+    def provider_health(
+        self, *, probe_models: Iterable[str] = ()
+    ) -> dict[str, dict[str, Any]]:
         del probe_models
         return {}
 
@@ -684,27 +916,46 @@ class ReplayGateway(ScriptedGateway):
     fallback, so a recording can never answer a different request.
     """
 
-    def __init__(self, recordings: Mapping[str, Any], *, decision_provenance: Mapping[str, Any] | None = None,
-                 expected_snapshot: str | None = None, allow_snapshot_mismatch: bool = False, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        recordings: Mapping[str, Any],
+        *,
+        decision_provenance: Mapping[str, Any] | None = None,
+        expected_snapshot: str | None = None,
+        allow_snapshot_mismatch: bool = False,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.recordings = dict(recordings)
         self.decision_provenance = dict(decision_provenance or {})
         if not allow_snapshot_mismatch:
-            snapshots = {item.get("answered_by") for item in self.decision_provenance.values() if isinstance(item, Mapping)}
+            snapshots = {
+                item.get("answered_by")
+                for item in self.decision_provenance.values()
+                if isinstance(item, Mapping)
+            }
             expected = expected_snapshot or self.jev_model
             mismatches = snapshots - {expected}
             if mismatches:
-                raise ValueError(f"recorded Jev snapshot {sorted(mismatches)!r} differs from configured pin {expected!r}; use --allow-snapshot-mismatch to override")
+                raise ValueError(
+                    f"recorded Jev snapshot {sorted(mismatches)!r} differs from configured pin {expected!r}; use --allow-snapshot-mismatch to override"
+                )
         self.replayed_keys: list[str] = []
 
     @staticmethod
     def request_key(operation: str, model: str, payload: Any, role: str) -> str:
-        raw = json_module_dumps({"operation": operation, "model": model, "payload": payload, "role": role})
+        raw = json_module_dumps(
+            {"operation": operation, "model": model, "payload": payload, "role": role}
+        )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def _lookup(self, operation: str, model: str, payload: Any, role: str) -> Any:
         key = self.request_key(operation, model, payload, role)
-        if key not in self.recordings and operation == "decide" and not self.decision_provenance:
+        if (
+            key not in self.recordings
+            and operation == "decide"
+            and not self.decision_provenance
+        ):
             legacy_key = self.request_key(operation, LEGACY_JEV_ALIAS, payload, role)
             if legacy_key in self.recordings:
                 key = legacy_key
@@ -713,25 +964,63 @@ class ReplayGateway(ScriptedGateway):
             raise ProviderError("replay", model, None, "no recorded response")
         return self.recordings[key]
 
-    def chat(self, model: str, messages: Any, *, role: str = "writer", run_id: str | None = None, **params: Any) -> Any:
-        payload = {"model": model, "messages": list(messages) if not isinstance(messages, str) else messages, **params}
-        self.calls.append({"operation": "chat", "role": role, "model": model, "run_id": run_id})
+    def chat(
+        self,
+        model: str,
+        messages: Any,
+        *,
+        role: str = "writer",
+        run_id: str | None = None,
+        **params: Any,
+    ) -> Any:
+        payload = {
+            "model": model,
+            "messages": list(messages) if not isinstance(messages, str) else messages,
+            **params,
+        }
+        self.calls.append(
+            {"operation": "chat", "role": role, "model": model, "run_id": run_id}
+        )
         return self._lookup("chat", model, payload, role)
 
-    def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
+    def decide(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> Any:
         request = dict(payload)
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
-        self.calls.append({"operation": "decide", "role": role, "model": self.jev_model, "run_id": run_id})
+        self.calls.append(
+            {
+                "operation": "decide",
+                "role": role,
+                "model": self.jev_model,
+                "run_id": run_id,
+            }
+        )
         key = self.request_key("decide", self.jev_model, request, role)
         answer = self._lookup("decide", self.jev_model, request, role)
         provenance = self.decision_provenance.get(key, {})
         if self.decision_provenance and not provenance:
-            raise ProviderError("replay", self.jev_model, None, "recorded Jev decision has no snapshot provenance")
-        self.decision_log.append({"question": request, "answer": answer,
-                                  "answered_by": provenance.get("answered_by", "unknown"),
-                                  "usage": provenance.get("usage", {})})
+            raise ProviderError(
+                "replay",
+                self.jev_model,
+                None,
+                "recorded Jev decision has no snapshot provenance",
+            )
+        self.decision_log.append(
+            {
+                "question": request,
+                "answer": answer,
+                "answered_by": provenance.get("answered_by", "unknown"),
+                "usage": provenance.get("usage", {}),
+            }
+        )
         return answer
+
 
 if TYPE_CHECKING:
     # Every adapter must satisfy the Gateway interface exactly; ty enforces it.

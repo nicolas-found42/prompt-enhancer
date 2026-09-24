@@ -24,10 +24,18 @@ Row = tuple[str, float, bool, bool]
 
 
 def _metrics(rows: list[Row], threshold: float) -> dict[str, float | int]:
-    return binary_metrics(((probability, expected) for _, probability, expected, _ in rows), threshold)
+    return binary_metrics(
+        ((probability, expected) for _, probability, expected, _ in rows), threshold
+    )
 
 
-def calibrate(dataset_path: Path, replay_path: Path, *, thresholds: tuple[float, ...] = THRESHOLDS, question_text: str = CONTEXT_QUESTION) -> dict[str, Any]:
+def calibrate(
+    dataset_path: Path,
+    replay_path: Path,
+    *,
+    thresholds: tuple[float, ...] = THRESHOLDS,
+    question_text: str = CONTEXT_QUESTION,
+) -> dict[str, Any]:
     if not thresholds or any(not 0 <= value <= 1 for value in thresholds):
         raise ValueError("threshold grid must contain probabilities")
     dataset = load_dataset(dataset_path)
@@ -37,7 +45,9 @@ def calibrate(dataset_path: Path, replay_path: Path, *, thresholds: tuple[float,
         raise TypeError("strict replay requires an object of responses")
     rows: list[Row] = []
     for case in dataset.cases:
-        if not case.labels_present or "context" not in case.metadata.get("evaluation_gaps", []):
+        if not case.labels_present or "context" not in case.metadata.get(
+            "evaluation_gaps", []
+        ):
             raise ValueError(f"case {case.id} lacks a reviewable context label")
         question = {
             "model": JEV_MODEL,
@@ -53,13 +63,22 @@ def calibrate(dataset_path: Path, replay_path: Path, *, thresholds: tuple[float,
         if not isinstance(answer, dict):
             raise TypeError(f"context decision for case {case.id} must be an object")
         probability = answer.get("noul", answer.get("probability_true"))
-        if isinstance(probability, bool) or not isinstance(probability, (float, int)) or not 0 <= probability <= 1:
+        if (
+            isinstance(probability, bool)
+            or not isinstance(probability, (float, int))
+            or not 0 <= probability <= 1
+        ):
             raise ValueError(f"invalid context probability for case {case.id}")
         holdout = in_holdout_group(case.id)
-        rows.append((case.id, float(probability), "context" in case.expected_gaps, holdout))
+        rows.append(
+            (case.id, float(probability), "context" in case.expected_gaps, holdout)
+        )
     train = [row for row in rows if not row[3]]
     holdout = [row for row in rows if row[3]]
-    selected = max(thresholds, key=lambda threshold: (_metrics(train, threshold)["f0_5"], threshold))
+    selected = max(
+        thresholds,
+        key=lambda threshold: (_metrics(train, threshold)["f0_5"], threshold),
+    )
     return {
         "question_id": "gap:context",
         "question": question_text,
@@ -92,7 +111,16 @@ def main() -> None:
     if low < 0 or high > 100 or low > high:
         parser.error("threshold range must be within 0 to 1 and nonempty")
     grid = tuple(value / 100 for value in range(low, high + 1))
-    rendered = json.dumps(calibrate(args.dataset, args.replay, thresholds=grid, question_text=args.question), indent=2, sort_keys=True) + "\n"
+    rendered = (
+        json.dumps(
+            calibrate(
+                args.dataset, args.replay, thresholds=grid, question_text=args.question
+            ),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")

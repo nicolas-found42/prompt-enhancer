@@ -38,14 +38,13 @@ class Settings:
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
             opencode_go_key=os.getenv("OPENCODE_GO_KEY") or None,
             judge_model=os.getenv("PROMPT_ENHANCER_JEV_MODEL", JEV_MODEL),
-            writer_model=os.getenv(
-                "PROMPT_ENHANCER_WRITER_MODEL", DEFAULT_GO_WRITER
-            ),
+            writer_model=os.getenv("PROMPT_ENHANCER_WRITER_MODEL", DEFAULT_GO_WRITER),
             strong_check_model=os.getenv(
                 "PROMPT_ENHANCER_STRONG_MODEL", "glm-5.3-flash"
             ),
             fallback_writer_model=os.getenv(
-                "PROMPT_ENHANCER_FALLBACK_WRITER_MODEL", "~deepseek/deepseek-flash-latest"
+                "PROMPT_ENHANCER_FALLBACK_WRITER_MODEL",
+                "~deepseek/deepseek-flash-latest",
             ),
             fallback_strong_check_model=os.getenv(
                 "PROMPT_ENHANCER_FALLBACK_STRONG_MODEL", "deepseek/deepseek-v4.1-flash"

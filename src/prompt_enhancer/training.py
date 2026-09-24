@@ -58,7 +58,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-split-gain", type=float, default=1e-4)
     parser.add_argument("--calibration-bins", type=int, default=10)
     parser.add_argument("--iterations", type=int, default=100)
-    parser.add_argument("--legacy-stumps", action="store_true", help="Run the older binary stump trainer for compatibility.")
+    parser.add_argument(
+        "--legacy-stumps",
+        action="store_true",
+        help="Run the older binary stump trainer for compatibility.",
+    )
     parser.add_argument(
         "--code-version",
         help="Release, commit, or other caller-supplied immutable code version.",
@@ -87,13 +91,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 iterations=args.iterations,
                 code_version=args.code_version,
             )
-            print(json.dumps({
-                "artifact": report["manifest"]["artifact"],
-                "report": str(args.report),
-                "held_out_runs": len(report["evaluation"]["held_out_runs"]),
-                "model_mae": report["evaluation"]["model"]["mae"],
-                "baseline_mae": report["evaluation"]["baseline"]["mae"],
-            }, sort_keys=True))
+            print(
+                json.dumps(
+                    {
+                        "artifact": report["manifest"]["artifact"],
+                        "report": str(args.report),
+                        "held_out_runs": len(report["evaluation"]["held_out_runs"]),
+                        "model_mae": report["evaluation"]["model"]["mae"],
+                        "baseline_mae": report["evaluation"]["baseline"]["mae"],
+                    },
+                    sort_keys=True,
+                )
+            )
             return 0
         config = TrainingConfig(
             seed=args.seed,

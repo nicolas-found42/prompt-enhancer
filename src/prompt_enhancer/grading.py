@@ -81,7 +81,14 @@ def metrics_from_scores(
     per_model_scores: Mapping[str, Sequence[float]],
     *,
     threshold: float = 0.5,
-) -> tuple[dict[str, float], dict[str, tuple[float, ...]], float, float, float, tuple[float, ...]]:
+) -> tuple[
+    dict[str, float],
+    dict[str, tuple[float, ...]],
+    float,
+    float,
+    float,
+    tuple[float, ...],
+]:
     """Calculate report metrics from raw model/sample scores.
 
     Per-model values are pass rates (scores at or above ``threshold``).  The
@@ -95,7 +102,11 @@ def metrics_from_scores(
     for model in sorted(per_model_scores):
         values = tuple(float(value) for value in per_model_scores[model])
         samples[model] = values
-        rates[model] = fmean(1.0 if value >= threshold else 0.0 for value in values) if values else 0.0
+        rates[model] = (
+            fmean(1.0 if value >= threshold else 0.0 for value in values)
+            if values
+            else 0.0
+        )
     mean = fmean(rates.values()) if rates else 0.0
     worst = min(rates.values(), default=0.0)
     sample_means = [
@@ -157,22 +168,51 @@ def grade_panel_with_jev(
         for test_index, test in enumerate(tests):
             state = {"prompt": run.prompt, "output": run.output, "test": dict(test)}
             kind = str(test.get("kind", "noul"))
-            options = tuple(str(item) for item in (test.get("options") if kind == "choice" else test.get("levels")) or ())
+            options = tuple(
+                str(item)
+                for item in (
+                    test.get("options") if kind == "choice" else test.get("levels")
+                )
+                or ()
+            )
             response_indices[(output_index, test_index)] = len(requests)
-            for second in ((False,) if kind == "noul" else (False, True)):
+            for second in (False,) if kind == "noul" else (False, True):
                 question = "Is the answer to the success criterion in state.test yes?"
-                requests.append({
-                    "key": f"grade_{output_index}_{test_index}_{'second' if second else 'first'}",
-                    "model": judge_model,
-                    "type": kind,
-                    "state": state,
-                    "question": question if kind == "noul" else "Answer the success criterion in state.test using the provided criteria.",
-                    **({"criteria": {option: option for option in (reversed(options) if second else options)}} if kind == "choice" else {}),
-                    **({"criteria": list(reversed(options) if second else options)} if kind == "score" else {}),
-                })
+                requests.append(
+                    {
+                        "key": f"grade_{output_index}_{test_index}_{'second' if second else 'first'}",
+                        "model": judge_model,
+                        "type": kind,
+                        "state": state,
+                        "question": question
+                        if kind == "noul"
+                        else "Answer the success criterion in state.test using the provided criteria.",
+                        **(
+                            {
+                                "criteria": {
+                                    option: option
+                                    for option in (
+                                        reversed(options) if second else options
+                                    )
+                                }
+                            }
+                            if kind == "choice"
+                            else {}
+                        ),
+                        **(
+                            {"criteria": list(reversed(options) if second else options)}
+                            if kind == "score"
+                            else {}
+                        ),
+                    }
+                )
     responses: list[Any] = []
     for offset in range(0, len(requests), 40):
-        responses.extend(gateway.decide_batch(requests[offset : offset + 40], role="judge", run_id=run_id))
+        responses.extend(
+            gateway.decide_batch(
+                requests[offset : offset + 40], role="judge", run_id=run_id
+            )
+        )
     if len(responses) != len(requests):
         raise ValueError("Jev returned an incomplete grading batch")
     evidence = [
@@ -190,15 +230,32 @@ def grade_panel_with_jev(
             if kind == "noul":
                 direct = _noul_probability(responses[pair_index])
                 test_scores.append(
-                    0.0 if direct is None else 1.0 - direct if expected.casefold() in {"no", "false"} else direct
+                    0.0
+                    if direct is None
+                    else 1.0 - direct
+                    if expected.casefold() in {"no", "false"}
+                    else direct
                 )
             else:
                 try:
                     first = parse_decision(responses[pair_index])
                     second = parse_decision(responses[pair_index + 1])
-                    if kind == "choice" and isinstance(first, ChoiceDecision) and isinstance(second, ChoiceDecision):
-                        test_scores.append(min(first.probabilities.get(expected, 0.0), second.probabilities.get(expected, 0.0)))
-                    elif kind == "score" and isinstance(first, ScoreDecision) and isinstance(second, ScoreDecision):
+                    if (
+                        kind == "choice"
+                        and isinstance(first, ChoiceDecision)
+                        and isinstance(second, ChoiceDecision)
+                    ):
+                        test_scores.append(
+                            min(
+                                first.probabilities.get(expected, 0.0),
+                                second.probabilities.get(expected, 0.0),
+                            )
+                        )
+                    elif (
+                        kind == "score"
+                        and isinstance(first, ScoreDecision)
+                        and isinstance(second, ScoreDecision)
+                    ):
                         levels = tuple(str(level) for level in test.get("levels", ()))
                         if expected not in levels:
                             test_scores.append(0.0)
@@ -209,15 +266,27 @@ def grade_panel_with_jev(
                             # A test passes to the extent Jev assigns mass at or above the
                             # expected semantic level. The reversed ask puts higher
                             # levels at lower indexes.
-                            test_scores.append(min(
-                                sum(probability for index, probability in first.probabilities.items() if int(index) >= first_index),
-                                sum(probability for index, probability in second.probabilities.items() if int(index) <= second_index),
-                            ))
+                            test_scores.append(
+                                min(
+                                    sum(
+                                        probability
+                                        for index, probability in first.probabilities.items()
+                                        if int(index) >= first_index
+                                    ),
+                                    sum(
+                                        probability
+                                        for index, probability in second.probabilities.items()
+                                        if int(index) <= second_index
+                                    ),
+                                )
+                            )
                     else:
                         test_scores.append(0.0)
                 except ValueError:
                     test_scores.append(0.0)
-        scores[(run.candidate_id, run.model, run.sample, run.seed)] = min(test_scores, default=0.0)
+        scores[(run.candidate_id, run.model, run.sample, run.seed)] = min(
+            test_scores, default=0.0
+        )
     grades = {
         candidate_id: grade_candidate(
             candidate_id,

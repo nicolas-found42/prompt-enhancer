@@ -15,10 +15,20 @@ class CatalogTransport:
 
 
 def test_live_catalog_decodes_both_providers_and_never_exposes_keys():
-    transport = CatalogTransport([
-        {"data": [{"id": "go-model", "name": "Go", "pricing": {"prompt": "0.1", "completion": "0.2"}}]},
-        {"models": [{"id": "or-model", "context_length": 4096}]},
-    ])
+    transport = CatalogTransport(
+        [
+            {
+                "data": [
+                    {
+                        "id": "go-model",
+                        "name": "Go",
+                        "pricing": {"prompt": "0.1", "completion": "0.2"},
+                    }
+                ]
+            },
+            {"models": [{"id": "or-model", "context_length": 4096}]},
+        ]
+    )
     catalog = LiveModelCatalog(
         transport,
         go_url="https://go.test/models",

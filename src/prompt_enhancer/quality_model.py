@@ -47,27 +47,43 @@ def train_quality_model(
 ) -> dict[str, Any]:
     """Fit a continuous pass-rate model and write a held-out audit report."""
     try:
-        from catboost import CatBoostRegressor, Pool
+        from catboost import CatBoostRegressor, Pool  # ty: ignore[unresolved-import]
     except ImportError as exc:
-        raise TrainingDataError("CatBoost is required; install prompt-enhancer[training]") from exc
+        raise TrainingDataError(
+            "CatBoost is required; install prompt-enhancer[training]"
+        ) from exc
     if iterations < 1:
         raise ValueError("iterations must be positive")
     config = TrainingConfig(seed=seed, holdout_fraction=holdout_fraction)
     examples = _normalize_examples(runs, config.failure_threshold)
-    run_set_digest = sha256(json.dumps(
-        [{"run_id": row.run_id, "features": row.features, "pass_rate": row.weak_panel_pass_rate}
-         for row in sorted(examples, key=lambda example: example.run_id)],
-        sort_keys=True, separators=(",", ":"), allow_nan=False,
-    ).encode("utf-8")).hexdigest()
+    run_set_digest = sha256(
+        json.dumps(
+            [
+                {
+                    "run_id": row.run_id,
+                    "features": row.features,
+                    "pass_rate": row.weak_panel_pass_rate,
+                }
+                for row in sorted(examples, key=lambda example: example.run_id)
+            ],
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
     if len(examples) < config.minimum_training_runs + 1:
-        raise TrainingDataError("at least three runs with original weak-panel scores are required")
+        raise TrainingDataError(
+            "at least three runs with original weak-panel scores are required"
+        )
     training, held_out = _split_examples(examples, config)
     names = tuple(sorted({key for example in training for key in example.features}))
     if not names:
         raise TrainingDataError("training runs contain no Jev or score features")
 
     def matrix(rows: list[Any]) -> list[list[float]]:
-        return [[row.features.get(name, float("nan")) for name in names] for row in rows]
+        return [
+            [row.features.get(name, float("nan")) for name in names] for row in rows
+        ]
 
     model = CatBoostRegressor(
         iterations=iterations,
@@ -79,8 +95,17 @@ def train_quality_model(
         allow_writing_files=False,
         verbose=False,
     )
-    model.fit(Pool(matrix(training), [row.weak_panel_pass_rate for row in training], feature_names=list(names)))
-    predictions = [max(0.0, min(1.0, float(value))) for value in model.predict(Pool(matrix(held_out), feature_names=list(names)))]
+    model.fit(
+        Pool(
+            matrix(training),
+            [row.weak_panel_pass_rate for row in training],
+            feature_names=list(names),
+        )
+    )
+    predictions = [
+        max(0.0, min(1.0, float(value)))
+        for value in model.predict(Pool(matrix(held_out), feature_names=list(names)))
+    ]
     labels = [row.weak_panel_pass_rate for row in held_out]
     baseline = fmean(row.weak_panel_pass_rate for row in training)
     failure_labels = [row.failure_label for row in held_out]
@@ -103,11 +128,15 @@ def train_quality_model(
             "observed_pass_rate": row.weak_panel_pass_rate,
             "predicted_pass_rate": prediction,
             "absolute_error": abs(row.weak_panel_pass_rate - prediction),
-            "observation": "Model overestimated prompt quality" if prediction > row.weak_panel_pass_rate else "Model underestimated prompt quality",
+            "observation": "Model overestimated prompt quality"
+            if prediction > row.weak_panel_pass_rate
+            else "Model underestimated prompt quality",
         }
         for row, prediction in zip(held_out, predictions, strict=True)
     ]
-    priority_queue.sort(key=lambda item: (-float(item["absolute_error"]), str(item["run_id"])))
+    priority_queue.sort(
+        key=lambda item: (-float(item["absolute_error"]), str(item["run_id"]))
+    )
     payload = {
         "schema_version": 1,
         "offline": True,
@@ -137,16 +166,30 @@ def train_quality_model(
             "held_out_runs": [row.run_id for row in held_out],
             "model": {
                 **_regression_metrics(labels, predictions),
-                **_prediction_metrics(failure_labels, [1.0 - value for value in predictions], names, held_out, config.calibration_bins),
+                **_prediction_metrics(
+                    failure_labels,
+                    [1.0 - value for value in predictions],
+                    names,
+                    held_out,
+                    config.calibration_bins,
+                ),
             },
             "baseline": {
                 **_regression_metrics(labels, [baseline] * len(labels)),
-                **_prediction_metrics(failure_labels, [1.0 - baseline] * len(labels), names, held_out, config.calibration_bins),
+                **_prediction_metrics(
+                    failure_labels,
+                    [1.0 - baseline] * len(labels),
+                    names,
+                    held_out,
+                    config.calibration_bins,
+                ),
             },
         },
         "priority_queue": priority_queue,
     }
-    with NamedTemporaryFile(dir=report.parent, mode="w", encoding="utf-8", delete=False) as temp:
+    with NamedTemporaryFile(
+        dir=report.parent, mode="w", encoding="utf-8", delete=False
+    ) as temp:
         temporary_report = Path(temp.name)
         json.dump(payload, temp, ensure_ascii=False, sort_keys=True, indent=2)
         temp.write("\n")
@@ -157,8 +200,13 @@ def train_quality_model(
     return payload
 
 
-def _regression_metrics(labels: list[float], predictions: list[float]) -> dict[str, float]:
-    errors = [actual - prediction for actual, prediction in zip(labels, predictions, strict=True)]
+def _regression_metrics(
+    labels: list[float], predictions: list[float]
+) -> dict[str, float]:
+    errors = [
+        actual - prediction
+        for actual, prediction in zip(labels, predictions, strict=True)
+    ]
     return {
         "mae": fmean(abs(error) for error in errors),
         "rmse": math.sqrt(fmean(error * error for error in errors)),

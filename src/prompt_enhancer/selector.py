@@ -140,7 +140,11 @@ def _strong_decision(
     except KeyError:
         # Upstream fidelity can exclude a candidate before any strong-model run;
         # an eligible candidate the strong check never ran has not passed it.
-        return (None, None) if not candidate.eligible else (False, "strong check did not pass")
+        return (
+            (None, None)
+            if not candidate.eligible
+            else (False, "strong check did not pass")
+        )
     if outcome.passed:
         return True, None
     return False, outcome.reason or "strong check failed"
@@ -187,11 +191,7 @@ def rank_candidates(
 
     eligible.sort(key=lambda candidate: (_key(candidate), candidate.candidate_id))
     best = eligible[0] if eligible else None
-    selected = (
-        best
-        if best is not None and _key(best) < _key(baseline)
-        else None
-    )
+    selected = best if best is not None and _key(best) < _key(baseline) else None
     selected_id = selected.candidate_id if selected else None
 
     ranked: list[RankedCandidate] = []

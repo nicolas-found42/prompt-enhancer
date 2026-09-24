@@ -26,7 +26,9 @@ class FakeOptimizer:
                         impact="high",
                         present=None,
                         question="Which format?",
-                        options=({"value": "json", "label": "JSON", "preselected": True},),
+                        options=(
+                            {"value": "json", "label": "JSON", "preselected": True},
+                        ),
                     )
                 ]
             ),
@@ -42,7 +44,9 @@ class FakeOptimizer:
 def test_resume_route_maps_answers_to_same_run() -> None:
     app = FastAPI()
     register_clarification_routes(app, FakeOptimizer())
-    response = TestClient(app).post("/api/optimize/resume/http-run", json={"answers": {"format": "json"}})
+    response = TestClient(app).post(
+        "/api/optimize/resume/http-run", json={"answers": {"format": "json"}}
+    )
 
     assert response.status_code == 200
     assert response.json()["run_id"] == "http-run"

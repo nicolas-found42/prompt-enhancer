@@ -10,8 +10,13 @@ from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.rounds import RoundPlan, run_round
 
 PROMPT = "Summarize the report."
-GAPS = {"confirmed_gaps": [{"key": "output_format", "label": "output format"}], "problem_sentences": []}
-TESTS = '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}]}'
+GAPS = {
+    "confirmed_gaps": [{"key": "output_format", "label": "output format"}],
+    "problem_sentences": [],
+}
+TESTS = (
+    '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}]}'
+)
 WEAK = ("weak-a", "weak-b", "weak-c", "weak-d", "weak-e")
 
 
@@ -27,10 +32,19 @@ def _gateway(
         if role == "writer":
             state = json.loads(messages[1]["content"])
             if "strategies" in state:
-                return json.dumps({item["name"]: f"Rewrite {item['name']}" for item in state["strategies"]})
+                return json.dumps(
+                    {
+                        item["name"]: f"Rewrite {item['name']}"
+                        for item in state["strategies"]
+                    }
+                )
             return tests
         prompt = messages[0]["content"]
-        passed = strong_passes(prompt) if role == "strong_check" else weak_passes(model, prompt)
+        passed = (
+            strong_passes(prompt)
+            if role == "strong_check"
+            else weak_passes(model, prompt)
+        )
         # Weak and strong models answer in the chat-completions shape.
         return {"choices": [{"message": {"content": "pass" if passed else "fail"}}]}
 
@@ -38,9 +52,18 @@ def _gateway(
         key = str(request.get("key", ""))
         state = request.get("state", {})
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
         if key.startswith("strategy_recheck:"):
-            probability = 0.0 if key.removeprefix("strategy_recheck:") in blocked_strategies else 1.0
+            probability = (
+                0.0
+                if key.removeprefix("strategy_recheck:") in blocked_strategies
+                else 1.0
+            )
         elif key.startswith("grade_"):
             probability = float(state["output"] == "pass")
             if key.endswith("_second"):
@@ -84,7 +107,9 @@ def test_round_without_faithful_tests_is_unverified() -> None:
 
 
 def test_round_without_confirmed_gaps_keeps_the_prompt_and_declines_deep() -> None:
-    outcome = run_round(_gateway(), _plan(diagnosis={"confirmed_gaps": [], "problem_sentences": []}))
+    outcome = run_round(
+        _gateway(), _plan(diagnosis={"confirmed_gaps": [], "problem_sentences": []})
+    )
 
     assert outcome.status == "no_change"
     assert "No confirmed gaps" in outcome.summary
@@ -93,8 +118,14 @@ def test_round_without_confirmed_gaps_keeps_the_prompt_and_declines_deep() -> No
 
 def test_round_with_no_eligible_strategy_keeps_the_prompt() -> None:
     all_strategies = {
-        "add_missing_context", "specify_output_format", "add_done_criteria", "remove_contradictions",
-        "add_example", "split_into_steps", "role_play", "repeated_emphasis",
+        "add_missing_context",
+        "specify_output_format",
+        "add_done_criteria",
+        "remove_contradictions",
+        "add_example",
+        "split_into_steps",
+        "role_play",
+        "repeated_emphasis",
     }
     outcome = run_round(_gateway(blocked_strategies=all_strategies), _plan())
 
@@ -110,14 +141,21 @@ def test_round_picks_a_verified_winner_and_reports_the_losers() -> None:
     assert outcome.original_kept is False
     assert outcome.final_prompt.startswith("Rewrite ")
     assert outcome.selected_candidate_id is not None
-    assert outcome.selected_strategy == _candidates(outcome)[outcome.selected_candidate_id]["strategy"]
-    assert {failure.candidate_id for failure in outcome.failures} == set(_candidates(outcome)) - {outcome.selected_candidate_id}
+    assert (
+        outcome.selected_strategy
+        == _candidates(outcome)[outcome.selected_candidate_id]["strategy"]
+    )
+    assert {failure.candidate_id for failure in outcome.failures} == set(
+        _candidates(outcome)
+    ) - {outcome.selected_candidate_id}
     assert outcome.continue_rounds is False
 
 
 def test_round_rejects_a_candidate_that_fails_fidelity() -> None:
     outcome = run_round(_gateway(unfaithful={"Rewrite specify_output_format"}), _plan())
-    candidate = next(c for c in outcome.candidates if c["strategy"] == "specify_output_format")
+    candidate = next(
+        c for c in outcome.candidates if c["strategy"] == "specify_output_format"
+    )
 
     assert candidate["selected"] is False
     assert "candidate failed fidelity checks" in candidate["rejection_reasons"]
@@ -125,12 +163,17 @@ def test_round_rejects_a_candidate_that_fails_fidelity() -> None:
 
 
 def test_round_rejects_a_weak_panel_winner_that_regresses_on_the_strong_model() -> None:
-    outcome = run_round(_gateway(strong_passes=lambda prompt: prompt == PROMPT), _plan())
+    outcome = run_round(
+        _gateway(strong_passes=lambda prompt: prompt == PROMPT), _plan()
+    )
 
     assert outcome.original_kept is True
     assert outcome.status == "no_change"
     assert all(
-        any(reason.startswith("strong_check_regression") for reason in candidate["rejection_reasons"])
+        any(
+            reason.startswith("strong_check_regression")
+            for reason in candidate["rejection_reasons"]
+        )
         for candidate in outcome.candidates
     )
     assert outcome.continue_rounds is True
@@ -139,19 +182,26 @@ def test_round_rejects_a_weak_panel_winner_that_regresses_on_the_strong_model() 
 def test_round_marks_and_blocks_a_crutch_strategy_that_regresses() -> None:
     crutches = {"add_example", "split_into_steps", "role_play", "repeated_emphasis"}
     outcome = run_round(
-        _gateway(strong_passes=lambda prompt: prompt.removeprefix("Rewrite ") not in crutches),
+        _gateway(
+            strong_passes=lambda prompt: prompt.removeprefix("Rewrite ") not in crutches
+        ),
         _plan(tier="deep"),
     )
     strong = outcome.report()["strong_check"]["candidates"]
     crutch_outcomes = [entry for entry in strong if entry["strategy"] in crutches]
 
     assert crutch_outcomes
-    assert all(entry["crutch"] is True and entry["eligible"] is False for entry in crutch_outcomes)
+    assert all(
+        entry["crutch"] is True and entry["eligible"] is False
+        for entry in crutch_outcomes
+    )
     assert outcome.final_prompt.removeprefix("Rewrite ") not in crutches
 
 
 def test_round_keeps_the_prompt_when_no_candidate_beats_it() -> None:
-    outcome = run_round(_gateway(weak_passes=lambda _model, prompt: prompt == PROMPT), _plan())
+    outcome = run_round(
+        _gateway(weak_passes=lambda _model, prompt: prompt == PROMPT), _plan()
+    )
 
     assert outcome.original_kept is True
     assert outcome.status == "no_change"
@@ -161,7 +211,12 @@ def test_round_keeps_the_prompt_when_no_candidate_beats_it() -> None:
 
 
 def test_round_grades_each_weak_model_separately() -> None:
-    outcome = run_round(_gateway(weak_passes=lambda model, prompt: prompt != PROMPT and model == "weak-a"), _plan())
+    outcome = run_round(
+        _gateway(
+            weak_passes=lambda model, prompt: prompt != PROMPT and model == "weak-a"
+        ),
+        _plan(),
+    )
     grade = next(iter(_candidates(outcome).values()))["grade"]
 
     assert grade["per_model"] == {"weak-a": 1.0, "weak-b": 0.0}

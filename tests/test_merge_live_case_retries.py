@@ -35,15 +35,30 @@ def test_merge_replaces_retry_case_and_keeps_unaffected_case() -> None:
 
 
 def test_merge_requires_matching_rubric() -> None:
-    base = {"responses": {}, "case_costs": {"a": {}}, "case_latency_ms": {"a": 1}, "rubric_thresholds": {"context": 0.87}}
-    retry = {"responses": {}, "case_costs": {"a": {}}, "case_latency_ms": {"a": 1}, "rubric_thresholds": {"context": 0.8}}
+    base = {
+        "responses": {},
+        "case_costs": {"a": {}},
+        "case_latency_ms": {"a": 1},
+        "rubric_thresholds": {"context": 0.87},
+    }
+    retry = {
+        "responses": {},
+        "case_costs": {"a": {}},
+        "case_latency_ms": {"a": 1},
+        "rubric_thresholds": {"context": 0.8},
+    }
 
     with pytest.raises(ValueError, match="rubric thresholds"):
         merge(base, retry, retry_case_ids={"a"})
 
 
 def test_merge_requires_matching_faithfulness_threshold() -> None:
-    base = {"responses": {}, "case_costs": {"a": {}}, "case_latency_ms": {"a": 1}, "rubric_thresholds": None}
+    base = {
+        "responses": {},
+        "case_costs": {"a": {}},
+        "case_latency_ms": {"a": 1},
+        "rubric_thresholds": None,
+    }
     retry = {**base, "faithfulness_threshold": 0.8}
 
     with pytest.raises(ValueError, match="faithfulness thresholds"):

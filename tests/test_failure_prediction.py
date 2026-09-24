@@ -63,9 +63,10 @@ def test_repeated_training_writes_reproducible_artifact_and_manifest(
 
     first_artifact = json.loads((tmp_path / "first.json").read_text())
     second_artifact = json.loads((tmp_path / "second.json").read_text())
-    assert first["manifest"]["artifact"]["sha256"] == second["manifest"]["artifact"][
-        "sha256"
-    ]
+    assert (
+        first["manifest"]["artifact"]["sha256"]
+        == second["manifest"]["artifact"]["sha256"]
+    )
     assert first["manifest"]["run_set"] == second["manifest"]["run_set"]
     assert first["manifest"]["config"] == second["manifest"]["config"]
     assert first["manifest"]["code_version"] == "fixture-revision"
@@ -112,8 +113,11 @@ def test_cli_trains_from_local_json_without_credentials(
     assert artifact.exists()
 
 
-def test_catboost_cli_trains_continuous_pass_rate_from_local_run_store(tmp_path: Path, capsys) -> None:
+def test_catboost_cli_trains_continuous_pass_rate_from_local_run_store(
+    tmp_path: Path, capsys
+) -> None:
     import pytest
+
     pytest.importorskip("catboost")
     from catboost import CatBoostRegressor
 
@@ -127,10 +131,20 @@ def test_catboost_cli_trains_continuous_pass_rate_from_local_run_store(tmp_path:
     artifact = tmp_path / "quality.cbm"
     report_path = tmp_path / "quality-report.json"
 
-    exit_code = main([
-        "--database", str(database), "--artifact", str(artifact),
-        "--report", str(report_path), "--iterations", "20", "--seed", "7",
-    ])
+    exit_code = main(
+        [
+            "--database",
+            str(database),
+            "--artifact",
+            str(artifact),
+            "--report",
+            str(report_path),
+            "--iterations",
+            "20",
+            "--seed",
+            "7",
+        ]
+    )
 
     assert exit_code == 0
     output = json.loads(capsys.readouterr().out)
@@ -142,7 +156,9 @@ def test_catboost_cli_trains_continuous_pass_rate_from_local_run_store(tmp_path:
     assert report["manifest"]["run_set"]["count"] == 8
     assert report["manifest"]["run_set"]["sha256"].startswith("sha256:")
     assert report["manifest"]["config"]["depth"] == 4
-    assert {"discrimination", "calibration", "coverage"} <= report["evaluation"]["model"].keys()
+    assert {"discrimination", "calibration", "coverage"} <= report["evaluation"][
+        "model"
+    ].keys()
     assert report["evaluation"]["model"]["mae"] >= 0
     assert artifact.exists()
     model = CatBoostRegressor()

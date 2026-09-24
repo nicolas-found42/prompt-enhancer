@@ -63,13 +63,21 @@ class _Job:
 
 class RunJobs:
     def __init__(self, *, keep: int = 50) -> None:
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="prompt-run")
+        self._executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="prompt-run"
+        )
         self._jobs: OrderedDict[str, _Job] = OrderedDict()
         self._lock = threading.Lock()
         self._keep = keep
 
     def submit(
-        self, run_id: str, kind: str, work: JobWork, on_failure: FailureBuilder, *, prompt: str = ""
+        self,
+        run_id: str,
+        kind: str,
+        work: JobWork,
+        on_failure: FailureBuilder,
+        *,
+        prompt: str = "",
     ) -> dict[str, Any]:
         with self._lock:
             existing = self._jobs.get(run_id)
@@ -116,7 +124,9 @@ class RunJobs:
 
     def active(self) -> list[dict[str, Any]]:
         with self._lock:
-            jobs = [job for job in self._jobs.values() if job.state in {"queued", "running"}]
+            jobs = [
+                job for job in self._jobs.values() if job.state in {"queued", "running"}
+            ]
         return [job.snapshot() for job in jobs]
 
     def cancel(self, run_id: str) -> dict[str, Any]:

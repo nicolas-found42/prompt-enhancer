@@ -54,7 +54,9 @@ def _jsonable(value: Any) -> Any:
 
 
 def _dumps(value: Any) -> str:
-    return json.dumps(_jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        _jsonable(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
 
 
 def _first(record: Mapping[str, Any], *names: str, default: Any = None) -> Any:
@@ -83,7 +85,10 @@ def _mapping(value: Any) -> dict[str, Any]:
         if not key.startswith("_") and not callable(getattr(value, key))
     }
 
-def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | None = None) -> dict[str, Any]:
+
+def _normalise_record(
+    record: Mapping[str, Any], existing: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
     """Flatten the canonical store record while retaining its original shape.
 
     Bootstrap stores ``result`` and ``report`` nested.  The history API also
@@ -107,21 +112,73 @@ def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | N
             value = _first(report_map, *names, default=None)
         return _jsonable(default if value is None else value)
 
-    original_prompt = pick("original_prompt", "originalPrompt", "prompt", "input_prompt", "inputPrompt", default="")
+    original_prompt = pick(
+        "original_prompt",
+        "originalPrompt",
+        "prompt",
+        "input_prompt",
+        "inputPrompt",
+        default="",
+    )
     final_prompt = pick("final_prompt", "finalPrompt", default=None)
-    status = pick("status", default="completed" if final_prompt is not None else "needs_input")
+    status = pick(
+        "status", default="completed" if final_prompt is not None else "needs_input"
+    )
     metadata = source.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
     # Keep provider-specific and future fields searchable/visible without a
     # migration.  Known nested fields are omitted to avoid duplicate payloads.
     known = {
-        "run_id", "runId", "id", "created_at", "createdAt", "updated_at", "updatedAt", "prompt",
-        "input_prompt", "inputPrompt", "tier", "options", "result", "report", "metadata", "status",
-        "final_prompt", "finalPrompt", "original_kept", "originalKept", "cost", "timing", "timings",
-        "diagnosis", "tests", "candidates", "outputs", "grades", "questions", "answers", "models",
-        "model_choices", "modelChoices", "jev_answers", "jevAnswers", "original", "original_results",
-        "originalResults", "feedback", "decision", "feedback_at", "feedbackAt", "round", "round_index",
-        "roundIndex", "max_rounds", "maxRounds", "escalation", "deep_offer", "deepOffer",
+        "run_id",
+        "runId",
+        "id",
+        "created_at",
+        "createdAt",
+        "updated_at",
+        "updatedAt",
+        "prompt",
+        "input_prompt",
+        "inputPrompt",
+        "tier",
+        "options",
+        "result",
+        "report",
+        "metadata",
+        "status",
+        "final_prompt",
+        "finalPrompt",
+        "original_kept",
+        "originalKept",
+        "cost",
+        "timing",
+        "timings",
+        "diagnosis",
+        "tests",
+        "candidates",
+        "outputs",
+        "grades",
+        "questions",
+        "answers",
+        "models",
+        "model_choices",
+        "modelChoices",
+        "jev_answers",
+        "jevAnswers",
+        "original",
+        "original_results",
+        "originalResults",
+        "feedback",
+        "decision",
+        "feedback_at",
+        "feedbackAt",
+        "round",
+        "round_index",
+        "roundIndex",
+        "max_rounds",
+        "maxRounds",
+        "escalation",
+        "deep_offer",
+        "deepOffer",
     }
     for key, value in source.items():
         if str(key) not in known and str(key) != "metadata":
@@ -146,9 +203,13 @@ def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | N
         models = options.get("models", options.get("model_choices", {}))
     feedback_value = _feedback(_first(source, "feedback", "decision", default=None))
     if feedback_value is None:
-        feedback_value = _feedback(_first(result_map, "feedback", "decision", default=None))
+        feedback_value = _feedback(
+            _first(result_map, "feedback", "decision", default=None)
+        )
     if feedback_value is None:
-        feedback_value = _feedback(_first(report_map, "feedback", "decision", default=None))
+        feedback_value = _feedback(
+            _first(report_map, "feedback", "decision", default=None)
+        )
     candidates = pick("candidates", default=[])
     grades = pick("grades", default=[])
     if not grades and isinstance(candidates, list):
@@ -190,7 +251,9 @@ def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | N
         "timings": pick("timing", "timings", "duration", default={}),
         "report": _jsonable(report),
         "result": _jsonable(result),
-        "original": pick("original", "original_results", "originalResults", default=None),
+        "original": pick(
+            "original", "original_results", "originalResults", default=None
+        ),
         "jev_answers": pick("jev_answers", "jevAnswers", "decisions", default=[]),
         "metadata": _jsonable(metadata),
         "feedback": feedback_value,
@@ -286,10 +349,25 @@ class RunHistory:
         return {
             key: detail.get(key)
             for key in (
-                "run_id", "id", "created_at", "updated_at", "status", "prompt", "original_prompt",
-                "final_prompt", "original_kept", "tier", "feedback", "feedback_at", "cost", "timings",
+                "run_id",
+                "id",
+                "created_at",
+                "updated_at",
+                "status",
+                "prompt",
+                "original_prompt",
+                "final_prompt",
+                "original_kept",
+                "tier",
+                "feedback",
+                "feedback_at",
+                "cost",
+                "timings",
             )
-        } | {"models": detail.get("models", {}), "escalated_from": detail.get("escalated_from")}
+        } | {
+            "models": detail.get("models", {}),
+            "escalated_from": detail.get("escalated_from"),
+        }
 
     @staticmethod
     def _metadata_value(metadata: Mapping[str, Any], path: str) -> Any:
@@ -313,7 +391,11 @@ class RunHistory:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         """List newest-first runs, searching prompt text and metadata."""
-        search_text = search if search is not None else (query if isinstance(query, str) else None)
+        search_text = (
+            search
+            if search is not None
+            else (query if isinstance(query, str) else None)
+        )
         terms = dict(query) if isinstance(query, Mapping) else {}
         terms.update(metadata or {})
         wanted_feedback = _feedback(feedback) if feedback is not None else None
@@ -325,19 +407,41 @@ class RunHistory:
         for item in raw:
             item_map = _mapping(item)
             run_id = _first(item_map, "run_id", "runId", "id")
-            detail = self._get(str(run_id)) if run_id is not None else _normalise_record(item_map)
+            detail = (
+                self._get(str(run_id))
+                if run_id is not None
+                else _normalise_record(item_map)
+            )
             if detail is not None:
                 details.append(detail)
-        details.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("run_id") or "")), reverse=True)
+        details.sort(
+            key=lambda item: (
+                str(item.get("created_at") or ""),
+                str(item.get("run_id") or ""),
+            ),
+            reverse=True,
+        )
         filtered: list[dict[str, Any]] = []
         for detail in details:
-            if tier is not None and str(detail.get("tier") or "").casefold() != str(tier).casefold():
+            if (
+                tier is not None
+                and str(detail.get("tier") or "").casefold() != str(tier).casefold()
+            ):
                 continue
-            if status is not None and str(detail.get("status") or "").casefold() != str(status).casefold():
+            if (
+                status is not None
+                and str(detail.get("status") or "").casefold() != str(status).casefold()
+            ):
                 continue
-            if wanted_feedback is not None and detail.get("feedback") != wanted_feedback:
+            if (
+                wanted_feedback is not None
+                and detail.get("feedback") != wanted_feedback
+            ):
                 continue
-            if any(self._metadata_value(detail.get("metadata", {}), str(key)) != value for key, value in terms.items()):
+            if any(
+                self._metadata_value(detail.get("metadata", {}), str(key)) != value
+                for key, value in terms.items()
+            ):
                 continue
             if search_text:
                 haystack = _dumps(detail).casefold()
@@ -346,9 +450,11 @@ class RunHistory:
             filtered.append(self._summary(detail))
         start = max(0, int(offset))
         count = max(0, int(limit))
-        return filtered[start:] if count == 0 else filtered[start:start + count]
+        return filtered[start:] if count == 0 else filtered[start : start + count]
 
-    def search_runs(self, query: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
+    def search_runs(
+        self, query: str | None = None, **kwargs: Any
+    ) -> list[dict[str, Any]]:
         return self.list_runs(query, **kwargs)
 
     def record_feedback(self, run_id: str, decision: str) -> dict[str, Any]:
@@ -357,7 +463,12 @@ class RunHistory:
         if value is None:
             raise ValueError("feedback must be 'accept' or 'reject'")
         detail = self.require_run(str(run_id))
-        if str(detail.get("status") or "").casefold() in {"needs_input", "needs-input", "paused", "running"}:
+        if str(detail.get("status") or "").casefold() in {
+            "needs_input",
+            "needs-input",
+            "paused",
+            "running",
+        }:
             raise ValueError("feedback is only available for a completed result")
         if detail.get("final_prompt") is None:
             raise ValueError("feedback is only available for a completed result")
@@ -400,7 +511,14 @@ def register_history_routes(app: Any, store: Any) -> Any:
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
     ) -> dict[str, Any]:
-        runs = history.list_runs(q or search, tier=tier, status=status, feedback=feedback, limit=limit, offset=offset)
+        runs = history.list_runs(
+            q or search,
+            tier=tier,
+            status=status,
+            feedback=feedback,
+            limit=limit,
+            offset=offset,
+        )
         return {"runs": runs, "count": len(runs), "total": len(runs)}
 
     @router.get("/runs/{run_id}")

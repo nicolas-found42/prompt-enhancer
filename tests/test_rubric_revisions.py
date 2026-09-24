@@ -30,14 +30,22 @@ FIXTURE = json.loads(
 
 def test_revision_detects_newly_regressed_case_even_when_total_is_unchanged() -> None:
     baseline = EvaluationMetrics(
-        precision=0.7, recall=0.7, total_cost_usd=0.01,
-        regression_count=1, case_count=2,
-        evaluated_case_ids=("a", "b"), regressed_case_ids=("a",),
+        precision=0.7,
+        recall=0.7,
+        total_cost_usd=0.01,
+        regression_count=1,
+        case_count=2,
+        evaluated_case_ids=("a", "b"),
+        regressed_case_ids=("a",),
     )
     candidate = EvaluationMetrics(
-        precision=0.9, recall=0.9, total_cost_usd=0.01,
-        regression_count=1, case_count=2,
-        evaluated_case_ids=("a", "b"), regressed_case_ids=("b",),
+        precision=0.9,
+        recall=0.9,
+        total_cost_usd=0.01,
+        regression_count=1,
+        case_count=2,
+        evaluated_case_ids=("a", "b"),
+        regressed_case_ids=("b",),
     )
 
     comparison = RevisionEvaluation.compare(baseline, candidate, EvaluationPolicy())
@@ -81,7 +89,10 @@ class FixtureEvaluator:
         evaluation_set: EvaluationSet,
     ) -> EvaluationMetrics:
         del rubric
-        assert evaluation_set.replay_artifact == FIXTURE["evaluation_set"]["replay_artifact"]
+        assert (
+            evaluation_set.replay_artifact
+            == FIXTURE["evaluation_set"]["replay_artifact"]
+        )
         return EvaluationMetrics(**FIXTURE["baseline"])
 
     def evaluate_revision(
@@ -93,7 +104,13 @@ class FixtureEvaluator:
     ) -> EvaluationMetrics:
         del rubric, evaluation_set
         self.revision_calls.append(
-            (change.kind.value, change.question_id, baseline.input_digest if hasattr(baseline, "input_digest") else "fixture")
+            (
+                change.kind.value,
+                change.question_id,
+                baseline.input_digest
+                if hasattr(baseline, "input_digest")
+                else "fixture",
+            )
         )
         return EvaluationMetrics(**FIXTURE["candidates"][change.kind.value])
 
@@ -101,7 +118,9 @@ class FixtureEvaluator:
 def fixture_inputs() -> tuple[RubricVersion, EvaluationSet]:
     rubric = RubricVersion(
         version_id=FIXTURE["rubric"]["version_id"],
-        questions=tuple(RubricQuestion(**item) for item in FIXTURE["rubric"]["questions"]),
+        questions=tuple(
+            RubricQuestion(**item) for item in FIXTURE["rubric"]["questions"]
+        ),
         parent_version_id=FIXTURE["rubric"]["parent_version_id"],
         created_at=FIXTURE["rubric"]["created_at"],
     )
@@ -109,7 +128,9 @@ def fixture_inputs() -> tuple[RubricVersion, EvaluationSet]:
     return rubric, evaluation_set
 
 
-def fixture_service(database_path: Path) -> tuple[RubricRevisionService, SQLiteRubricStore, FixtureEvaluator]:
+def fixture_service(
+    database_path: Path,
+) -> tuple[RubricRevisionService, SQLiteRubricStore, FixtureEvaluator]:
     rubric, _ = fixture_inputs()
     store = SQLiteRubricStore(database_path)
     store.initialize(rubric)
@@ -125,7 +146,9 @@ def fixture_service(database_path: Path) -> tuple[RubricRevisionService, SQLiteR
     return service, store, evaluator
 
 
-def test_proposal_evaluates_each_change_and_rejection_remains_auditable(tmp_path: Path) -> None:
+def test_proposal_evaluates_each_change_and_rejection_remains_auditable(
+    tmp_path: Path,
+) -> None:
     service, _, evaluator = fixture_service(tmp_path / "rubrics.sqlite3")
     _, evaluation_set = fixture_inputs()
 
@@ -136,7 +159,9 @@ def test_proposal_evaluates_each_change_and_rejection_remains_auditable(tmp_path
         RevisionKind.REVISED,
         RevisionKind.DROPPED,
     ]
-    assert all(proposal.evaluation is not None for proposal in result.workflow.proposals)
+    assert all(
+        proposal.evaluation is not None for proposal in result.workflow.proposals
+    )
     assert all(proposal.evidence for proposal in result.workflow.proposals)
     assert len(evaluator.revision_calls) == 3
     dropped = result.workflow.proposals[2]
@@ -165,7 +190,9 @@ def test_proposal_evaluates_each_change_and_rejection_remains_auditable(tmp_path
     ]
 
 
-def test_only_explicit_adoption_changes_runtime_rubric_and_records_evidence(tmp_path: Path) -> None:
+def test_only_explicit_adoption_changes_runtime_rubric_and_records_evidence(
+    tmp_path: Path,
+) -> None:
     service, _, _ = fixture_service(tmp_path / "adoption.sqlite3")
     _, evaluation_set = fixture_inputs()
     before = service.active_rubric()
@@ -196,23 +223,36 @@ def test_only_explicit_adoption_changes_runtime_rubric_and_records_evidence(tmp_
 
     def decide(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
         probability = 0.0 if request.get("key") == "rubric:audience-fit" else 0.1
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"),
-        gateway=ScriptedGateway(chat=lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}', decision=decide),
+        gateway=ScriptedGateway(
+            chat=lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}', decision=decide
+        ),
         rubric_store=SQLiteRubricStore(tmp_path / "adoption.sqlite3"),
     )
-    diagnosed = optimizer.optimize("Write a release note.", {"clarification_allowed": False})
-    assert diagnosed["report"]["diagnosis"]["rubric_version"] == runtime_rubric.version_id
+    diagnosed = optimizer.optimize(
+        "Write a release note.", {"clarification_allowed": False}
+    )
+    assert (
+        diagnosed["report"]["diagnosis"]["rubric_version"] == runtime_rubric.version_id
+    )
     assert "audience-fit" in {
         item["key"] for item in diagnosed["report"]["diagnosis"]["confirmed_gaps"]
     }
 
 
-def test_rerun_compares_output_and_current_base_with_previous_workflow(tmp_path: Path) -> None:
+def test_rerun_compares_output_and_current_base_with_previous_workflow(
+    tmp_path: Path,
+) -> None:
     service, _, _ = fixture_service(tmp_path / "rerun.sqlite3")
     _, evaluation_set = fixture_inputs()
     first = service.propose(evaluation_set)
@@ -235,25 +275,37 @@ def test_rerun_compares_output_and_current_base_with_previous_workflow(tmp_path:
     assert second.comparison.mean_candidate_regression_rate_delta is not None
 
 
-def test_writer_proposes_question_from_measured_error_without_supplied_question(tmp_path: Path) -> None:
+def test_writer_proposes_question_from_measured_error_without_supplied_question(
+    tmp_path: Path,
+) -> None:
     class ErrorSource:
         def errors(self, evaluation_set: EvaluationSet):
-            return [MeasuredError(
-                error_id="missing-audience",
-                evaluation_case_ids=(evaluation_set.case_ids[0],),
-                current_question_id=None,
-                proposed_question=None,
-                observation="Audience omissions caused missed weak-model failures.",
-            )]
+            return [
+                MeasuredError(
+                    error_id="missing-audience",
+                    evaluation_case_ids=(evaluation_set.case_ids[0],),
+                    current_question_id=None,
+                    proposed_question=None,
+                    observation="Audience omissions caused missed weak-model failures.",
+                )
+            ]
 
     def write(_model, messages, **_kwargs):
-        assert json.loads(messages[1]["content"])["errors"][0]["error_id"] == "missing-audience"
+        assert (
+            json.loads(messages[1]["content"])["errors"][0]["error_id"]
+            == "missing-audience"
+        )
         return '{"suggestions":[{"error_id":"missing-audience","action":"new","question":{"question_id":"audience-gap","text":"Is the audience missing when it materially affects the answer?","response_type":"noul","threshold":0.8,"missing_when":"yes"}}]}'
 
     rubric, evaluation_set = fixture_inputs()
     store = SQLiteRubricStore(tmp_path / "writer-proposals.sqlite3")
     store.initialize(rubric)
-    service = RubricRevisionService(store, ErrorSource(), FixtureEvaluator(), writer_gateway=ScriptedGateway(chat=write))
+    service = RubricRevisionService(
+        store,
+        ErrorSource(),
+        FixtureEvaluator(),
+        writer_gateway=ScriptedGateway(chat=write),
+    )
 
     result = service.propose(evaluation_set)
 
@@ -264,25 +316,48 @@ def test_writer_proposes_question_from_measured_error_without_supplied_question(
     assert proposal.evidence[0].error_id == "missing-audience"
 
 
-def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(tmp_path: Path) -> None:
+def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(
+    tmp_path: Path,
+) -> None:
     from prompt_enhancer.gateway import ScriptedGateway
     from prompt_enhancer.optimizer import PromptOptimizer
     from prompt_enhancer.store import RunStore
 
     rubric_store = SQLiteRubricStore(tmp_path / "active-rubric.sqlite3")
-    rubric_store.initialize(RubricVersion("active", (
-        RubricQuestion("missing-audience", "Is the intended audience missing?", threshold=0.8, missing_when="yes"),
-    )))
+    rubric_store.initialize(
+        RubricVersion(
+            "active",
+            (
+                RubricQuestion(
+                    "missing-audience",
+                    "Is the intended audience missing?",
+                    threshold=0.8,
+                    missing_when="yes",
+                ),
+            ),
+        )
+    )
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}', decision=decide)
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway, rubric_store=rubric_store)
-    result = optimizer.optimize("Write a release note.", {"clarification_allowed": False})
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}', decision=decide
+    )
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=gateway, rubric_store=rubric_store
+    )
+    result = optimizer.optimize(
+        "Write a release note.", {"clarification_allowed": False}
+    )
 
     gaps = result["report"]["diagnosis"]["confirmed_gaps"]
     by_key = {gap["key"]: gap for gap in gaps}
@@ -291,23 +366,38 @@ def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(
     assert by_key["missing-audience"]["missing_probability"] == 0.95
 
 
-def test_disabled_default_question_stays_disabled_after_store_reopens(tmp_path: Path) -> None:
+def test_disabled_default_question_stays_disabled_after_store_reopens(
+    tmp_path: Path,
+) -> None:
     from prompt_enhancer.gateway import ScriptedGateway
     from prompt_enhancer.optimizer import PromptOptimizer
     from prompt_enhancer.store import RunStore
 
     path = tmp_path / "rubric.sqlite3"
     store = SQLiteRubricStore(path)
-    store.initialize(RubricVersion("active", (), disabled_default_question_ids=("context",)))
+    store.initialize(
+        RubricVersion("active", (), disabled_default_question_ids=("context",))
+    )
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway, rubric_store=SQLiteRubricStore(path)).optimize("Write a release note.", {"clarification_allowed": False})
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
+    result = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=gateway,
+        rubric_store=SQLiteRubricStore(path),
+    ).optimize("Write a release note.", {"clarification_allowed": False})
 
     keys = {item["key"] for item in result["report"]["diagnosis"]["confirmed_gaps"]}
     assert "goal" in keys
@@ -339,10 +429,18 @@ def test_harness_adapter_uses_replay_and_maps_public_report_fields() -> None:
                     "regressed": 1,
                 },
                 "cases": [
-                    {"case_id": "case-1", "status": "completed", "outcome": "regressed"},
+                    {
+                        "case_id": "case-1",
+                        "status": "completed",
+                        "outcome": "regressed",
+                    },
                     {"case_id": "case-2", "status": "completed", "outcome": "improved"},
                     {"case_id": "case-3", "status": "completed", "outcome": "improved"},
-                    {"case_id": "case-4", "status": "completed", "outcome": "unchanged"},
+                    {
+                        "case_id": "case-4",
+                        "status": "completed",
+                        "outcome": "unchanged",
+                    },
                 ],
             }
 

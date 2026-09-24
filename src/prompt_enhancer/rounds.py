@@ -67,7 +67,9 @@ class CandidateFailure:
         return cls(
             candidate_id=str(value.get("candidate_id") or "unknown"),
             strategy=str(strategy) if strategy is not None else None,
-            reasons=tuple(str(reason) for reason in value.get("reasons") or () if reason),
+            reasons=tuple(
+                str(reason) for reason in value.get("reasons") or () if reason
+            ),
             weak_pass_rates={
                 str(model): float(rate)
                 for model, rate in (value.get("weak_pass_rates") or {}).items()
@@ -184,10 +186,15 @@ class RoundOutcome:
                 "per_model": {},
                 "assumptions": list(plan.assumptions),
                 "diff": prompt_diff(plan.prompt, plan.working_prompt),
-                "offer_deep": plan.tier != "deep" and bool(plan.diagnosis.get("confirmed_gaps")),
+                "offer_deep": plan.tier != "deep"
+                and bool(plan.diagnosis.get("confirmed_gaps")),
                 "history": [],
             }
-        assert self.panel is not None and self.strong_check is not None and self.strategies is not None
+        assert (
+            self.panel is not None
+            and self.strong_check is not None
+            and self.strategies is not None
+        )
         return {
             "status": self.status,
             "models": models,
@@ -196,7 +203,10 @@ class RoundOutcome:
             "tests": list(self.tests),
             "jev_answers": list(self.grading_answers),
             "candidates": list(self.candidates),
-            "per_model": {"ranking": self.ranking.to_dict(), "panel": self.panel.to_dict()},
+            "per_model": {
+                "ranking": self.ranking.to_dict(),
+                "panel": self.panel.to_dict(),
+            },
             "assumptions": list(plan.assumptions),
             "diff": prompt_diff(plan.prompt, self.final_prompt),
             "selection_evidence": self.ranking.to_dict(),
@@ -237,22 +247,39 @@ class RoundOutcome:
         report = self.report() if report is None else report
         return {
             key: report[key]
-            for key in ("diagnosis", "tests", "candidates", "per_model", "strong_check", "selection_evidence", "strategies")
+            for key in (
+                "diagnosis",
+                "tests",
+                "candidates",
+                "per_model",
+                "strong_check",
+                "selection_evidence",
+                "strategies",
+            )
             if key in report
         }
 
 
-def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | None = None) -> RoundOutcome:
+def run_round(
+    gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | None = None
+) -> RoundOutcome:
     """Run one round and return what it decided."""
     stage = on_stage or (lambda _name: None)
     settings = plan.settings
     working_prompt = plan.working_prompt
     model_view = model_diagnosis(plan.diagnosis)
 
-    def ended(status: str, summary: str, tests: tuple[dict[str, Any], ...]) -> RoundOutcome:
+    def ended(
+        status: str, summary: str, tests: tuple[dict[str, Any], ...]
+    ) -> RoundOutcome:
         return RoundOutcome(
-            plan=plan, status=status, summary=summary, final_prompt=working_prompt,
-            original_kept=working_prompt == plan.prompt, tests=tests, **_spent(gateway),
+            plan=plan,
+            status=status,
+            summary=summary,
+            final_prompt=working_prompt,
+            original_kept=working_prompt == plan.prompt,
+            tests=tests,
+            **_spent(gateway),
         )
 
     stage("writing_tests")
@@ -263,35 +290,75 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
             faithfulness_threshold=plan.faithfulness_threshold,
         ).compile(working_prompt)
     except (ValueError, TypeError) as exc:
-        raise ProviderError("writer", settings.writer_model, None, "invalid success-test response", role="writer", kind="invalid_response") from exc
+        raise ProviderError(
+            "writer",
+            settings.writer_model,
+            None,
+            "invalid success-test response",
+            role="writer",
+            kind="invalid_response",
+        ) from exc
     tests = tuple(asdict(test) for test in compiled.tests)
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
     if not tests or no_gaps:
         summary = (
             "No confirmed gaps were found; the original request was returned unchanged."
-            if no_gaps and tests else
-            "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
-            if no_gaps else
-            "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
+            if no_gaps and tests
+            else "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
+            if no_gaps
+            else "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
         )
         return ended("no_change" if no_gaps and tests else "unverified", summary, tests)
 
     stage("choosing_strategy")
     strategy_choice = gateway.decide(
-        {"model": settings.judge_model, "key": "strategy_choice", "type": "choice", "query": "Which rewrite strategy best addresses the diagnosed weakness?", "criteria": {**{item.name: item.description for item in STRATEGY_LIBRARY}, "none": "No rewrite strategy is suitable."}, "state": {"prompt": working_prompt, "diagnosis": model_view, "prior_failures": list(plan.prior_failures)}},
-        role="judge", run_id=plan.run_id,
+        {
+            "model": settings.judge_model,
+            "key": "strategy_choice",
+            "type": "choice",
+            "query": "Which rewrite strategy best addresses the diagnosed weakness?",
+            "criteria": {
+                **{item.name: item.description for item in STRATEGY_LIBRARY},
+                "none": "No rewrite strategy is suitable.",
+            },
+            "state": {
+                "prompt": working_prompt,
+                "diagnosis": model_view,
+                "prior_failures": list(plan.prior_failures),
+            },
+        },
+        role="judge",
+        run_id=plan.run_id,
     )
     parsed_strategy = parse_decision(strategy_choice)
-    preferred_strategy = parsed_strategy.selected if isinstance(parsed_strategy, ChoiceDecision) else None
+    preferred_strategy = (
+        parsed_strategy.selected
+        if isinstance(parsed_strategy, ChoiceDecision)
+        else None
+    )
 
     def recheck_strategy(strategy: RewriteStrategy) -> dict[str, bool]:
         answer = gateway.decide(
-            {"model": settings.judge_model, "key": f"strategy_recheck:{strategy.name}", "type": "noul", "query": "Is this strategy appropriate for the prompt and diagnosed weakness without inventing requirements?", "state": {"prompt": working_prompt, "diagnosis": model_view, "strategy": strategy.to_dict()}},
-            role="judge", run_id=plan.run_id,
+            {
+                "model": settings.judge_model,
+                "key": f"strategy_recheck:{strategy.name}",
+                "type": "noul",
+                "query": "Is this strategy appropriate for the prompt and diagnosed weakness without inventing requirements?",
+                "state": {
+                    "prompt": working_prompt,
+                    "diagnosis": model_view,
+                    "strategy": strategy.to_dict(),
+                },
+            },
+            role="judge",
+            run_id=plan.run_id,
         )
         decision = parse_decision(answer)
-        return {"eligible": isinstance(decision, NoulDecision) and decision.probability >= 0.8}
+        return {
+            "eligible": isinstance(decision, NoulDecision)
+            and decision.probability >= 0.8
+        }
 
     stage("writing_candidates")
     search = search_strategies(
@@ -323,8 +390,11 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
     )
     stage("grading")
     panel_grades, grading_answers = grade_panel_with_jev(
-        panel.results, list(tests), gateway,
-        judge_model=settings.judge_model, run_id=plan.run_id,
+        panel.results,
+        list(tests),
+        gateway,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
@@ -335,12 +405,20 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
             strategy=candidate.strategy.name,
             strategy_kind=candidate.strategy.kind,
             grade=panel_grades[candidate.candidate_id],
-            eligible=(fidelity := check_candidate_fidelity(
-                gateway, working_prompt, candidate.text, model_view,
-                candidate.strategy.name, run_id=plan.run_id,
-                judge_model=settings.judge_model,
-            )).passed,
-            rejection_reasons=() if fidelity.passed else ("candidate failed fidelity checks",),
+            eligible=(
+                fidelity := check_candidate_fidelity(
+                    gateway,
+                    working_prompt,
+                    candidate.text,
+                    model_view,
+                    candidate.strategy.name,
+                    run_id=plan.run_id,
+                    judge_model=settings.judge_model,
+                )
+            ).passed,
+            rejection_reasons=()
+            if fidelity.passed
+            else ("candidate failed fidelity checks",),
             metadata={"fidelity": fidelity.to_dict()},
         )
         for candidate in candidates
@@ -350,10 +428,14 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
         working_prompt,
         [candidate for candidate in ranking_candidates if candidate.eligible],
         list(tests),
-        lambda candidate_prompt, _tests: _strong_score(gateway, candidate_prompt, _tests, plan),
+        lambda candidate_prompt, _tests: _strong_score(
+            gateway, candidate_prompt, _tests, plan
+        ),
     )
     ranking = rank_candidates(
-        RankingCandidate("original", working_prompt, "original", "baseline", original_grade),
+        RankingCandidate(
+            "original", working_prompt, "original", "baseline", original_grade
+        ),
         ranking_candidates,
         strong_check=strong,
     )
@@ -361,8 +443,16 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
     original_kept = final_prompt == plan.prompt
     return RoundOutcome(
         plan=plan,
-        status="no_change" if original_kept else ("clarified" if ranking.original_kept else "improved"),
-        summary="No candidate beat the original." if original_kept else ("Clarifications were included; no candidate beat the clarified prompt." if ranking.original_kept else "Candidate selected after verification."),
+        status="no_change"
+        if original_kept
+        else ("clarified" if ranking.original_kept else "improved"),
+        summary="No candidate beat the original."
+        if original_kept
+        else (
+            "Clarifications were included; no candidate beat the clarified prompt."
+            if ranking.original_kept
+            else "Candidate selected after verification."
+        ),
         final_prompt=final_prompt,
         original_kept=original_kept,
         tests=tests,
@@ -376,8 +466,12 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
             CandidateFailure(
                 candidate_id=item.candidate.candidate_id,
                 strategy=item.candidate.strategy,
-                reasons=tuple(str(reason) for reason in item.rejection_reasons if reason),
-                weak_pass_rates=dict(item.candidate.grade.per_model) if item.candidate.grade is not None else {},
+                reasons=tuple(
+                    str(reason) for reason in item.rejection_reasons if reason
+                ),
+                weak_pass_rates=dict(item.candidate.grade.per_model)
+                if item.candidate.grade is not None
+                else {},
                 candidate_prompt=item.candidate.text,
             )
             for item in ranking.ranked
@@ -389,24 +483,36 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
 
 def prompt_diff(original: str, final: str) -> str:
     """A unified diff from the original prompt to the returned one."""
-    return "".join(difflib.unified_diff(original.splitlines(True), final.splitlines(True), fromfile="original", tofile="final"))
+    return "".join(
+        difflib.unified_diff(
+            original.splitlines(True),
+            final.splitlines(True),
+            fromfile="original",
+            tofile="final",
+        )
+    )
 
 
 def _spent(gateway: Gateway) -> dict[str, Any]:
     finished = utc_now()
-    return {"cost": gateway.usage_report(), "timing": {"total_ms": 0, "started_at": finished, "finished_at": finished}}
+    return {
+        "cost": gateway.usage_report(),
+        "timing": {"total_ms": 0, "started_at": finished, "finished_at": finished},
+    }
 
 
 def _strong_score(gateway: Gateway, prompt: str, tests: Any, plan: RoundPlan) -> float:
     if not tests:
         raise ValueError("strong check requires success tests")
     settings = plan.settings
-    output = completion_text(gateway.chat(
-        settings.strong_check_model,
-        [{"role": "user", "content": prompt}],
-        role="strong_check",
-        run_id=plan.run_id,
-    ))
+    output = completion_text(
+        gateway.chat(
+            settings.strong_check_model,
+            [{"role": "user", "content": prompt}],
+            role="strong_check",
+            run_id=plan.run_id,
+        )
+    )
     grades, _ = grade_panel_with_jev(
         [PanelResult("strong", settings.strong_check_model, 0, 0, output, prompt)],
         tests,

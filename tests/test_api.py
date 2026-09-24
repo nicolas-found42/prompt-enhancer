@@ -10,13 +10,24 @@ from prompt_enhancer.store import RunStore
 
 def test_optimize_endpoint_returns_result_and_lists_local_run() -> None:
     store = RunStore(":memory:")
+
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
-    client = TestClient(create_app(optimizer=PromptOptimizer(store=store, gateway=gateway)))
+
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
+    client = TestClient(
+        create_app(optimizer=PromptOptimizer(store=store, gateway=gateway))
+    )
 
     response = client.post(
         "/api/optimize",
@@ -91,9 +102,11 @@ def test_configured_app_uses_live_gateway_and_persists_model_defaults(tmp_path) 
 
 
 def test_catalog_exposes_gateway_models_without_credentials() -> None:
-    gateway = ScriptedGateway(catalog=StaticModelCatalog(
-        [ModelInfo("go-one", "go")], [ModelInfo("or-one", "openrouter")]
-    ))
+    gateway = ScriptedGateway(
+        catalog=StaticModelCatalog(
+            [ModelInfo("go-one", "go")], [ModelInfo("or-one", "openrouter")]
+        )
+    )
     optimizer = PromptOptimizer(gateway=gateway, store=RunStore(":memory:"))
     client = TestClient(create_app(optimizer=optimizer))
 
@@ -101,7 +114,9 @@ def test_catalog_exposes_gateway_models_without_credentials() -> None:
 
     assert catalog.status_code == 200
     assert [item["id"] for item in catalog.json()["providers"]["go"]] == ["go-one"]
-    assert [item["id"] for item in catalog.json()["providers"]["openrouter"]] == ["or-one"]
+    assert [item["id"] for item in catalog.json()["providers"]["openrouter"]] == [
+        "or-one"
+    ]
     assert catalog.json()["judge"]["id"] == "typesafe/jev-1.13-20260917"
 
 
@@ -113,6 +128,10 @@ def test_resume_and_deep_return_client_errors_for_invalid_run_state() -> None:
     missing_deep = client.post("/api/runs/missing/deep")
     assert missing_deep.status_code == 404
 
-    completed = client.post("/api/optimize", json={"prompt": "Explain recursion."}).json()
-    repeated = client.post(f"/api/runs/{completed['run_id']}/resume", json={"answers": {}})
+    completed = client.post(
+        "/api/optimize", json={"prompt": "Explain recursion."}
+    ).json()
+    repeated = client.post(
+        f"/api/runs/{completed['run_id']}/resume", json={"answers": {}}
+    )
     assert repeated.status_code == 409

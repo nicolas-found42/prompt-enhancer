@@ -64,14 +64,23 @@ JevDecision: TypeAlias = NoulDecision | ChoiceDecision | ScoreDecision
 def decision_question(request: Mapping[str, Any]) -> dict[str, Any]:
     """Build one Decisions API question from a provider-neutral request."""
     kind = str(request.get("type") or "noul")
-    instructions = str(request.get("query") or request.get("question") or request.get("instructions") or "").strip()
+    instructions = str(
+        request.get("query")
+        or request.get("question")
+        or request.get("instructions")
+        or ""
+    ).strip()
     if not instructions:
         raise ValueError("Jev question instructions are required")
     question: dict[str, Any] = {"type": kind, "instructions": instructions}
     criteria = request.get("criteria")
     if criteria is None and kind == "choice":
         options = request.get("options", ())
-        criteria = dict(options) if isinstance(options, Mapping) else {str(option): str(option) for option in options}
+        criteria = (
+            dict(options)
+            if isinstance(options, Mapping)
+            else {str(option): str(option) for option in options}
+        )
     elif criteria is None and kind == "score":
         criteria = list(request.get("levels", ()))
     if criteria is not None:
@@ -79,28 +88,41 @@ def decision_question(request: Mapping[str, Any]) -> dict[str, Any]:
     return question
 
 
-def decision_payload(request: Mapping[str, Any], *, model: str) -> tuple[str, dict[str, Any]]:
+def decision_payload(
+    request: Mapping[str, Any], *, model: str
+) -> tuple[str, dict[str, Any]]:
     """Keep user-controlled text in state when building a single Jev call."""
     key = str(request.get("key") or "decision")
     state = request.get("state", request.get("prompt"))
-    return key, {"model": model, "state": state, "questions": {key: decision_question(request)}}
+    return key, {
+        "model": model,
+        "state": state,
+        "questions": {key: decision_question(request)},
+    }
 
 
 def batch_decision_payload(
     requests: Sequence[Mapping[str, Any]], *, model: str
 ) -> tuple[list[str], dict[str, Any]]:
     """Build a batch envelope, addressing each question's corresponding state."""
-    keys = [str(request.get("key") or f"decision_{index}") for index, request in enumerate(requests)]
+    keys = [
+        str(request.get("key") or f"decision_{index}")
+        for index, request in enumerate(requests)
+    ]
     if len(set(keys)) != len(keys):
         raise ValueError("Jev batch question keys must be unique")
     states = [request.get("state", request.get("prompt")) for request in requests]
     shared_state = all(state == states[0] for state in states)
-    state = states[0] if shared_state else {"items": dict(zip(keys, states, strict=True))}
+    state = (
+        states[0] if shared_state else {"items": dict(zip(keys, states, strict=True))}
+    )
     questions = {}
     for key, request in zip(keys, requests, strict=True):
         question = decision_question(request)
         if not shared_state:
-            question["instructions"] = f"For state.items[{key!r}]: {question['instructions']}"
+            question["instructions"] = (
+                f"For state.items[{key!r}]: {question['instructions']}"
+            )
         questions[key] = question
     return keys, {"model": model, "state": state, "questions": questions}
 
@@ -164,7 +186,10 @@ def _probability_items(raw: Any) -> list[tuple[str, float]]:
     else:
         raise JevResponseError("decision probabilities are required")
 
-    parsed = [(key, _probability(value, field=f"probability for {key}")) for key, value in items]
+    parsed = [
+        (key, _probability(value, field=f"probability for {key}"))
+        for key, value in items
+    ]
     total = sum(value for _, value in parsed)
     if not parsed or total <= 0.0:
         raise JevResponseError("decision probabilities must not be empty")
@@ -202,11 +227,15 @@ def parse_decision(payload: Any) -> JevDecision:
             kind = "score"
 
     if kind == "noul" or ("probability_true" in body and "options" not in body):
-        raw_probability = body.get("noul", body.get("probability_true", body.get("probability")))
+        raw_probability = body.get(
+            "noul", body.get("probability_true", body.get("probability"))
+        )
         probability = _probability(raw_probability, field="noul")
         return NoulDecision(
             probability=probability,
-            confidence=_confidence(body) if "confidence" in body or "certainty" in body else max(probability, 1 - probability),
+            confidence=_confidence(body)
+            if "confidence" in body or "certainty" in body
+            else max(probability, 1 - probability),
         )
 
     if kind == "choice":
@@ -242,7 +271,9 @@ def parse_decision(payload: Any) -> JevDecision:
         highest_probability = max(option.probability for option in levels)
         try:
             level = min(
-                int(option.level) for option in levels if option.probability == highest_probability
+                int(option.level)
+                for option in levels
+                if option.probability == highest_probability
             )
         except ValueError as exc:
             raise JevResponseError("score levels must have numeric indexes") from exc

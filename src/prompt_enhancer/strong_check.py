@@ -160,7 +160,11 @@ def run_strong_checks(
     seen_ids: set[str] = set()
 
     for candidate in candidates:
-        candidate_id, prompt, strategy = candidate.candidate_id, candidate.text, candidate.strategy
+        candidate_id, prompt, strategy = (
+            candidate.candidate_id,
+            candidate.text,
+            candidate.strategy,
+        )
         crutch = candidate.is_crutch
         if candidate_id in seen_ids:
             raise ValueError(f"duplicate strong-check candidate id: {candidate_id}")

@@ -57,11 +57,15 @@ def prepare(source: str) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--source", default=SOURCE, help="pinned source JSONL URL or local file URL")
+    parser.add_argument(
+        "--source", default=SOURCE, help="pinned source JSONL URL or local file URL"
+    )
     args = parser.parse_args()
     dataset = prepare(args.source)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Wrote {CASE_COUNT} human-annotated coding tasks to {args.output}")
 
 

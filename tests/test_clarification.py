@@ -80,7 +80,12 @@ def test_high_unknown_pauses_and_resume_continues_same_run() -> None:
     assert completed["status"] == "completed"
     assert completed["run_id"] == "run-7"
     assert completed["assumptions"] == [
-        {"key": "output_format", "value": "Markdown", "source": "answer", "label": "output format"}
+        {
+            "key": "output_format",
+            "value": "Markdown",
+            "source": "answer",
+            "label": "output format",
+        }
     ]
     assert calls == ["run-7"]
     assert repository.load("run-7")["status"] == "completed"
@@ -93,7 +98,9 @@ def test_other_answer_and_explicit_skip_record_assumptions() -> None:
     with pytest.raises(InvalidAnswerError):
         service.resume("run-8", {"output_format": {"value": "other"}})
 
-    answered = service.resume("run-8", {"output_format": {"value": "other", "text": "CSV"}})
+    answered = service.resume(
+        "run-8", {"output_format": {"value": "other", "text": "CSV"}}
+    )
     assert answered["assumptions"][0]["value"] == "CSV"
 
     service = ClarificationService(InMemoryClarificationRepository())
@@ -126,12 +133,22 @@ def test_reference_to_unseen_details_is_asked_about_not_assumed() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "writing" if request.get("key") == "task_type" else "unknown"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         probability = 0.97 if request.get("key") == "gap:outside_reference" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide))
-    result = optimizer.optimize("Do the letter like last time. Mention the thing about the warranty.", {"tier": "fast"})
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+    )
+    result = optimizer.optimize(
+        "Do the letter like last time. Mention the thing about the warranty.",
+        {"tier": "fast"},
+    )
 
     assert result["status"] == "needs_input"
     question = result["questions"][0]
@@ -151,13 +168,23 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "writing" if request.get("key") == "task_type" else "unknown"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         probability = 0.97 if request.get("key") == "gap:outside_reference" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide))
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+    )
     paused = optimizer.optimize("Mention the thing.", {"tier": "fast"})
-    done = optimizer.resume(paused["run_id"], {"outside_reference": {"value": "other", "text": "the 5-year warranty"}})
+    done = optimizer.resume(
+        paused["run_id"],
+        {"outside_reference": {"value": "other", "text": "the 5-year warranty"}},
+    )
 
     assert "outside_reference" not in done["final_prompt"]
     assert "Details: the 5-year warranty" in done["final_prompt"]
@@ -176,23 +203,38 @@ def test_unknown_context_is_asked_about_and_the_answer_reads_as_plain_text() -> 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "writing" if request.get("key") == "task_type" else "unknown"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         probability = 0.86 if request.get("key") == "gap:context" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide))
-    paused = optimizer.optimize("Email my boss about the hours I worked today.", {"tier": "fast"})
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+    )
+    paused = optimizer.optimize(
+        "Email my boss about the hours I worked today.", {"tier": "fast"}
+    )
 
     assert paused["status"] == "needs_input"
     assert paused["questions"][0]["id"] == "context"
-    done = optimizer.resume(paused["run_id"], {"context": {"value": "other", "text": "8:30 to 5:15"}})
+    done = optimizer.resume(
+        paused["run_id"], {"context": {"value": "other", "text": "8:30 to 5:15"}}
+    )
     assert "Context: 8:30 to 5:15" in done["final_prompt"]
     assert "context:" not in done["final_prompt"]
 
 
-@pytest.mark.parametrize(("keys", "mentions_outside_reference"), [
-    (("goal",), False), (("goal", "outside_reference"), True),
-])
+@pytest.mark.parametrize(
+    ("keys", "mentions_outside_reference"),
+    [
+        (("goal",), False),
+        (("goal", "outside_reference"), True),
+    ],
+)
 def test_clarifier_instruction_mentions_outside_reference_only_when_asked(
     keys: tuple[str, ...], mentions_outside_reference: bool
 ) -> None:
@@ -201,4 +243,6 @@ def test_clarifier_instruction_mentions_outside_reference_only_when_asked(
 
     gaps = [ConfirmedGap(key, key, GapImpact.HIGH, 0.95, 0.95, 0.9) for key in keys]
 
-    assert ("For outside_reference" in _instructions(gaps)) is mentions_outside_reference
+    assert (
+        "For outside_reference" in _instructions(gaps)
+    ) is mentions_outside_reference

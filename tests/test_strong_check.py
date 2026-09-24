@@ -5,9 +5,24 @@ from prompt_enhancer.selector import RankingCandidate
 from prompt_enhancer.strong_check import StrongCheckPolicy
 
 
-def Candidate(candidate_id: str, prompt: str, strategy: str, crutch: bool = False, weak_score: float = 0.0) -> RankingCandidate:
-    grade = GradeReport(candidate_id, {"weak": weak_score}, {"weak": (weak_score,)}, weak_score, weak_score, 0.0)
-    return RankingCandidate(candidate_id, prompt, strategy, "crutch" if crutch else "safe", grade)
+def Candidate(
+    candidate_id: str,
+    prompt: str,
+    strategy: str,
+    crutch: bool = False,
+    weak_score: float = 0.0,
+) -> RankingCandidate:
+    grade = GradeReport(
+        candidate_id,
+        {"weak": weak_score},
+        {"weak": (weak_score,)},
+        weak_score,
+        weak_score,
+        0.0,
+    )
+    return RankingCandidate(
+        candidate_id, prompt, strategy, "crutch" if crutch else "safe", grade
+    )
 
 
 def test_candidate_that_does_not_regress_is_reported_as_eligible():

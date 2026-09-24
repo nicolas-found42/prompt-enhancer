@@ -26,16 +26,40 @@ def has_soar_placeholder(prompt: str) -> bool:
     return SOAR_PLACEHOLDER.search(prompt) is not None
 
 
-def binary_metrics(rows: Iterable[tuple[float, bool]], threshold: float) -> dict[str, float | int]:
+def binary_metrics(
+    rows: Iterable[tuple[float, bool]], threshold: float
+) -> dict[str, float | int]:
     observations = list(rows)
-    tp = sum(probability >= threshold and expected for probability, expected in observations)
-    fp = sum(probability >= threshold and not expected for probability, expected in observations)
-    fn = sum(probability < threshold and expected for probability, expected in observations)
-    tn = sum(probability < threshold and not expected for probability, expected in observations)
+    tp = sum(
+        probability >= threshold and expected for probability, expected in observations
+    )
+    fp = sum(
+        probability >= threshold and not expected
+        for probability, expected in observations
+    )
+    fn = sum(
+        probability < threshold and expected for probability, expected in observations
+    )
+    tn = sum(
+        probability < threshold and not expected
+        for probability, expected in observations
+    )
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
-    f05 = 1.25 * precision * recall / (0.25 * precision + recall) if precision + recall else 0.0
-    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "precision": precision, "recall": recall, "f0_5": f05}
+    f05 = (
+        1.25 * precision * recall / (0.25 * precision + recall)
+        if precision + recall
+        else 0.0
+    )
+    return {
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "tn": tn,
+        "precision": precision,
+        "recall": recall,
+        "f0_5": f05,
+    }
 
 
 def in_holdout_group(group: str) -> bool:
@@ -47,5 +71,7 @@ def save_json(path: Path, value: Any) -> None:
     """Write indented JSON atomically so an interrupted run keeps the prior file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     temporary.replace(path)

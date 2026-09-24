@@ -14,8 +14,15 @@ from pathlib import Path
 from typing import Any
 
 GAPS = (
-    "goal", "context", "constraints", "output_format", "done_criteria",
-    "sources", "language", "tests", "time_horizon",
+    "goal",
+    "context",
+    "constraints",
+    "output_format",
+    "done_criteria",
+    "sources",
+    "language",
+    "tests",
+    "time_horizon",
 )
 TASKS = ("general", "writing", "analysis", "research", "coding", "planning", "chat")
 CONTEXT_MODES = ("standalone", "reconstructed", "exclude", "uncertain")
@@ -32,7 +39,9 @@ TASK_GAPS = {
 
 
 def batch_digest(batch: dict[str, Any]) -> str:
-    encoded = json.dumps(batch["cases"], ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        batch["cases"], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -46,13 +55,25 @@ def make_review_html(batch: dict[str, Any]) -> str:
         "omp": Path.home() / ".omp" / "agent" / "sessions",
     }
     review_cases = [
-        {**case, "session_path": str(roots.get(case["source"], Path.home()) / case["session"])}
+        {
+            **case,
+            "session_path": str(
+                roots.get(case["source"], Path.home()) / case["session"]
+            ),
+        }
         for case in cases
     ]
-    data = {"cases": review_cases, "batch_digest": batch_digest(batch), "gaps": GAPS, "tasks": TASKS, "task_gaps": TASK_GAPS}
+    data = {
+        "cases": review_cases,
+        "batch_digest": batch_digest(batch),
+        "gaps": GAPS,
+        "tasks": TASKS,
+        "task_gaps": TASK_GAPS,
+    }
     # Escaping '<' prevents prompt text from closing the JSON script element.
     embedded = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
-    return """<!doctype html><html lang="en"><meta charset="utf-8"><title>Private prompt gap review</title>
+    return (
+        """<!doctype html><html lang="en"><meta charset="utf-8"><title>Private prompt gap review</title>
 <style>body{font:16px system-ui;max-width:1050px;margin:2rem auto;padding:0 1rem;color:#202020}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f3f3;padding:1rem;max-height:19rem;overflow:auto}fieldset{margin:1rem 0;border:1px solid #bbb}label{display:block;margin:.4rem 0}button,input,select,textarea{font:inherit}textarea{width:100%;min-height:6rem}button{margin:.3rem}.row{display:flex;gap:1rem;align-items:center;flex-wrap:wrap}.muted{color:#555}</style>
 <h1>Private prompt gap review</h1><p>Review the original session before judging whether context is missing. Label gaps in the effective prompt the optimizer would receive. Historical assistant output is context for the reviewer, not a gold answer. An empty gap selection means no checklist gap. Mark uncertain cases uncertain; do not guess. Save progress with <b>Download review JSON</b>, then load that file to continue. This page uses no network.</p>
 <div class="row"><label>Human reviewer <input id="reviewer" placeholder="name or initials"></label><label>Load saved review JSON <input id="load" type="file" accept="application/json"></label><button id="download">Download review JSON</button></div>
@@ -60,7 +81,9 @@ def make_review_html(batch: dict[str, Any]) -> str:
 <h2 id="case-title"></h2><p id="provenance" class="muted"></p><h3>User prompt</h3><pre id="prompt"></pre><h3>Historical assistant result</h3><pre id="result"></pre>
 <fieldset><legend>Context and provenance</legend><label><input id="session-reviewed" type="checkbox"> I inspected the source session or confirmed this is the full first request</label><label>Context status <select id="context-mode"><option value="uncertain">Uncertain</option><option value="standalone">Standalone as written</option><option value="reconstructed">Relevant prior context reconstructed below</option><option value="exclude">Exclude: context cannot be recovered or prompt is unsuitable</option></select></label><label>Exact relevant prior context (for reconstructed cases)<textarea id="context-text"></textarea></label></fieldset>
 <fieldset><legend>Human judgment</legend><label>Task type <select id="task-type"></select></label><div id="gaps"></div><label>Judgment <select id="judgment"><option value="unreviewed">Unreviewed</option><option value="labeled">Labeled, including no gaps when unchecked</option><option value="uncertain">Uncertain; needs adjudication</option><option value="exclude">Exclude from benchmark</option></select></label><label>Evidence or exclusion reason <textarea id="notes"></textarea></label></fieldset>
-<script id="batch" type="application/json">""" + embedded + """</script><script>
+<script id="batch" type="application/json">"""
+        + embedded
+        + """</script><script>
 const batch=JSON.parse(document.getElementById('batch').textContent);
 const byId=Object.fromEntries(batch.cases.map(c=>[c.id,c]));
 const review={schema_version:1,batch_digest:batch.batch_digest,reviewer:'',reviews:batch.cases.map(c=>({id:c.id,judgment:'unreviewed',task_type:'general',gaps:[],context_mode:'uncertain',context_text:'',source_session_reviewed:false,notes:''}))};
@@ -78,9 +101,12 @@ el('download').onclick=()=>{save();const blob=new Blob([JSON.stringify(review,nu
 el('load').addEventListener('change',async event=>{const file=event.target.files[0];if(!file)return;const saved=JSON.parse(await file.text());if(saved.batch_digest!==batch.batch_digest||saved.reviews?.length!==review.reviews.length||saved.reviews.some((r,i)=>r.id!==review.reviews[i].id)){alert('Review file does not match this batch');return}review.reviewer=saved.reviewer||'';review.reviews=saved.reviews;el('reviewer').value=review.reviewer;show(index)});
 show(0);
 </script></html>"""
+    )
 
 
-def import_review(batch: dict[str, Any], review: dict[str, Any], *, minimum: int = 100) -> dict[str, Any]:
+def import_review(
+    batch: dict[str, Any], review: dict[str, Any], *, minimum: int = 100
+) -> dict[str, Any]:
     cases = batch["cases"]
     if review.get("batch_digest") != batch_digest(batch):
         raise ValueError("review batch digest does not match")
@@ -103,7 +129,11 @@ def import_review(batch: dict[str, Any], review: dict[str, Any], *, minimum: int
         task = judgment.get("task_type")
         mode = judgment.get("context_mode")
         context = judgment.get("context_text")
-        if not isinstance(gaps, list) or len(set(gaps)) != len(gaps) or any(g not in GAPS for g in gaps):
+        if (
+            not isinstance(gaps, list)
+            or len(set(gaps)) != len(gaps)
+            or any(g not in GAPS for g in gaps)
+        ):
             raise ValueError(f"invalid gap labels for {case['id']}")
         if task not in TASKS or mode not in {"standalone", "reconstructed"}:
             raise ValueError(f"invalid task or context status for {case['id']}")
@@ -111,23 +141,43 @@ def import_review(batch: dict[str, Any], review: dict[str, Any], *, minimum: int
             raise ValueError(f"gap label does not apply to task for {case['id']}")
         if judgment.get("source_session_reviewed") is not True:
             raise ValueError(f"source session review required for {case['id']}")
-        if mode == "reconstructed" and (not isinstance(context, str) or not context.strip()):
+        if mode == "reconstructed" and (
+            not isinstance(context, str) or not context.strip()
+        ):
             raise ValueError(f"reconstructed context text required for {case['id']}")
-        prompt = case["prompt"] if mode == "standalone" else f"Relevant prior conversation context:\n{context.strip()}\n\nCurrent user request:\n{case['prompt']}"
-        selected.append({
-            "id": case["id"], "source": "hand_labeled" if reviewer_kind == "human" else "real", "prompt": prompt,
-            "expected_gaps": gaps, "task_stratum": task,
-            "reviewer": reviewer.strip(), "source_session": case["session"],
-            "context_mode": mode, "review_notes": judgment.get("notes", ""),
-            "label_provenance": reviewer_kind,
-            "reviewed_at": review.get("reviewed_at"),
-        })
+        prompt = (
+            case["prompt"]
+            if mode == "standalone"
+            else f"Relevant prior conversation context:\n{context.strip()}\n\nCurrent user request:\n{case['prompt']}"
+        )
+        selected.append(
+            {
+                "id": case["id"],
+                "source": "hand_labeled" if reviewer_kind == "human" else "real",
+                "prompt": prompt,
+                "expected_gaps": gaps,
+                "task_stratum": task,
+                "reviewer": reviewer.strip(),
+                "source_session": case["session"],
+                "context_mode": mode,
+                "review_notes": judgment.get("notes", ""),
+                "label_provenance": reviewer_kind,
+                "reviewed_at": review.get("reviewed_at"),
+            }
+        )
     if len(selected) < minimum:
         raise ValueError(f"only {len(selected)} usable judgments; require {minimum}")
     return {
         "schema_version": 1,
         "name": f"local-agent-{reviewer_kind}-gap-review",
-        "metadata": {"batch_digest": batch_digest(batch), "reviewer": reviewer.strip(), "label_provenance": reviewer_kind, "reviewed_at": review.get("reviewed_at"), "usable_cases": len(selected), "task_counts": dict(Counter(c["task_stratum"] for c in selected))},
+        "metadata": {
+            "batch_digest": batch_digest(batch),
+            "reviewer": reviewer.strip(),
+            "label_provenance": reviewer_kind,
+            "reviewed_at": review.get("reviewed_at"),
+            "usable_cases": len(selected),
+            "task_counts": dict(Counter(c["task_stratum"] for c in selected)),
+        },
         "cases": selected,
     }
 
@@ -147,7 +197,14 @@ def main() -> None:
         if args.review is None:
             parser.error("--review is required for import")
         review = json.loads(args.review.read_text(encoding="utf-8"))
-        rendered = json.dumps(import_review(batch, review, minimum=args.minimum), ensure_ascii=False, indent=2) + "\n"
+        rendered = (
+            json.dumps(
+                import_review(batch, review, minimum=args.minimum),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n"
+        )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(rendered, encoding="utf-8")
     print(f"Wrote {args.output}")

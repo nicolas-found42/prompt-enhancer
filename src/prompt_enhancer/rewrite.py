@@ -57,14 +57,27 @@ class CandidateWriter:
         )
         if self.instruction_version == 1:
             state.pop("diagnosis", None)
-        instructions = original_instructions if self.instruction_version == 1 else current_instructions
-        response = self.gateway.chat(self.writer_model, writer_messages(instructions, state), role="writer")
+        instructions = (
+            original_instructions
+            if self.instruction_version == 1
+            else current_instructions
+        )
+        response = self.gateway.chat(
+            self.writer_model, writer_messages(instructions, state), role="writer"
+        )
         payload = json.loads(completion_text(response))
         if not isinstance(payload, Mapping):
             raise TypeError("candidate writer must return a JSON object")
-        if any(not isinstance(payload.get(strategy.name), str) or not payload[strategy.name].strip() for strategy in request.strategies):
+        if any(
+            not isinstance(payload.get(strategy.name), str)
+            or not payload[strategy.name].strip()
+            for strategy in request.strategies
+        ):
             raise ValueError("candidate writer omitted a selected strategy")
-        return {strategy.name: payload[strategy.name].strip() for strategy in request.strategies}
+        return {
+            strategy.name: payload[strategy.name].strip()
+            for strategy in request.strategies
+        }
 
 
 __all__ = [

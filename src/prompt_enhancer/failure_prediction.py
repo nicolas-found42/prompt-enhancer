@@ -113,6 +113,7 @@ class DecisionStump:
             right_delta=right_delta,
         )
 
+
 @dataclass(frozen=True)
 class LoggedExample:
     """Normalized model input derived from one persisted run."""
@@ -385,8 +386,16 @@ def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
     jev_answers = _answer_sequence(run.get("jev_answers") or run.get("answers"))
     for index, raw_answer in enumerate(jev_answers):
         logged = _as_mapping(raw_answer)
-        answer = _as_mapping(logged.get("answer")) if isinstance(logged.get("answer"), Mapping) else logged
-        question = _as_mapping(logged.get("question")) if isinstance(logged.get("question"), Mapping) else {}
+        answer = (
+            _as_mapping(logged.get("answer"))
+            if isinstance(logged.get("answer"), Mapping)
+            else logged
+        )
+        question = (
+            _as_mapping(logged.get("question"))
+            if isinstance(logged.get("question"), Mapping)
+            else {}
+        )
         kind = (
             str(
                 answer.get("kind")
@@ -643,9 +652,7 @@ def _split_examples(
     holdout_count = min(holdout_count, count - config.minimum_training_runs)
     ranked = sorted(
         examples,
-        key=lambda item: sha256(
-            f"{config.seed}:{item.run_id}".encode()
-        ).hexdigest(),
+        key=lambda item: sha256(f"{config.seed}:{item.run_id}".encode()).hexdigest(),
     )
     selected: set[str] = set()
     for label in (0, 1):
@@ -678,7 +685,8 @@ def _fit_model(
     stumps: list[DecisionStump] = []
     for _ in range(config.max_stumps):
         residuals = [
-            label - prediction for label, prediction in zip(labels, predictions)
+            label - prediction
+            for label, prediction in zip(labels, predictions, strict=True)
         ]
         stump, gain = _best_stump(
             training, feature_names, residuals, config.learning_rate
@@ -727,7 +735,7 @@ def _best_stump(
                 for missing_left in (False, True):
                     left_residuals: list[float] = []
                     right_residuals: list[float] = []
-                    for residual, example in zip(residuals, training):
+                    for residual, example in zip(residuals, training, strict=True):
                         value = example.features.get(feature)
                         goes_left = (
                             missing_left
@@ -801,7 +809,7 @@ def _prediction_metrics(
         "calibration": {
             "brier_score": fmean(
                 (probability - actual) ** 2
-                for probability, actual in zip(predictions, observed)
+                for probability, actual in zip(predictions, observed, strict=True)
             ),
             "expected_calibration_error": _expected_calibration_error(
                 observed, predictions, bins
@@ -835,7 +843,10 @@ def _roc_auc(outcomes: list[float], predictions: list[float]) -> float | None:
     if not positives or not negatives:
         return None
     ranked = sorted(
-        ((prediction, outcome) for prediction, outcome in zip(predictions, outcomes)),
+        (
+            (prediction, outcome)
+            for prediction, outcome in zip(predictions, outcomes, strict=True)
+        ),
         key=lambda item: (item[0], item[1]),
     )
     positive_rank_sum = 0.0
@@ -876,7 +887,7 @@ def _calibration_bins(
     outcomes: list[float], predictions: list[float], bins: int
 ) -> list[dict[str, Any]]:
     grouped: dict[int, list[tuple[float, float]]] = defaultdict(list)
-    for outcome, prediction in zip(outcomes, predictions):
+    for outcome, prediction in zip(outcomes, predictions, strict=True):
         bounded = _clip(prediction)
         index = min(int(bounded * bins), bins - 1)
         grouped[index].append((bounded, outcome))

@@ -29,19 +29,46 @@ def score(dataset: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
         if any(gap not in GAPS for gap in expected | predicted):
             raise ValueError(f"unknown gap key for {case['case_id']}")
         for gap in GAPS:
-            key = "tp" if gap in expected and gap in predicted else "fp" if gap in predicted else "fn" if gap in expected else "tn"
+            key = (
+                "tp"
+                if gap in expected and gap in predicted
+                else "fp"
+                if gap in predicted
+                else "fn"
+                if gap in expected
+                else "tn"
+            )
             per_gap[gap][key] += 1
-    micro = {key: sum(row[key] for row in per_gap.values()) for key in ("tp", "fp", "fn")}
-    precision = micro["tp"] / (micro["tp"] + micro["fp"]) if micro["tp"] + micro["fp"] else 0.0
-    recall = micro["tp"] / (micro["tp"] + micro["fn"]) if micro["tp"] + micro["fn"] else 0.0
+    micro = {
+        key: sum(row[key] for row in per_gap.values()) for key in ("tp", "fp", "fn")
+    }
+    precision = (
+        micro["tp"] / (micro["tp"] + micro["fp"]) if micro["tp"] + micro["fp"] else 0.0
+    )
+    recall = (
+        micro["tp"] / (micro["tp"] + micro["fn"]) if micro["tp"] + micro["fn"] else 0.0
+    )
     return {
-        "label_provenance": "user_delegated_model", "report_dataset": report["dataset"],
-        "cases": len(cases), "completed": len(completed),
-        "source_counts": dict(Counter(labels[case["case_id"]]["source_dataset"] for case in completed)),
-        "task_counts": dict(Counter(labels[case["case_id"]]["task_stratum"] for case in completed)),
-        "micro": {**micro, "precision": precision, "recall": recall,
-                  "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0},
-        "per_gap": per_gap, "improvement": report["improvement"],
+        "label_provenance": "user_delegated_model",
+        "report_dataset": report["dataset"],
+        "cases": len(cases),
+        "completed": len(completed),
+        "source_counts": dict(
+            Counter(labels[case["case_id"]]["source_dataset"] for case in completed)
+        ),
+        "task_counts": dict(
+            Counter(labels[case["case_id"]]["task_stratum"] for case in completed)
+        ),
+        "micro": {
+            **micro,
+            "precision": precision,
+            "recall": recall,
+            "f1": 2 * precision * recall / (precision + recall)
+            if precision + recall
+            else 0.0,
+        },
+        "per_gap": per_gap,
+        "improvement": report["improvement"],
         "metered_openrouter_usd": report["cost"]["total"],
         "latency_ms": report["latency_ms"],
     }
@@ -59,7 +86,9 @@ def main() -> None:
         name, separator, filename = specification.partition("=")
         if not separator or not name or name in results:
             raise ValueError("report must be a unique NAME=PATH")
-        results[name] = score(dataset, json.loads(Path(filename).read_text(encoding="utf-8")))
+        results[name] = score(
+            dataset, json.loads(Path(filename).read_text(encoding="utf-8"))
+        )
     save_json(args.output, {"schema_version": 1, "reviews": results})
 
 

@@ -22,7 +22,11 @@ TASKS = ("Connect4", "TicTacToe", "OutlineAssistant", "TripAdvisor")
 def prepare(text: str, *, subjects: int = 12) -> dict[str, object]:
     if not 1 <= subjects <= 30:
         raise ValueError("subjects must be between 1 and 30")
-    originals = [row for row in csv.DictReader(io.StringIO(text)) if row["prompt_version"] == "original"]
+    originals = [
+        row
+        for row in csv.DictReader(io.StringIO(text))
+        if row["prompt_version"] == "original"
+    ]
     by_subject: dict[str, dict[str, dict[str, str]]] = {}
     for row in originals:
         subject = row["subject"]
@@ -33,9 +37,13 @@ def prepare(text: str, *, subjects: int = 12) -> dict[str, object]:
         if task in tasks:
             raise ValueError(f"duplicate original for {subject}/{task}")
         tasks[task] = row
-    if len(by_subject) != 30 or any(set(rows) != set(TASKS) for rows in by_subject.values()):
+    if len(by_subject) != 30 or any(
+        set(rows) != set(TASKS) for rows in by_subject.values()
+    ):
         raise ValueError("expected 30 participants with all four original tasks")
-    selected = sorted(by_subject, key=lambda value: hashlib.sha256(value.encode()).hexdigest())[:subjects]
+    selected = sorted(
+        by_subject, key=lambda value: hashlib.sha256(value.encode()).hexdigest()
+    )[:subjects]
     cases = [
         {
             "id": f"rope-{subject}-{task.lower()}",
@@ -72,7 +80,9 @@ def main() -> None:
     with urlopen(SOURCE, timeout=30) as response:
         dataset = prepare(response.read().decode("utf-8"), subjects=args.subjects)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Wrote {args.subjects * len(TASKS)} participant prompts to {args.output}")
 
 

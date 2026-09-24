@@ -44,8 +44,10 @@ def _text(content: Any) -> str:
         return content
     if isinstance(content, list):
         return "\n".join(
-            item["text"] for item in content
-            if isinstance(item, dict) and item.get("type") in {"text", "input_text"}
+            item["text"]
+            for item in content
+            if isinstance(item, dict)
+            and item.get("type") in {"text", "input_text"}
             and isinstance(item.get("text"), str)
         )
     return ""
@@ -62,13 +64,18 @@ def _messages(path: Path, source: str) -> list[tuple[str, str]]:
             if source == "codex" and event.get("type") == "response_item":
                 message = event.get("payload", {})
             elif (source == "omp" and event.get("type") == "message") or (
-                source == "claude" and event.get("type") in {"user", "assistant"}
-                and not event.get("isMeta") and not event.get("isSidechain")
+                source == "claude"
+                and event.get("type") in {"user", "assistant"}
+                and not event.get("isMeta")
+                and not event.get("isSidechain")
             ):
                 message = event.get("message", {})
             else:
                 continue
-            if not isinstance(message, dict) or message.get("role") not in {"user", "assistant"}:
+            if not isinstance(message, dict) or message.get("role") not in {
+                "user",
+                "assistant",
+            }:
                 continue
             text = _text(message.get("content")).strip()
             if text:
@@ -85,15 +92,25 @@ def _review_input(case: dict[str, Any]) -> dict[str, Any]:
     messages = _messages(path, case["source"])
     # Claude continuation summaries can quote earlier user turns verbatim. An
     # exact main-session message takes precedence over such quoted history.
-    matches = [i for i, (role, content) in enumerate(messages) if role == "user" and _normalize(case["prompt"]) == _normalize(content)]
+    matches = [
+        i
+        for i, (role, content) in enumerate(messages)
+        if role == "user" and _normalize(case["prompt"]) == _normalize(content)
+    ]
     if not matches:
-        matches = [i for i, (role, content) in enumerate(messages) if role == "user" and _normalize(case["prompt"]) in _normalize(content)]
+        matches = [
+            i
+            for i, (role, content) in enumerate(messages)
+            if role == "user" and _normalize(case["prompt"]) in _normalize(content)
+        ]
     if len(matches) > 1 and case["source"] == "omp":
         # Some oh-my-pi sessions replay the same message many times as history
         # grows. The first occurrence is the original main-session turn.
         matches = [matches[0]]
     if len(matches) != 1:
-        raise ValueError(f"source main-session user turn is not unique for {case['id']}: {len(matches)} matches")
+        raise ValueError(
+            f"source main-session user turn is not unique for {case['id']}: {len(matches)} matches"
+        )
     target = matches[0]
     prior_user = [i for i, (role, _) in enumerate(messages[:target]) if role == "user"]
     prior: list[dict[str, Any]] = []
@@ -106,14 +123,30 @@ def _review_input(case: dict[str, Any]) -> dict[str, Any]:
                 prior.append({"index": len(prior), "role": role, "text": content})
             else:
                 prior.append({"index": len(prior), "role": role, "omitted": True})
-    return {"id": case["id"], "prompt": case["prompt"], "prior": prior, "first_user_turn": not prior_user}
+    return {
+        "id": case["id"],
+        "prompt": case["prompt"],
+        "prior": prior,
+        "first_user_turn": not prior_user,
+    }
 
 
-def _json_reply(gateway: HttpGateway, *, instruction: str, cases: list[dict[str, Any]], max_tokens: int) -> dict[str, Any]:
-    messages = [{"role": "system", "content": instruction}, {"role": "user", "content": json.dumps({"cases": cases}, ensure_ascii=False)}]
+def _json_reply(
+    gateway: HttpGateway,
+    *,
+    instruction: str,
+    cases: list[dict[str, Any]],
+    max_tokens: int,
+) -> dict[str, Any]:
+    messages = [
+        {"role": "system", "content": instruction},
+        {"role": "user", "content": json.dumps({"cases": cases}, ensure_ascii=False)},
+    ]
     last_error: Exception | None = None
     for tokens in (max_tokens, max_tokens * 2):
-        answer = gateway.chat(MODEL, messages, role="writer", temperature=0, max_tokens=tokens)
+        answer = gateway.chat(
+            MODEL, messages, role="writer", temperature=0, max_tokens=tokens
+        )
         candidate = answer["choices"][0]["message"].get("content")
         if not isinstance(candidate, str) or not candidate.strip():
             last_error = ValueError("model returned no final review text")
@@ -132,18 +165,32 @@ def _json_reply(gateway: HttpGateway, *, instruction: str, cases: list[dict[str,
     raise ValueError("model returned no valid JSON review after retry") from last_error
 
 
-def review_gaps(batch_path: Path, output_path: Path, raw_path: Path, *, batch_size: int = 5) -> None:
+def review_gaps(
+    batch_path: Path, output_path: Path, raw_path: Path, *, batch_size: int = 5
+) -> None:
     batch = json.loads(batch_path.read_text(encoding="utf-8"))
     cases = batch["cases"]
-    review: dict[str, Any] = json.loads(output_path.read_text(encoding="utf-8")) if output_path.exists() else {
-        "schema_version": 1, "batch_digest": batch_digest(batch), "reviewer": REVIEWER,
-        "reviewer_kind": "user_delegated_model", "model": MODEL,
-        "reviewed_at": datetime.now(UTC).date().isoformat(), "reviews": [],
-    }
+    review: dict[str, Any] = (
+        json.loads(output_path.read_text(encoding="utf-8"))
+        if output_path.exists()
+        else {
+            "schema_version": 1,
+            "batch_digest": batch_digest(batch),
+            "reviewer": REVIEWER,
+            "reviewer_kind": "user_delegated_model",
+            "model": MODEL,
+            "reviewed_at": datetime.now(UTC).date().isoformat(),
+            "reviews": [],
+        }
+    )
     if review["batch_digest"] != batch_digest(batch):
         raise ValueError("saved review belongs to a different source batch")
     review.setdefault("reviewed_at", datetime.now(UTC).date().isoformat())
-    raw: dict[str, Any] = json.loads(raw_path.read_text(encoding="utf-8")) if raw_path.exists() else {"model": MODEL, "batches": []}
+    raw: dict[str, Any] = (
+        json.loads(raw_path.read_text(encoding="utf-8"))
+        if raw_path.exists()
+        else {"model": MODEL, "batches": []}
+    )
     done = {item["id"] for item in review["reviews"]}
     gateway = HttpGateway(config=GatewayConfig.from_env())
     instruction = (
@@ -160,17 +207,27 @@ def review_gaps(batch_path: Path, output_path: Path, raw_path: Path, *, batch_si
         f"Task-specific allowed keys: {json.dumps(TASK_GAPS)}. Gap definitions: {json.dumps(GAP_RULES)}."
     )
     for start in range(0, len(cases), batch_size):
-        current = [case for case in cases[start:start + batch_size] if case["id"] not in done]
+        current = [
+            case for case in cases[start : start + batch_size] if case["id"] not in done
+        ]
         if not current:
             continue
         prepared = [_review_input(case) for case in current]
         if any(SECRET.search(item["prompt"]) for item in prepared):
-            raise ValueError("secret-like text found in source prompt; review locally before provider call")
-        response = _json_reply(gateway, instruction=instruction, cases=prepared, max_tokens=8000)
-        raw["batches"].append({"case_ids": [item["id"] for item in prepared], "response": response})
+            raise ValueError(
+                "secret-like text found in source prompt; review locally before provider call"
+            )
+        response = _json_reply(
+            gateway, instruction=instruction, cases=prepared, max_tokens=8000
+        )
+        raw["batches"].append(
+            {"case_ids": [item["id"] for item in prepared], "response": response}
+        )
         save_json(raw_path, raw)
         decisions = response["decisions"]
-        if {item.get("id") for item in decisions if isinstance(item, dict)} != {item["id"] for item in prepared} or len(decisions) != len(prepared):
+        if {item.get("id") for item in decisions if isinstance(item, dict)} != {
+            item["id"] for item in prepared
+        } or len(decisions) != len(prepared):
             raise ValueError(f"model returned wrong case IDs for batch {start}")
         by_id = {item["id"]: item for item in decisions}
         for item in prepared:
@@ -182,32 +239,66 @@ def review_gaps(batch_path: Path, output_path: Path, raw_path: Path, *, batch_si
             indices = decision.get("context_indices")
             if judgment in {"exclude", "uncertain"} and task not in TASKS:
                 task = "general"
-            if judgment not in {"labeled", "exclude", "uncertain"} or mode not in {"standalone", "reconstructed", "exclude", "uncertain"} or task not in TASKS:
-                raise ValueError(f"invalid judgment, mode, or task for {item['id']}: {judgment!r}, {mode!r}, {task!r}")
-            if not isinstance(gaps, list) or any(gap not in TASK_GAPS[task] for gap in gaps) or len(set(gaps)) != len(gaps):
+            if (
+                judgment not in {"labeled", "exclude", "uncertain"}
+                or mode not in {"standalone", "reconstructed", "exclude", "uncertain"}
+                or task not in TASKS
+            ):
+                raise ValueError(
+                    f"invalid judgment, mode, or task for {item['id']}: {judgment!r}, {mode!r}, {task!r}"
+                )
+            if (
+                not isinstance(gaps, list)
+                or any(gap not in TASK_GAPS[task] for gap in gaps)
+                or len(set(gaps)) != len(gaps)
+            ):
                 raise ValueError(f"invalid task gap labels for {item['id']}")
-            if not isinstance(indices, list) or any(not isinstance(index, int) or index < 0 or index >= len(item["prior"]) for index in indices):
+            if not isinstance(indices, list) or any(
+                not isinstance(index, int) or index < 0 or index >= len(item["prior"])
+                for index in indices
+            ):
                 raise ValueError(f"invalid context indices for {item['id']}")
-            if mode == "reconstructed" and (not indices or any(item["prior"][index].get("omitted") for index in indices)):
+            if mode == "reconstructed" and (
+                not indices
+                or any(item["prior"][index].get("omitted") for index in indices)
+            ):
                 raise ValueError(f"unusable reconstructed context for {item['id']}")
             if judgment == "labeled" and mode not in {"standalone", "reconstructed"}:
                 raise ValueError(f"labeled case lacks usable context for {item['id']}")
-            context = "\n\n".join(f"{item['prior'][index]['role']}: {item['prior'][index]['text']}" for index in indices) if mode == "reconstructed" else ""
-            review["reviews"].append({
-                "id": item["id"], "judgment": judgment, "task_type": task,
-                "gaps": gaps if judgment == "labeled" else [], "context_mode": mode,
-                "context_text": context, "source_session_reviewed": True,
-                "notes": str(decision.get("notes", "")),
-            })
+            context = (
+                "\n\n".join(
+                    f"{item['prior'][index]['role']}: {item['prior'][index]['text']}"
+                    for index in indices
+                )
+                if mode == "reconstructed"
+                else ""
+            )
+            review["reviews"].append(
+                {
+                    "id": item["id"],
+                    "judgment": judgment,
+                    "task_type": task,
+                    "gaps": gaps if judgment == "labeled" else [],
+                    "context_mode": mode,
+                    "context_text": context,
+                    "source_session_reviewed": True,
+                    "notes": str(decision.get("notes", "")),
+                }
+            )
             done.add(item["id"])
         save_json(output_path, review)
-        print(f"Gap review {len(done)}/{len(cases)}: {dict(Counter(r['judgment'] for r in review['reviews']))}", flush=True)
+        print(
+            f"Gap review {len(done)}/{len(cases)}: {dict(Counter(r['judgment'] for r in review['reviews']))}",
+            flush=True,
+        )
     order = {case["id"]: index for index, case in enumerate(cases)}
     review["reviews"].sort(key=lambda item: order[item["id"]])
     save_json(output_path, review)
 
 
-def review_faithfulness(input_path: Path, output_path: Path, raw_path: Path, *, batch_size: int = 8) -> None:
+def review_faithfulness(
+    input_path: Path, output_path: Path, raw_path: Path, *, batch_size: int = 8
+) -> None:
     with input_path.open(encoding="utf-8", newline="") as file:
         rows = list(csv.DictReader(file))
     if output_path.exists():
@@ -215,7 +306,11 @@ def review_faithfulness(input_path: Path, output_path: Path, raw_path: Path, *, 
             reviewed = {row["row_id"]: row for row in csv.DictReader(file)}
     else:
         reviewed = {}
-    raw: dict[str, Any] = json.loads(raw_path.read_text(encoding="utf-8")) if raw_path.exists() else {"model": MODEL, "batches": []}
+    raw: dict[str, Any] = (
+        json.loads(raw_path.read_text(encoding="utf-8"))
+        if raw_path.exists()
+        else {"model": MODEL, "batches": []}
+    )
     gateway = HttpGateway(config=GatewayConfig.from_env())
     instruction = (
         "You are making user-delegated ground-truth judgments of proposed prompt success tests. "
@@ -226,34 +321,72 @@ def review_faithfulness(input_path: Path, output_path: Path, raw_path: Path, *, 
         "Uncertain is only for genuinely inaccessible context or redaction. Judge against the prompt as shown."
     )
     for start in range(0, len(rows), batch_size):
-        current = [row for row in rows[start:start + batch_size] if row["row_id"] not in reviewed]
+        current = [
+            row
+            for row in rows[start : start + batch_size]
+            if row["row_id"] not in reviewed
+        ]
         if not current:
             continue
-        if any(SECRET.search(row["prompt"] + "\n" + row["proposed_test"]) for row in current):
-            raise ValueError("secret-like text found in review row; review locally before provider call")
-        prepared = [{key: row[key] for key in ("row_id", "prompt", "proposed_test")} for row in current]
-        response = _json_reply(gateway, instruction=instruction, cases=prepared, max_tokens=2200)
+        if any(
+            SECRET.search(row["prompt"] + "\n" + row["proposed_test"])
+            for row in current
+        ):
+            raise ValueError(
+                "secret-like text found in review row; review locally before provider call"
+            )
+        prepared = [
+            {key: row[key] for key in ("row_id", "prompt", "proposed_test")}
+            for row in current
+        ]
+        response = _json_reply(
+            gateway, instruction=instruction, cases=prepared, max_tokens=2200
+        )
         decisions = response["decisions"]
-        if {item.get("row_id") for item in decisions if isinstance(item, dict)} != {row["row_id"] for row in current} or len(decisions) != len(current):
+        if {item.get("row_id") for item in decisions if isinstance(item, dict)} != {
+            row["row_id"] for row in current
+        } or len(decisions) != len(current):
             raise ValueError(f"model returned wrong row IDs for batch {start}")
         for decision in decisions:
             label = decision.get("review_label")
             if label not in {"yes", "no", "uncertain"}:
-                raise ValueError(f"invalid faithfulness label for {decision.get('row_id')}")
+                raise ValueError(
+                    f"invalid faithfulness label for {decision.get('row_id')}"
+                )
             row = next(row for row in current if row["row_id"] == decision["row_id"])
             reviewed[row["row_id"]] = {
-                **row, "review_label": label, "review_notes": str(decision.get("notes", "")),
-                "reviewer": REVIEWER, "reviewer_kind": "user_delegated_model",
+                **row,
+                "review_label": label,
+                "review_notes": str(decision.get("notes", "")),
+                "reviewer": REVIEWER,
+                "reviewer_kind": "user_delegated_model",
                 "reviewed_at": "2026-09-23",
             }
-        raw["batches"].append({"row_ids": [row["row_id"] for row in current], "response": response})
+        raw["batches"].append(
+            {"row_ids": [row["row_id"] for row in current], "response": response}
+        )
         save_json(raw_path, raw)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=[*rows[0], "review_label", "review_notes", "reviewer", "reviewer_kind", "reviewed_at"])
+            writer = csv.DictWriter(
+                file,
+                fieldnames=[
+                    *rows[0],
+                    "review_label",
+                    "review_notes",
+                    "reviewer",
+                    "reviewer_kind",
+                    "reviewed_at",
+                ],
+            )
             writer.writeheader()
-            writer.writerows(reviewed[row["row_id"]] for row in rows if row["row_id"] in reviewed)
-        print(f"Faithfulness review {len(reviewed)}/{len(rows)}: {dict(Counter(r['review_label'] for r in reviewed.values()))}", flush=True)
+            writer.writerows(
+                reviewed[row["row_id"]] for row in rows if row["row_id"] in reviewed
+            )
+        print(
+            f"Faithfulness review {len(reviewed)}/{len(rows)}: {dict(Counter(r['review_label'] for r in reviewed.values()))}",
+            flush=True,
+        )
 
 
 def main() -> None:
@@ -267,7 +400,9 @@ def main() -> None:
     if args.mode == "gaps":
         review_gaps(args.input, args.output, args.raw, batch_size=args.batch_size or 5)
     else:
-        review_faithfulness(args.input, args.output, args.raw, batch_size=args.batch_size or 8)
+        review_faithfulness(
+            args.input, args.output, args.raw, batch_size=args.batch_size or 8
+        )
 
 
 if __name__ == "__main__":

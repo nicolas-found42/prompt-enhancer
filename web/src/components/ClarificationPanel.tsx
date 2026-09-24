@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useMemo, useState } from "react";
 
 export type ClarificationOption = {
   value: string;
@@ -17,7 +17,10 @@ export type ClarificationQuestion = {
   other_value?: string;
 };
 
-export type ClarificationAnswers = Record<string, string | { value: string; text?: string }>;
+export type ClarificationAnswers = Record<
+  string,
+  string | { value: string; text?: string }
+>;
 
 type Props = {
   questions: ClarificationQuestion[];
@@ -27,16 +30,25 @@ type Props = {
   error?: string | null;
 };
 
-export function ClarificationPanel({ questions, onSubmit, onSkip, busy = false, error }: Props) {
+export function ClarificationPanel({
+  questions,
+  onSubmit,
+  onSkip,
+  busy = false,
+  error,
+}: Props) {
   const defaults = useMemo(
     () =>
       Object.fromEntries(
         questions.map((question) => [
           question.id,
-          question.default ?? question.default_answer ?? question.options[0]?.value ?? "",
-        ]),
+          question.default ??
+            question.default_answer ??
+            question.options[0]?.value ??
+            "",
+        ])
       ),
-    [questions],
+    [questions]
   );
   const [answers, setAnswers] = useState<ClarificationAnswers>(defaults);
   const [otherText, setOtherText] = useState<Record<string, string>>({});
@@ -66,30 +78,39 @@ export function ClarificationPanel({ questions, onSubmit, onSkip, busy = false, 
   if (questions.length === 0) return null;
 
   return (
-    <section className="result clarification-panel" aria-labelledby="clarification-heading">
+    <section
+      className="result clarification-panel"
+      aria-labelledby="clarification-heading"
+    >
       <h2 id="clarification-heading">A few details will improve the result</h2>
-      <p>Choose the closest answer. You can skip these and continue with assumptions.</p>
+      <p>
+        Choose the closest answer. You can skip these and continue with
+        assumptions.
+      </p>
       <form onSubmit={submit}>
         {questions.map((question) => {
           const otherValue = question.other_value ?? "other";
           const selected = answers[question.id];
-          const selectedValue = typeof selected === "string" ? selected : selected?.value;
+          const selectedValue =
+            typeof selected === "string" ? selected : selected?.value;
           return (
             <fieldset key={question.id}>
               <legend>{question.prompt}</legend>
-              {question.options.filter((option) => !option.other).map((option) => (
-                <label key={option.value}>
-                  <input
-                    type="radio"
-                    name={question.id}
-                    value={option.value}
-                    checked={selectedValue === option.value}
-                    onChange={() => setAnswer(question.id, option.value)}
-                  />
-                  {option.label}
-                  {option.preselected && <small> (recommended)</small>}
-                </label>
-              ))}
+              {question.options
+                .filter((option) => !option.other)
+                .map((option) => (
+                  <label key={option.value}>
+                    <input
+                      type="radio"
+                      name={question.id}
+                      value={option.value}
+                      checked={selectedValue === option.value}
+                      onChange={() => setAnswer(question.id, option.value)}
+                    />
+                    {option.label}
+                    {option.preselected && <small> (recommended)</small>}
+                  </label>
+                ))}
               {(question.allow_other ?? true) && (
                 <div>
                   <label>
@@ -107,7 +128,10 @@ export function ClarificationPanel({ questions, onSubmit, onSkip, busy = false, 
                       aria-label={`Other answer for ${question.prompt}`}
                       value={otherText[question.id] ?? ""}
                       onChange={(event) =>
-                        setOtherText((current) => ({ ...current, [question.id]: event.target.value }))
+                        setOtherText((current) => ({
+                          ...current,
+                          [question.id]: event.target.value,
+                        }))
                       }
                       placeholder="Enter your own answer"
                     />
@@ -121,7 +145,12 @@ export function ClarificationPanel({ questions, onSubmit, onSkip, busy = false, 
         <button className="primary" type="submit" disabled={busy}>
           {busy ? "Continuing…" : "Continue"}
         </button>
-        <button className="secondary" type="button" onClick={skip} disabled={busy}>
+        <button
+          className="secondary"
+          type="button"
+          onClick={skip}
+          disabled={busy}
+        >
           Skip and continue
         </button>
       </form>

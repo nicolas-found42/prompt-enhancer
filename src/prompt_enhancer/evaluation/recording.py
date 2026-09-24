@@ -25,16 +25,22 @@ class RecordingGateway:
         self.faithfulness_threshold: float | None = None
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
-        self.checklist_impacts: dict[str, str] | None = checklist_impacts(DEFAULT_RUBRIC)
+        self.checklist_impacts: dict[str, str] | None = checklist_impacts(
+            DEFAULT_RUBRIC
+        )
         # The weak-model panel calls the gateway from worker threads.
         self._lock = threading.RLock()
 
-    def _record(self, operation: str, model: str, payload: Any, role: str, answer: Any) -> Any:
+    def _record(
+        self, operation: str, model: str, payload: Any, role: str, answer: Any
+    ) -> Any:
         key = ReplayGateway.request_key(operation, model, payload, role)
         with self._lock:
             previous = self.responses.get(key)
             if previous is not None and previous != answer:
-                raise ValueError("identical gateway request produced different responses; strict replay cannot represent it")
+                raise ValueError(
+                    "identical gateway request produced different responses; strict replay cannot represent it"
+                )
             self.responses[key] = answer
             self.save()
         return answer
@@ -62,7 +68,9 @@ class RecordingGateway:
             bundle["checklist_keys"] = self.checklist_keys
         if self.checklist_impacts is not None:
             bundle["checklist_impacts"] = self.checklist_impacts
-        temporary.write_text(json.dumps(bundle, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        temporary.write_text(
+            json.dumps(bundle, ensure_ascii=False, sort_keys=True), encoding="utf-8"
+        )
         temporary.replace(self.path)
 
     def attach_case_metrics(self, report: Any) -> None:
@@ -79,12 +87,36 @@ class RecordingGateway:
     def new_run(self, run_id: str | None = None) -> str:
         return self.gateway.new_run(run_id)
 
-    def chat(self, model: str, messages: Any, *, role: str = "writer", run_id: str | None = None, **params: Any) -> Any:
-        normalized = list(messages) if not isinstance(messages, str) else [{"role": "user", "content": messages}]
+    def chat(
+        self,
+        model: str,
+        messages: Any,
+        *,
+        role: str = "writer",
+        run_id: str | None = None,
+        **params: Any,
+    ) -> Any:
+        normalized = (
+            list(messages)
+            if not isinstance(messages, str)
+            else [{"role": "user", "content": messages}]
+        )
         answer = self.gateway.chat(model, messages, role=role, run_id=run_id, **params)
-        return self._record("chat", model, {"model": model, "messages": normalized, **params}, role, answer)
+        return self._record(
+            "chat",
+            model,
+            {"model": model, "messages": normalized, **params},
+            role,
+            answer,
+        )
 
-    def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
+    def decide(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> Any:
         request = dict(payload)
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
@@ -92,7 +124,13 @@ class RecordingGateway:
         self._record_provenance(request, role)
         return self._record("decide", self.gateway.jev_model, request, role, answer)
 
-    def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
+    def decide_batch(
+        self,
+        requests: Sequence[Mapping[str, Any]],
+        *,
+        role: str = "judge",
+        run_id: str | None = None,
+    ) -> list[Any]:
         answers = self.gateway.decide_batch(requests, role=role, run_id=run_id)
         for request, answer in zip(requests, answers, strict=True):
             self._record_provenance(request, role)
@@ -100,11 +138,23 @@ class RecordingGateway:
         return answers
 
     def _record_provenance(self, request: Mapping[str, Any], role: str) -> None:
-        entry = next((item for item in reversed(self.gateway.decision_log) if item["question"] == dict(request)), None)
+        entry = next(
+            (
+                item
+                for item in reversed(self.gateway.decision_log)
+                if item["question"] == dict(request)
+            ),
+            None,
+        )
         if entry is None or not entry.get("answered_by"):
             raise ValueError("Jev decision has no answering snapshot")
-        key = ReplayGateway.request_key("decide", self.gateway.jev_model, dict(request), role)
-        self.decision_provenance[key] = {"answered_by": entry["answered_by"], "usage": entry.get("usage", {})}
+        key = ReplayGateway.request_key(
+            "decide", self.gateway.jev_model, dict(request), role
+        )
+        self.decision_provenance[key] = {
+            "answered_by": entry["answered_by"],
+            "usage": entry.get("usage", {}),
+        }
 
     def list_models(self, *, refresh: bool = False) -> Any:
         # The model catalog and ledger are not part of the Gateway interface.

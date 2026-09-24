@@ -1,0 +1,106 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+
+  - repo: local
+    hooks:
+      - id: actionlint
+        name: actionlint (workflow files)
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+
+      - id: gitleaks-staged
+        name: Gitleaks (staged secrets)
+        entry: gitleaks git --pre-commit --redact --staged --verbose
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: uv-lock
+        name: uv lock is current
+        entry: uv lock --check
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: python-lint-staged
+        name: Ruff lint (staged Python)
+        entry: uv run --locked ruff check --fix
+        language: system
+        types: [python]
+
+      - id: python-format
+        name: Ruff format (staged Python)
+        entry: uv run --locked ruff format
+        language: system
+        types: [python]
+
+      - id: web-format
+        name: Prettier (staged web files)
+        entry: web/node_modules/.bin/prettier --write
+        language: system
+        files: ^web/(src/|e2e/|[^/]+\.(?:js|ts|tsx|css|html|json))
+
+      - id: web-lint-staged
+        name: ESLint (staged web TypeScript)
+        entry: web/node_modules/.bin/eslint --fix
+        language: system
+        files: ^web/(src/.*\.[jt]sx?|e2e/.*\.[jt]sx?|[^/]+\.config\.ts|eslint\.config\.js)$
+        types: [file]
+
+      - id: python-lint
+        name: Ruff lint (whole repo)
+        entry: uv run --locked ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: python-typecheck
+        name: ty (Python source and scripts)
+        entry: uv run --locked ty check src scripts
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: python-dependencies
+        name: deptry (packaged Python source)
+        entry: uv run --locked deptry src
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: web-typecheck-build
+        name: TypeScript and Vite build
+        entry: npm --prefix web run build
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: web-unit-tests
+        name: Vitest unit and component tests
+        entry: npm --prefix web run test:unit
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: python-tests
+        name: pytest with coverage
+        entry: uv run --locked pytest -q --cov=prompt_enhancer --cov-report=term
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: web-tests
+        name: Playwright
+        entry: npm --prefix web run test:e2e
+        language: system
+        pass_filenames: false
+        always_run: true

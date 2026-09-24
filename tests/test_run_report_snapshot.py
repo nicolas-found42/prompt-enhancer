@@ -27,7 +27,11 @@ FIXTURE = Path(__file__).parent / "fixtures" / "run_report_snapshot.json"
 
 def _normalized(value: Any, run_ids: set[str]) -> Any:
     if isinstance(value, dict):
-        return {key: _normalized(item, run_ids) for key, item in value.items() if key != "timing"}
+        return {
+            key: _normalized(item, run_ids)
+            for key, item in value.items()
+            if key != "timing"
+        }
     if isinstance(value, list):
         return [_normalized(item, run_ids) for item in value]
     if isinstance(value, str):
@@ -42,7 +46,9 @@ def test_scenario_results_are_unchanged(name: str, tmp_path: Path) -> None:
     results = run(PromptOptimizer(gateway=make_gateway(), store=RunStore(":memory:")))
     rendered = json.dumps(
         _normalized(results, {result["run_id"] for result in results}),
-        indent=2, sort_keys=True, ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        ensure_ascii=False,
     )
     digest = hashlib.sha256(rendered.encode("utf-8")).hexdigest()
 
@@ -53,4 +59,6 @@ def test_scenario_results_are_unchanged(name: str, tmp_path: Path) -> None:
 
     actual = tmp_path / f"{name}.json"
     actual.write_text(rendered + "\n")
-    assert digest == json.loads(FIXTURE.read_text())[name], f"results changed; actual results are in {actual}"
+    assert digest == json.loads(FIXTURE.read_text())[name], (
+        f"results changed; actual results are in {actual}"
+    )

@@ -85,7 +85,13 @@ def test_history_http_contract(tmp_path: Path):
 
 def test_history_rejects_feedback_for_incomplete_run(tmp_path: Path):
     history = RunHistory(RunStore(tmp_path / "history-incomplete.sqlite3"))
-    history.save_run({"run_id": "run-paused", "prompt": "A prompt", "result": {"status": "needs_input"}})
+    history.save_run(
+        {
+            "run_id": "run-paused",
+            "prompt": "A prompt",
+            "result": {"status": "needs_input"},
+        }
+    )
 
     try:
         history.record_feedback("run-paused", "accept")
