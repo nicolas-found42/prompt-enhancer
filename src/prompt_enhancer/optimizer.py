@@ -16,6 +16,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, cast
 
+from . import jev_questions
 from .catalog import DEFAULT_DEEP_WEAK_PANEL, DEFAULT_WEAK_PANEL, LiveModelCatalog
 from .clarification import (
     ClarificationService,
@@ -541,7 +542,7 @@ class PromptOptimizer:
                         "original_prompt": original_prompt,
                         "updated_prompt": updated_prompt,
                     },
-                    "question": "Does the updated prompt preserve the user's original meaning without contradictory instructions?",
+                    "question": jev_questions.ASSUMPTION_MEANING_QUESTION,
                 },
                 role="judge",
                 run_id=run_id,

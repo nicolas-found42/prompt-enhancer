@@ -4,6 +4,12 @@ import pytest
 
 from prompt_enhancer import PromptOptimizer, RunStore
 from prompt_enhancer.config import Settings
+from prompt_enhancer.diagnosis import (
+    ChecklistItem,
+    DiagnosisRubric,
+    GapImpact,
+    TaskType,
+)
 from prompt_enhancer.gateway import ProviderError, ScriptedGateway
 
 
@@ -62,6 +68,48 @@ def test_clear_prompt_is_returned_unchanged_and_persisted() -> None:
     assert record["result"] == result
     assert record["cost"] == result["cost"]
     assert record["timing"] == result["timing"]
+
+
+def test_structured_jev_question_keeps_user_prompt_in_state() -> None:
+    prompt = "Summarize this article in three concise bullets."
+    gateway = _no_test_gateway()
+    rubric = DiagnosisRubric(
+        task_types=(
+            TaskType(
+                "general",
+                "General",
+                (
+                    ChecklistItem(
+                        "goal",
+                        "goal",
+                        GapImpact.HIGH,
+                        question={
+                            "question": "Is the goal missing from `prompt`?",
+                            "focus": ["goal"],
+                        },
+                    ),
+                ),
+            ),
+        )
+    )
+
+    PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=gateway,
+        diagnosis_rubric=rubric,
+    ).optimize(prompt)
+
+    gap_request = next(
+        entry["question"]
+        for entry in gateway.decision_log
+        if entry["question"].get("key") == "gap:goal"
+    )
+    assert gap_request["state"] == {"prompt": prompt}
+    assert gap_request["query"] == {
+        "question": "Is the goal missing from `prompt`?",
+        "focus": ["goal"],
+    }
+    assert prompt not in json.dumps(gap_request["query"])
 
 
 def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_threshold() -> (
@@ -264,7 +312,12 @@ def test_clear_prompt_with_success_tests_is_never_rewritten() -> None:
 def test_writer_choice_test_without_unknown_does_not_fail_run() -> None:
     def chat(_model, _messages, *, role, **_kwargs):
         if role == "writer":
-            return '{"tests":[{"question":"Which response helps?","kind":"choice","expected":"Asks for context","options":["Asks for context","Guesses"]}]}'
+            return (
+                '{"tests":[{"question":"Which response helps?","kind":"choice",'
+                '"expected":"Asks for context","options":['
+                '{"value":"Asks for context","description":"Requests missing context."},'
+                '{"value":"Guesses","description":"Invents missing context."}]}]}'
+            )
         raise AssertionError("The clear prompt should not need candidate outputs")
 
     gateway = ScriptedGateway(

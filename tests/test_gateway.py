@@ -371,6 +371,52 @@ def test_jev_requests_use_decisions_api_and_return_typed_answer_payload():
     assert gateway.decision_log[0]["usage"]["cost"] == pytest.approx(0.0000042)
 
 
+def test_jev_preserves_structured_instructions_and_choice_descriptions():
+    transport = QueueTransport(
+        [
+            Response(
+                200,
+                {
+                    "model": JEV_MODEL,
+                    "answers": {
+                        "kind": {
+                            "type": "choice",
+                            "choice": "direct",
+                            "probabilities": {"direct": 0.8, "other": 0.2},
+                            "confidence": 0.6,
+                        }
+                    },
+                },
+            )
+        ]
+    )
+    gateway = HttpGateway(transport, config=GatewayConfig(max_retries=0))
+    instructions = {"question": "Which kind?", "focus": ["tone", "intent"]}
+    criteria = {"direct": {"what": "A direct request"}, "other": None}
+
+    gateway.decide(
+        {
+            "key": "kind",
+            "type": "choice",
+            "instructions": instructions,
+            "criteria": criteria,
+            "state": {"prompt": "Please answer"},
+        }
+    )
+
+    assert transport.requests[0]["json"] == {
+        "model": JEV_MODEL,
+        "state": {"prompt": "Please answer"},
+        "questions": {
+            "kind": {
+                "type": "choice",
+                "instructions": instructions,
+                "criteria": criteria,
+            }
+        },
+    }
+
+
 def test_decide_batch_sends_one_request_for_multiple_questions():
     transport = QueueTransport(
         [
@@ -406,6 +452,110 @@ def test_decide_batch_sends_one_request_for_multiple_questions():
     assert [answer["noul"] for answer in answers] == [0.91, 0.12]
     assert len(transport.requests) == 1
     assert all(entry["answered_by"] == JEV_MODEL for entry in gateway.decision_log)
+
+
+def test_decide_batch_addresses_distinct_states_with_structured_instructions():
+    transport = QueueTransport(
+        [
+            Response(
+                200,
+                {
+                    "model": JEV_MODEL,
+                    "answers": {
+                        "first": {
+                            "type": "choice",
+                            "choice": "direct",
+                            "probabilities": {"direct": 0.9, "other": 0.1},
+                            "confidence": 0.8,
+                        },
+                        "second": {"type": "noul", "noul": 0.1},
+                    },
+                },
+            )
+        ]
+    )
+    gateway = HttpGateway(transport, config=GatewayConfig(max_retries=0))
+    object_instructions = {"question": "Is it clear?", "focus": ["intent"]}
+    array_instructions = ["Check the intent", "Check the audience"]
+    criteria = {"direct": {"what": "An explicit request"}, "other": None}
+
+    gateway.decide_batch(
+        [
+            {
+                "key": "first",
+                "type": "choice",
+                "query": object_instructions,
+                "criteria": criteria,
+                "state": {"prompt": "A"},
+            },
+            {
+                "key": "second",
+                "type": "noul",
+                "query": array_instructions,
+                "state": {"prompt": "B"},
+            },
+        ]
+    )
+
+    payload = transport.requests[0]["json"]
+    assert payload["state"] == {
+        "items": {"first": {"prompt": "A"}, "second": {"prompt": "B"}}
+    }
+    assert payload["questions"]["first"]["instructions"] == {
+        **object_instructions,
+        "item": "state.items['first']",
+    }
+    assert payload["questions"]["first"]["criteria"] == criteria
+    assert payload["questions"]["second"]["instructions"] == {
+        "item": "state.items['second']",
+        "question": array_instructions,
+    }
+    assert object_instructions == {"question": "Is it clear?", "focus": ["intent"]}
+
+
+def test_jev_rejects_empty_instructions_and_conflicting_batch_item():
+    gateway = HttpGateway(QueueTransport([]), config=GatewayConfig(max_retries=0))
+    for value in (None, " ", {}, []):
+        with pytest.raises(ValueError, match="instructions are required"):
+            gateway.decide({"query": value, "instructions": "fallback", "state": "A"})
+
+    with pytest.raises(ValueError, match="item field conflicts with state"):
+        gateway.decide_batch(
+            [
+                {"key": "first", "query": {"item": "other"}, "state": "A"},
+                {"key": "second", "query": "Is it B?", "state": "B"},
+            ]
+        )
+
+
+def test_decide_batch_accepts_matching_item_state_path():
+    transport = QueueTransport(
+        [
+            Response(
+                200,
+                {
+                    "model": JEV_MODEL,
+                    "answers": {
+                        "first": {"type": "noul", "noul": 0.9},
+                        "second": {"type": "noul", "noul": 0.1},
+                    },
+                },
+            )
+        ]
+    )
+    gateway = HttpGateway(transport, config=GatewayConfig(max_retries=0))
+    instructions = {"item": "state.items['first']", "question": "Is it clear?"}
+
+    gateway.decide_batch(
+        [
+            {"key": "first", "query": instructions, "state": "A"},
+            {"key": "second", "query": "Is it B?", "state": "B"},
+        ]
+    )
+
+    assert transport.requests[0]["json"]["questions"]["first"]["instructions"] == (
+        instructions
+    )
 
 
 def test_jev_response_without_model_snapshot_is_rejected():
