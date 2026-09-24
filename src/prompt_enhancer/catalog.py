@@ -41,8 +41,7 @@ class CatalogTransport(Protocol):
         headers: Mapping[str, str] | None = None,
         json: Any | None = None,
         timeout: float | None = None,
-    ) -> Any:
-        ...
+    ) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +90,10 @@ class ModelInfo:
         if self.metadata:
             for key, value in self.metadata.items():
                 lowered = key.lower()
-                if any(word in lowered for word in ("key", "token", "secret", "authorization")):
+                if any(
+                    word in lowered
+                    for word in ("key", "token", "secret", "authorization")
+                ):
                     continue
                 if isinstance(value, (str, int, float, bool)) or value is None:
                     result[key] = value
@@ -186,8 +188,10 @@ def _decode_json(response: Any) -> Any:
     if isinstance(response, Mapping) and "json" in response:
         value = response["json"]
         return value() if callable(value) else value
-    if isinstance(response, Mapping) and "data" in response and not any(
-        key in response for key in ("id", "models")
+    if (
+        isinstance(response, Mapping)
+        and "data" in response
+        and not any(key in response for key in ("id", "models"))
     ):
         data = response["data"]
         return data() if callable(data) else data
@@ -246,7 +250,16 @@ def _model_from_item(item: Mapping[str, Any], provider: str) -> ModelInfo | None
         metadata={
             key: value
             for key, value in item.items()
-            if key not in {"id", "model", "slug", "name", "pricing", "context_length", "context_window"}
+            if key
+            not in {
+                "id",
+                "model",
+                "slug",
+                "name",
+                "pricing",
+                "context_length",
+                "context_window",
+            }
         },
     )
 
@@ -292,7 +305,9 @@ class LiveModelCatalog:
     def snapshot(self) -> CatalogSnapshot | None:
         return self._snapshot
 
-    def _fetch_one(self, url: str, provider: str, key: str | None) -> tuple[ModelInfo, ...]:
+    def _fetch_one(
+        self, url: str, provider: str, key: str | None
+    ) -> tuple[ModelInfo, ...]:
         headers = {"Accept": "application/json", "User-Agent": "prompt-enhancer/0.1"}
         if key:
             headers["Authorization"] = f"Bearer {key}"
@@ -331,7 +346,9 @@ class LiveModelCatalog:
 class StaticModelCatalog:
     """Small deterministic catalog useful for local mode and public tests."""
 
-    def __init__(self, go: Iterable[ModelInfo | str], openrouter: Iterable[ModelInfo | str] = ()) -> None:
+    def __init__(
+        self, go: Iterable[ModelInfo | str], openrouter: Iterable[ModelInfo | str] = ()
+    ) -> None:
         self._snapshot = CatalogSnapshot(
             go=tuple(self._coerce(item, "go") for item in go),
             openrouter=tuple(self._coerce(item, "openrouter") for item in openrouter),
@@ -339,7 +356,11 @@ class StaticModelCatalog:
 
     @staticmethod
     def _coerce(item: ModelInfo | str, provider: str) -> ModelInfo:
-        return item if isinstance(item, ModelInfo) else ModelInfo(id=item, provider=provider)
+        return (
+            item
+            if isinstance(item, ModelInfo)
+            else ModelInfo(id=item, provider=provider)
+        )
 
     @property
     def snapshot(self) -> CatalogSnapshot:

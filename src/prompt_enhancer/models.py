@@ -62,7 +62,9 @@ class Tier(StrEnum):
 
 _BUDGETS: dict[Tier, TierBudget] = {
     Tier.FAST: TierBudget(candidates=3, models=2, samples=1, max_rounds=1, name="fast"),
-    Tier.STANDARD: TierBudget(candidates=4, models=3, samples=2, max_rounds=2, name="standard"),
+    Tier.STANDARD: TierBudget(
+        candidates=4, models=3, samples=2, max_rounds=2, name="standard"
+    ),
     Tier.DEEP: TierBudget(candidates=6, models=5, samples=3, max_rounds=3, name="deep"),
 }
 

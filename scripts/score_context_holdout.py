@@ -13,24 +13,42 @@ from prompt_enhancer.evaluation.datasets import load_dataset, replay_digest
 from prompt_enhancer.gateway import ReplayGateway
 
 
-def score(dataset_path: Path, replay_path: Path, calibration_path: Path) -> dict[str, object]:
+def score(
+    dataset_path: Path, replay_path: Path, calibration_path: Path
+) -> dict[str, object]:
     dataset = load_dataset(dataset_path)
     calibration = json.loads(calibration_path.read_text(encoding="utf-8"))
     selected = calibration["selected_threshold"]
     question_text = calibration.get("question")
-    if not isinstance(question_text, str) or not question_text or not isinstance(selected, (float, int)):
+    if (
+        not isinstance(question_text, str)
+        or not question_text
+        or not isinstance(selected, (float, int))
+    ):
         raise ValueError("calibration must name a context question and threshold")
     responses = json.loads(replay_path.read_text(encoding="utf-8"))["responses"]
     rows = []
     for case in dataset.cases:
-        if not case.labels_present or "context" not in case.metadata.get("evaluation_gaps", []):
+        if not case.labels_present or "context" not in case.metadata.get(
+            "evaluation_gaps", []
+        ):
             raise ValueError(f"missing human context label for {case.id}")
-        question = {"model": JEV_MODEL, "query": question_text, "state": {"prompt": case.prompt}, "type": "noul", "key": "gap:context"}
+        question = {
+            "model": JEV_MODEL,
+            "query": question_text,
+            "state": {"prompt": case.prompt},
+            "type": "noul",
+            "key": "gap:context",
+        }
         key = ReplayGateway.request_key("decide", JEV_MODEL, question, "judge")
         answer = responses.get(key)
-        if not isinstance(answer, dict) or not isinstance(answer.get("noul"), (float, int)):
+        if not isinstance(answer, dict) or not isinstance(
+            answer.get("noul"), (float, int)
+        ):
             raise TypeError(f"missing or invalid context response for {case.id}")
-        rows.append((case.id, float(answer["noul"]), "context" in case.expected_gaps, False))
+        rows.append(
+            (case.id, float(answer["noul"]), "context" in case.expected_gaps, False)
+        )
     return {
         "question": question_text,
         "dataset_digest": dataset.digest,
@@ -51,7 +69,12 @@ def main() -> None:
     parser.add_argument("--calibration", type=Path, required=True)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    rendered = json.dumps(score(args.dataset, args.replay, args.calibration), indent=2, sort_keys=True) + "\n"
+    rendered = (
+        json.dumps(
+            score(args.dataset, args.replay, args.calibration), indent=2, sort_keys=True
+        )
+        + "\n"
+    )
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")

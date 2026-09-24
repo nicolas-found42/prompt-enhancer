@@ -5,3 +5,6 @@ uvicorn[standard]>=0.30
 [dev]
 httpx>=0.27
 pytest>=8.0
+
+[training]
+catboost<2,>=1.2.10

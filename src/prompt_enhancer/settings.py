@@ -37,7 +37,9 @@ class ModelDefaults:
             raise ValueError("writer must be a non-empty model id")
         if not self.strong or not isinstance(self.strong, str):
             raise ValueError("strong must be a non-empty model id")
-        if not self.weak or any(not isinstance(model, str) or not model for model in self.weak):
+        if not self.weak or any(
+            not isinstance(model, str) or not model for model in self.weak
+        ):
             raise ValueError("weak must contain non-empty model ids")
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,7 +88,11 @@ class Settings:
 class SettingsStore:
     """Atomic local JSON settings persistence with an injectable initial path."""
 
-    def __init__(self, path: str | os.PathLike[str] = "settings.json", defaults: ModelDefaults | None = None) -> None:
+    def __init__(
+        self,
+        path: str | os.PathLike[str] = "settings.json",
+        defaults: ModelDefaults | None = None,
+    ) -> None:
         self.path = Path(path)
         self._defaults = defaults or ModelDefaults()
         self._lock = RLock()
@@ -121,7 +127,9 @@ class SettingsStore:
             fd, temporary = tempfile.mkstemp(prefix=".settings-", dir=self.path.parent)
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as stream:
-                    json.dump(normalized.to_public_dict(), stream, indent=2, sort_keys=True)
+                    json.dump(
+                        normalized.to_public_dict(), stream, indent=2, sort_keys=True
+                    )
                     stream.write("\n")
                     stream.flush()
                     os.fsync(stream.fileno())

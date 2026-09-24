@@ -31,7 +31,9 @@ def _json_assignment(raw: str) -> tuple[str, object]:
     try:
         parsed = json.loads(value)
     except json.JSONDecodeError as exc:
-        raise argparse.ArgumentTypeError(f"invalid JSON value for {key}: {exc}") from exc
+        raise argparse.ArgumentTypeError(
+            f"invalid JSON value for {key}: {exc}"
+        ) from exc
     return key, parsed
 
 
@@ -52,7 +54,9 @@ def _factory(reference: str) -> EngineFactory:
     try:
         factory = getattr(import_module(module_name), attribute)
     except (ImportError, AttributeError) as exc:
-        raise EvaluationError(f"could not load engine factory {reference!r}: {exc}") from exc
+        raise EvaluationError(
+            f"could not load engine factory {reference!r}: {exc}"
+        ) from exc
     if not callable(factory):
         raise EvaluationError(f"engine factory {reference!r} is not callable")
     return factory
@@ -76,8 +80,16 @@ def _parser() -> argparse.ArgumentParser:
         help="explicitly allow the product's configured live provider gateway",
     )
     parser.add_argument("--output", type=Path, help="write JSON here instead of stdout")
-    parser.add_argument("--record", type=Path, help="capture live responses for strict replay; use with --live")
-    parser.add_argument("--allow-snapshot-mismatch", action="store_true", help="replay decisions recorded with a different Jev snapshot")
+    parser.add_argument(
+        "--record",
+        type=Path,
+        help="capture live responses for strict replay; use with --live",
+    )
+    parser.add_argument(
+        "--allow-snapshot-mismatch",
+        action="store_true",
+        help="replay decisions recorded with a different Jev snapshot",
+    )
     parser.add_argument("--pretty", action="store_true", help="indent JSON output")
     parser.add_argument(
         "--engine-factory",
@@ -152,9 +164,7 @@ def main(
             raise EvaluationError("--allow-snapshot-mismatch requires --replay")
         recording = None
         if args.engine_factory:
-            harness = EvaluationHarness(
-                engine_factory=_factory(args.engine_factory)
-            )
+            harness = EvaluationHarness(engine_factory=_factory(args.engine_factory))
         elif args.live:
             from ..diagnosis import checklist_impacts, checklist_keys
             from ..optimizer import PromptOptimizer
@@ -162,7 +172,9 @@ def main(
             engine = PromptOptimizer()
             if args.record:
                 recording = RecordingGateway(engine.gateway, args.record)
-                recording.rubric_thresholds = dict(engine.diagnosis_rubric.gap_thresholds)
+                recording.rubric_thresholds = dict(
+                    engine.diagnosis_rubric.gap_thresholds
+                )
                 recording.writer_instruction_version = engine.writer_instruction_version
                 recording.faithfulness_threshold = engine.faithfulness_threshold
                 recording.checklist_keys = list(checklist_keys(engine.diagnosis_rubric))
@@ -171,7 +183,9 @@ def main(
             harness = EvaluationHarness(engine)
         else:
             # With no custom factory, the harness lazily creates ReplayGateway.
-            harness = EvaluationHarness(allow_snapshot_mismatch=args.allow_snapshot_mismatch)
+            harness = EvaluationHarness(
+                allow_snapshot_mismatch=args.allow_snapshot_mismatch
+            )
         report = harness.run(dataset, options=options, replay_path=args.replay)
         if args.live and recording is not None:
             recording.attach_case_metrics(report)
@@ -181,9 +195,14 @@ def main(
             args.output.write_text(rendered + "\n", encoding="utf-8")
         else:
             print(rendered, file=out)
-        failed_cases = [case.case_id for case in report.cases if case.status in {"failed", "error"}]
+        failed_cases = [
+            case.case_id for case in report.cases if case.status in {"failed", "error"}
+        ]
         if failed_cases:
-            print(f"evaluation error: {len(failed_cases)} case(s) failed: {', '.join(failed_cases)}", file=err)
+            print(
+                f"evaluation error: {len(failed_cases)} case(s) failed: {', '.join(failed_cases)}",
+                file=err,
+            )
             return 2
         return 0
     except (DatasetError, EvaluationError, OSError) as exc:

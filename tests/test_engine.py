@@ -25,11 +25,20 @@ def _no_test_gateway(*, gaps: tuple[str, ...] = ()) -> ScriptedGateway:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = 0.99 if request.get("key") in {f"gap:{gap}" for gap in gaps} else 0.01
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            0.99 if request.get("key") in {f"gap:{gap}" for gap in gaps} else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    return ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
+    return ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
 
 
 def test_clear_prompt_is_returned_unchanged_and_persisted() -> None:
@@ -55,16 +64,29 @@ def test_clear_prompt_is_returned_unchanged_and_persisted() -> None:
     assert record["timing"] == result["timing"]
 
 
-def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_threshold() -> None:
+def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_threshold() -> (
+    None
+):
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "unknown"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = 0.88 if request.get("key") in {"gap:context", "gap:goal"} else 0.01
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            0.88 if request.get("key") in {"gap:context", "gap:goal"} else 0.01
+        )
         return {"type": "noul", "probability_true": probability}
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize("Help me plan.", {"tier": "fast"})
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Help me plan.", {"tier": "fast"}
+    )
 
     diagnosis = result.get("diagnosis") or result["report"]["diagnosis"]
     assert [gap["key"] for gap in diagnosis["confirmed_gaps"]] == ["context"]
@@ -72,49 +94,98 @@ def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_thresho
 
 
 @pytest.mark.parametrize(("probability", "hinted"), [(0.78, True), (0.7, False)])
-def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(probability: float, hinted: bool) -> None:
+def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(
+    probability: float, hinted: bool
+) -> None:
     prompt = "Tell the warehouse team about the new rules for the vans. Keep it short."
 
     def decide(request, **_kwargs):
         key = str(request.get("key", ""))
         if key == "task_type":
-            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
         if key.startswith("pointer:vagueness"):
-            return {"type": "choice", "choice": "s0001", "probabilities": {"s0001": 0.9}, "confidence": 0.9}
+            return {
+                "type": "choice",
+                "choice": "s0001",
+                "probabilities": {"s0001": 0.9},
+                "confidence": 0.9,
+            }
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
-        return {"type": "noul", "probability_true": probability if key == "gap:outside_reference" else 0.01}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
+        return {
+            "type": "noul",
+            "probability_true": probability if key == "gap:outside_reference" else 0.01,
+        }
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(prompt, {"tier": "fast"})
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        prompt, {"tier": "fast"}
+    )
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["confirmed_gaps"] == []
     assert result["status"] == "completed"
     if hinted:
-        assert diagnosis["possible_gaps"] == [{
-            "key": "outside_reference", "label": "details only you know",
-            "missing_probability": probability, "threshold": 0.8,
-            "sentence": "Tell the warehouse team about the new rules for the vans.",
-        }]
+        assert diagnosis["possible_gaps"] == [
+            {
+                "key": "outside_reference",
+                "label": "details only you know",
+                "missing_probability": probability,
+                "threshold": 0.8,
+                "sentence": "Tell the warehouse team about the new rules for the vans.",
+            }
+        ]
     else:
         assert diagnosis["possible_gaps"] == []
 
 
-@pytest.mark.parametrize(("key", "probability", "confirmed"), [
-    ("context", 0.83, True), ("context", 0.82, False),
-    ("outside_reference", 0.8, True), ("outside_reference", 0.79, False),
-])
-def test_recalibrated_gap_cutoffs_confirm_at_their_boundary(key: str, probability: float, confirmed: bool) -> None:
+@pytest.mark.parametrize(
+    ("key", "probability", "confirmed"),
+    [
+        ("context", 0.83, True),
+        ("context", 0.82, False),
+        ("outside_reference", 0.8, True),
+        ("outside_reference", 0.79, False),
+    ],
+)
+def test_recalibrated_gap_cutoffs_confirm_at_their_boundary(
+    key: str, probability: float, confirmed: bool
+) -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        return {"type": "noul", "probability_true": probability if request.get("key") == f"gap:{key}" else 0.01}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        return {
+            "type": "noul",
+            "probability_true": probability
+            if request.get("key") == f"gap:{key}"
+            else 0.01,
+        }
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        "Tell the team about the new rules.", {"tier": "fast", "clarification_allowed": False})
+        "Tell the team about the new rules.",
+        {"tier": "fast", "clarification_allowed": False},
+    )
 
     keys = [gap["key"] for gap in result["report"]["diagnosis"]["confirmed_gaps"]]
     assert (key in keys) is confirmed
@@ -134,15 +205,26 @@ def test_possible_gaps_never_reach_model_requests() -> None:
         key = str(request.get("key", ""))
         if request.get("type") == "choice":
             choice = "general" if key == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = {"gap:goal": 0.99, "gap:outside_reference": 0.78}.get(key, 1.0 if key.startswith("faithful:") else 0.01)
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = {"gap:goal": 0.99, "gap:outside_reference": 0.78}.get(
+            key, 1.0 if key.startswith("faithful:") else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     gateway = ScriptedGateway(chat=chat, decision=decide)
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        "Tell the team about the new rules.", {"tier": "fast", "clarification_allowed": False})
+        "Tell the team about the new rules.",
+        {"tier": "fast", "clarification_allowed": False},
+    )
 
-    assert [gap["key"] for gap in result["report"]["diagnosis"]["possible_gaps"]] == ["outside_reference"]
+    assert [gap["key"] for gap in result["report"]["diagnosis"]["possible_gaps"]] == [
+        "outside_reference"
+    ]
     assert any('"strategy_choice"' in request for request in sent)
     assert not [request for request in sent if "possible_gaps" in request]
 
@@ -156,12 +238,21 @@ def test_clear_prompt_with_success_tests_is_never_rewritten() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = 1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     prompt = "Summarize the supplied article in three concise bullets."
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)).optimize(prompt)
+    result = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+    ).optimize(prompt)
 
     assert result["status"] == "completed"
     assert result["original_kept"] is True
@@ -176,12 +267,28 @@ def test_writer_choice_test_without_unknown_does_not_fail_run() -> None:
             return '{"tests":[{"question":"Which response helps?","kind":"choice","expected":"Asks for context","options":["Asks for context","Guesses"]}]}'
         raise AssertionError("The clear prompt should not need candidate outputs")
 
-    gateway = ScriptedGateway(chat=chat, decision=lambda request, **_kwargs: (
-        {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
-        if request.get("type") == "choice" else
-        {"type": "noul", "probability_true": 1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01, "confidence": 1.0}
-    ))
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize("Summarize the supplied article in three bullets.")
+    gateway = ScriptedGateway(
+        chat=chat,
+        decision=lambda request, **_kwargs: (
+            {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
+            if request.get("type") == "choice"
+            else {
+                "type": "noul",
+                "probability_true": 1.0
+                if str(request.get("key", "")).startswith("faithful:")
+                else 0.01,
+                "confidence": 1.0,
+            }
+        ),
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Summarize the supplied article in three bullets."
+    )
 
     assert result["status"] == "completed"
     assert "unknown" in result["report"]["tests"][0]["options"]
@@ -190,12 +297,26 @@ def test_writer_choice_test_without_unknown_does_not_fail_run() -> None:
 def test_writer_missing_final_json_delimiters_does_not_fail_run() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
-        probability = 1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[{"question":"Does it summarize the article?","kind":"noul","expected":"yes"}', decision=decide)
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize("Summarize the supplied article.")
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: (
+            '{"tests":[{"question":"Does it summarize the article?","kind":"noul","expected":"yes"}'
+        ),
+        decision=decide,
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Summarize the supplied article."
+    )
 
     assert result["status"] == "completed"
     assert len(result["report"]["tests"]) == 1
@@ -204,12 +325,26 @@ def test_writer_missing_final_json_delimiters_does_not_fail_run() -> None:
 def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
-        probability = 1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            1.0 if str(request.get("key", "")).startswith("faithful:") else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[{"question":"Does it summarize the article?","kind":"noul","expected":"yes"},{"question":"How well?","kind":"score","levels":[]}]}', decision=decide)
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize("Summarize the supplied article.")
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: (
+            '{"tests":[{"question":"Does it summarize the article?","kind":"noul","expected":"yes"},{"question":"How well?","kind":"score","levels":[]}]}'
+        ),
+        decision=decide,
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Summarize the supplied article."
+    )
 
     assert result["status"] == "completed"
     assert len(result["report"]["tests"]) == 1
@@ -222,7 +357,16 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
             if "state.strategies" in messages[0]["content"]:
-                return json.dumps({strategy: "Answer clearly" for strategy in ("add_missing_context", "specify_output_format", "add_done_criteria")})
+                return json.dumps(
+                    {
+                        strategy: "Answer clearly"
+                        for strategy in (
+                            "add_missing_context",
+                            "specify_output_format",
+                            "add_done_criteria",
+                        )
+                    }
+                )
             return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Answer clearly"}'
         return "A useful answer."
 
@@ -230,37 +374,80 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
         key = str(request.get("key", ""))
         if key.startswith("grade_"):
             grading_requests.append(request)
-            return {"type": "noul", "probability_true": 0.3 if key.endswith("_second") else 0.9}
+            return {
+                "type": "noul",
+                "probability_true": 0.3 if key.endswith("_second") else 0.9,
+            }
         if request.get("type") == "choice":
-            choice = "general" if key == "task_type" else "add_missing_context" if key == "strategy_choice" else "none"
+            choice = (
+                "general"
+                if key == "task_type"
+                else "add_missing_context"
+                if key == "strategy_choice"
+                else "none"
+            )
             return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}}
-        probability = 1.0 if key.startswith(("gap:goal", "faithful:", "strategy_recheck:")) else 0.01
+        probability = (
+            1.0
+            if key.startswith(("gap:goal", "faithful:", "strategy_recheck:"))
+            else 0.01
+        )
         return {"type": "noul", "probability_true": probability}
 
     store = RunStore(":memory:")
-    result = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide)).optimize(
-        "Answer my question.", {"tier": "fast", "clarification_allowed": False}
-    )
+    result = PromptOptimizer(
+        store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
+    ).optimize("Answer my question.", {"tier": "fast", "clarification_allowed": False})
 
     assert result["status"] == "completed", result["report"]
     record = store.get_run(result["run_id"])
     assert record is not None
     assert record["original_weak_panel"]["mean_pass_rate"] == 1.0
-    assert all(score == 0.9 for scores in record["original_weak_panel"]["per_model_samples"].values() for score in scores)
+    assert all(
+        score == 0.9
+        for scores in record["original_weak_panel"]["per_model_samples"].values()
+        for score in scores
+    )
     assert all(not request["key"].endswith("_second") for request in grading_requests)
     assert all(request["question"].endswith("yes?") for request in grading_requests)
 
 
 @pytest.mark.parametrize("second_is_good", [True, False])
-def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels(second_is_good: bool) -> None:
+def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels(
+    second_is_good: bool,
+) -> None:
     levels = ["Neither", "Partial", "Good", "Excellent"]
     seen_criteria = []
 
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
             if "state.strategies" in messages[0]["content"]:
-                return json.dumps({strategy: "Answer my question clearly." for strategy in ("add_missing_context", "specify_output_format", "add_done_criteria")})
-            return json.dumps({"tests": [{"question": "How well does the output answer?", "kind": "score", "expected": "2: Good", "levels": [f"{index}: {level}" for index, level in enumerate(levels)]}], "add_missing_context": "Answer clearly"})
+                return json.dumps(
+                    {
+                        strategy: "Answer my question clearly."
+                        for strategy in (
+                            "add_missing_context",
+                            "specify_output_format",
+                            "add_done_criteria",
+                        )
+                    }
+                )
+            return json.dumps(
+                {
+                    "tests": [
+                        {
+                            "question": "How well does the output answer?",
+                            "kind": "score",
+                            "expected": "2: Good",
+                            "levels": [
+                                f"{index}: {level}"
+                                for index, level in enumerate(levels)
+                            ],
+                        }
+                    ],
+                    "add_missing_context": "Answer clearly",
+                }
+            )
         return "A good answer."
 
     def decide(request, **_kwargs):
@@ -271,24 +458,45 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
             assert criteria in (levels, list(reversed(levels)))
             reverse = key.endswith("_second")
             return {
-                "type": "score", "score": (0.5 if second_is_good else 2.6) if reverse else 2.45,
+                "type": "score",
+                "score": (0.5 if second_is_good else 2.6) if reverse else 2.45,
                 "probabilities": (
-                    ({"0": 0.6, "1": 0.3, "2": 0.1, "3": 0.0} if second_is_good else {"0": 0.0, "1": 0.0, "2": 0.4, "3": 0.6})
-                    if reverse else {"0": 0, "1": 0.1, "2": 0.45, "3": 0.45}
+                    (
+                        {"0": 0.6, "1": 0.3, "2": 0.1, "3": 0.0}
+                        if second_is_good
+                        else {"0": 0.0, "1": 0.0, "2": 0.4, "3": 0.6}
+                    )
+                    if reverse
+                    else {"0": 0, "1": 0.1, "2": 0.45, "3": 0.45}
                 ),
                 "legend": {str(index): level for index, level in enumerate(criteria)},
                 "confidence": 0.9,
             }
         if request.get("type") == "choice":
-            choice = "general" if key == "task_type" else "add_missing_context" if key == "strategy_choice" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = 1.0 if key.startswith(("gap:goal", "faithful:", "strategy_recheck:")) else 0.01
+            choice = (
+                "general"
+                if key == "task_type"
+                else "add_missing_context"
+                if key == "strategy_choice"
+                else "none"
+            )
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            1.0
+            if key.startswith(("gap:goal", "faithful:", "strategy_recheck:"))
+            else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     store = RunStore(":memory:")
-    result = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide)).optimize(
-        "Answer my question.", {"tier": "fast", "clarification_allowed": False}
-    )
+    result = PromptOptimizer(
+        store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
+    ).optimize("Answer my question.", {"tier": "fast", "clarification_allowed": False})
 
     assert result["status"] == "completed"
     assert seen_criteria
@@ -301,15 +509,34 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
 def test_task_taxonomy_descends_to_a_research_leaf() -> None:
     def decide(request, **_kwargs):
         if request.get("key") == "task_type":
-            return {"type": "choice", "choice": "investigation", "probabilities": {"investigation": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "investigation",
+                "probabilities": {"investigation": 1.0},
+                "confidence": 1.0,
+            }
         if request.get("key") == "task_type:investigation":
-            return {"type": "choice", "choice": "research", "probabilities": {"research": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "research",
+                "probabilities": {"research": 1.0},
+                "confidence": 1.0,
+            }
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
         return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
 
-    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
-    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize("Research the history of this topic.")
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Research the history of this topic."
+    )
 
     assert result["report"]["diagnosis"]["task_type"] == "research"
 
@@ -344,11 +571,16 @@ def test_update_assumption_replaces_recorded_value_and_refreshes_report() -> Non
     assert updated["report"]["diff"]
     assert updated["report"]["status"] == "edited"
     assert updated["cost"]["total"] == completed["cost"]["total"]
-    assert store.get_run(original["run_id"])["result"]["final_prompt"] == updated["final_prompt"]
+    assert (
+        store.get_run(original["run_id"])["result"]["final_prompt"]
+        == updated["final_prompt"]
+    )
 
 
 def test_update_assumption_rejects_negative_jev_meaning_check() -> None:
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_clarification_gateway(0.0))
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=_clarification_gateway(0.0)
+    )
     original = optimizer.optimize("Write a concise report.")
     completed = optimizer.resume(original["run_id"], {"goal": "summarize"})
     run_id = original["run_id"]
@@ -360,44 +592,75 @@ def test_update_assumption_rejects_negative_jev_meaning_check() -> None:
     else:
         raise AssertionError("negative meaning check should reject the edit")
 
-    assert optimizer.store.get_run(run_id)["result"]["final_prompt"] == completed["final_prompt"]
+    assert (
+        optimizer.store.get_run(run_id)["result"]["final_prompt"]
+        == completed["final_prompt"]
+    )
 
 
 def test_update_assumption_requires_recorded_assumption_and_jev_answer() -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"))
     result = optimizer.optimize("Write a concise report.")
     try:
-        optimizer.update_assumption(result["run_id"], {"key": "audience", "value": "novices"})
+        optimizer.update_assumption(
+            result["run_id"], {"key": "audience", "value": "novices"}
+        )
     except ValueError as exc:
         assert "assumption" in str(exc)
     else:
         raise AssertionError("unrecorded assumption should not be editable")
 
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_clarification_gateway(None))
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=_clarification_gateway(None)
+    )
     pending = optimizer.optimize("Write a concise report.")
     completed = optimizer.resume(pending["run_id"], {"goal": "summarize"})
     try:
-        optimizer.update_assumption(completed["run_id"], {"key": "goal", "value": "analyze"})
+        optimizer.update_assumption(
+            completed["run_id"], {"key": "goal", "value": "analyze"}
+        )
     except RuntimeError as exc:
         assert "meaning check" in str(exc)
     else:
         raise AssertionError("unavailable Jev check should block the edit")
 
 
-def _clarification_gateway(meaning_score: float | None, initial_cost: float = 0.0) -> ScriptedGateway:
+def _clarification_gateway(
+    meaning_score: float | None, initial_cost: float = 0.0
+) -> ScriptedGateway:
     def chat(_model, _messages, **_kwargs):
         return '{"gaps":{"goal":{"question":"What should the assistant do?","options":[{"value":"summarize","label":"Summarize"},{"value":"analyze","label":"Analyze"}]}},"tests":[]}'
 
     def decide(request, **_kwargs):
         key = request.get("key")
         if key == "gap:goal" and initial_cost:
-            gateway.usage.record(role="judge", provider="openrouter", model="typesafe/jev-1.13", cost=initial_cost)
+            gateway.usage.record(
+                role="judge",
+                provider="openrouter",
+                model="typesafe/jev-1.13",
+                cost=initial_cost,
+            )
         if key == "task_type":
-            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
         if key == "infer:goal":
-            return {"type": "choice", "choice": "unknown", "probabilities": {"unknown": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "unknown",
+                "probabilities": {"unknown": 1.0},
+                "confidence": 1.0,
+            }
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
         if "updated_prompt" in request.get("state", {}):
             if meaning_score is None:
                 raise RuntimeError("judge unavailable")
@@ -415,11 +678,14 @@ def test_run_model_overrides_are_reported_without_changing_defaults() -> None:
 
     result = optimizer.optimize(
         "Write a concise report.",
-        {"tier": "fast", "model_overrides": {
-            "writer": "one-run-writer",
-            "strong": "one-run-strong",
-            "weak": ["weak-a", "weak-b"],
-        }},
+        {
+            "tier": "fast",
+            "model_overrides": {
+                "writer": "one-run-writer",
+                "strong": "one-run-strong",
+                "weak": ["weak-a", "weak-b"],
+            },
+        },
     )
 
     assert result["report"]["models"] == {
@@ -438,25 +704,35 @@ def test_engine_model_defaults_persist_and_apply_after_restart(tmp_path) -> None
 
     saved = first.update_model_settings({"writer_model": "writer-v2"})
     assert saved["writer_model"] == "writer-v2"
-    assert first.optimize("Write a report.")["report"]["models"]["writer"] == "writer-v2"
+    assert (
+        first.optimize("Write a report.")["report"]["models"]["writer"] == "writer-v2"
+    )
     first.store.close()
 
     reopened = PromptOptimizer(store=RunStore(database), gateway=_no_test_gateway())
     assert reopened.get_model_settings()["writer_model"] == "writer-v2"
-    assert reopened.optimize("Write another report.")["report"]["models"]["writer"] == "writer-v2"
+    assert (
+        reopened.optimize("Write another report.")["report"]["models"]["writer"]
+        == "writer-v2"
+    )
 
 
-@pytest.mark.parametrize("tier,weak", [
-    ("fast", ["one"]),
-    ("standard", ["one", "two"]),
-    ("deep", ["one", "two", "three", "four"]),
-    ("fast", ["one", "one"]),
-])
+@pytest.mark.parametrize(
+    "tier,weak",
+    [
+        ("fast", ["one"]),
+        ("standard", ["one", "two"]),
+        ("deep", ["one", "two", "three", "four"]),
+        ("fast", ["one", "one"]),
+    ],
+)
 def test_run_rejects_weak_panels_below_tier_budget(tier: str, weak: list[str]) -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
 
     with pytest.raises(ValueError, match="weak panel"):
-        optimizer.optimize("Write a release note.", {"tier": tier, "model_overrides": {"weak": weak}})
+        optimizer.optimize(
+            "Write a release note.", {"tier": tier, "model_overrides": {"weak": weak}}
+        )
 
 
 def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it() -> None:
@@ -464,19 +740,40 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it() -
         if role == "writer":
             return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Invented rewrite","specify_output_format":"Safe rewrite","add_done_criteria":"Other rewrite"}'
         prompt = messages[0]["content"]
-        return {"choices": [{"message": {"content": "pass" if prompt != "Original request" else "fail"}}]}
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "pass" if prompt != "Original request" else "fail"
+                    }
+                }
+            ]
+        }
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         if str(request.get("key", "")).startswith(("gap:goal", "faithful:")):
             probability = 1.0
         elif "candidate_prompt" in request.get("state", {}):
-            probability = 0.0 if request["state"]["candidate_prompt"] == "Invented rewrite" else 1.0
+            probability = (
+                0.0
+                if request["state"]["candidate_prompt"] == "Invented rewrite"
+                else 1.0
+            )
         elif "output" in request.get("state", {}):
             passed = request["state"]["output"] == "pass"
-            probability = float(not passed) if str(request.get("key", "")).endswith("_second") else float(passed)
+            probability = (
+                float(not passed)
+                if str(request.get("key", "")).endswith("_second")
+                else float(passed)
+            )
         else:
             probability = 1.0
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -484,10 +781,14 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it() -
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
     )
-    result = optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})
+    result = optimizer.optimize(
+        "Original request", {"tier": "fast", "clarification_allowed": False}
+    )
 
     assert result["final_prompt"] == "Safe rewrite"
-    assert result["report"]["selection_evidence"]["rejection_reasons"]["candidate-1-add_missing_context"]
+    assert result["report"]["selection_evidence"]["rejection_reasons"][
+        "candidate-1-add_missing_context"
+    ]
     record = optimizer.store.get_run(result["run_id"])
     assert record["jev_answers"]
     assert record["original_weak_panel"]["mean_pass_rate"] == 0.0
@@ -503,8 +804,12 @@ def test_run_without_confirmed_gaps_does_not_offer_deep() -> None:
 
 
 def test_deep_pass_executes_again_under_same_run_id() -> None:
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway(gaps=("goal",)))
-    first = optimizer.optimize("Write a clear report.", {"tier": "fast", "clarification_allowed": False})
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=_no_test_gateway(gaps=("goal",))
+    )
+    first = optimizer.optimize(
+        "Write a clear report.", {"tier": "fast", "clarification_allowed": False}
+    )
 
     assert first["report"]["offer_deep"]["to_tier"] == "deep"
     deep = optimizer.start_deep_pass(first["run_id"])
@@ -518,9 +823,13 @@ def test_deep_pass_executes_again_under_same_run_id() -> None:
 
 def test_deep_pass_expands_a_fast_run_weak_panel_to_deep_budget() -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
-    first = optimizer.optimize("Write a clear report.", {
-        "tier": "fast", "model_overrides": {"weak": ["chosen-one", "chosen-two"]},
-    })
+    first = optimizer.optimize(
+        "Write a clear report.",
+        {
+            "tier": "fast",
+            "model_overrides": {"weak": ["chosen-one", "chosen-two"]},
+        },
+    )
 
     deep = optimizer.start_deep_pass(first["run_id"])
 
@@ -540,13 +849,24 @@ def test_provider_failure_preserves_original_prompt_and_run_record() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = 0.99 if str(request.get("key", "")).startswith("gap:goal") else 1.0
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            0.99 if str(request.get("key", "")).startswith("gap:goal") else 1.0
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     store = RunStore(":memory:")
-    optimizer = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide))
-    result = optimizer.optimize("Explain recursion.", {"tier": "fast", "clarification_allowed": False})
+    optimizer = PromptOptimizer(
+        store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
+    )
+    result = optimizer.optimize(
+        "Explain recursion.", {"tier": "fast", "clarification_allowed": False}
+    )
 
     assert result["status"] == "failed"
     assert result["final_prompt"] == "Explain recursion."
@@ -564,16 +884,23 @@ def test_failed_strong_reference_never_approves_a_candidate() -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        probability = 0.99 if str(request.get("key", "")).startswith("gap:goal") else 1.0
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = (
+            0.99 if str(request.get("key", "")).startswith("gap:goal") else 1.0
+        )
         if str(request.get("key", "")).endswith("_second"):
             probability = 0.0
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     store = RunStore(":memory:")
-    result = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide)).optimize(
-        "Original request", {"tier": "fast", "clarification_allowed": False}
-    )
+    result = PromptOptimizer(
+        store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
+    ).optimize("Original request", {"tier": "fast", "clarification_allowed": False})
 
     assert result["status"] == "failed"
     assert result["final_prompt"] == "Original request"
@@ -582,31 +909,51 @@ def test_failed_strong_reference_never_approves_a_candidate() -> None:
 
 def test_resume_after_restart_retains_cost_spent_before_clarification(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
-    first = PromptOptimizer(store=RunStore(database), gateway=_clarification_gateway(0.95, initial_cost=0.02))
+    first = PromptOptimizer(
+        store=RunStore(database),
+        gateway=_clarification_gateway(0.95, initial_cost=0.02),
+    )
     pending = first.optimize("Write a concise report.")
     assert pending["status"] == "needs_input"
     assert pending["cost"]["total"] == 0.02
     first.store.close()
 
-    resumed = PromptOptimizer(store=RunStore(database), gateway=_clarification_gateway(0.95)).resume(
-        pending["run_id"], {"goal": "summarize"}
-    )
+    resumed = PromptOptimizer(
+        store=RunStore(database), gateway=_clarification_gateway(0.95)
+    ).resume(pending["run_id"], {"goal": "summarize"})
 
     assert resumed["cost"]["total"] == 0.02
     assert resumed["cost"]["cost_by_role"] == {"judge": 0.02}
 
 
-def test_unknown_high_impact_gap_offers_writer_choices_and_preserves_diagnosis() -> None:
+def test_unknown_high_impact_gap_offers_writer_choices_and_preserves_diagnosis() -> (
+    None
+):
     def chat(_model, _messages, **_kwargs):
         return '{"gaps":{"goal":{"question":"What is the goal?","options":[{"value":"summarize","label":"Summarize"},{"value":"analyze","label":"Analyze"}]}}}'
 
     def decide(request, **_kwargs):
         if request.get("key") == "task_type":
-            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
         if request.get("key") == "infer:goal":
-            return {"type": "choice", "choice": "unknown", "probabilities": {"summarize": 0.6, "analyze": 0.2, "unknown": 0.2}, "confidence": 0.6}
+            return {
+                "type": "choice",
+                "choice": "unknown",
+                "probabilities": {"summarize": 0.6, "analyze": 0.2, "unknown": 0.2},
+                "confidence": 0.6,
+            }
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
         probability = 0.99 if request.get("key") == "gap:goal" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
@@ -619,5 +966,9 @@ def test_unknown_high_impact_gap_offers_writer_choices_and_preserves_diagnosis()
     assert result["report"]["diagnosis"]["confirmed_gaps"][0]["key"] == "goal"
     question = result["questions"][0]
     assert question["prompt"] == "What is the goal?"
-    assert [option["value"] for option in question["options"]] == ["summarize", "analyze", "other"]
+    assert [option["value"] for option in question["options"]] == [
+        "summarize",
+        "analyze",
+        "other",
+    ]
     assert question["default"] == "summarize"

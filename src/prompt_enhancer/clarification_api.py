@@ -36,9 +36,13 @@ def register_clarification_routes(app: Any, optimizer: Any) -> None:
 
     @app.post("/api/optimize/skip/{run_id}")
     def skip_run(run_id: str) -> dict[str, Any]:
-        skip = getattr(optimizer, "skip_clarification", None) or getattr(optimizer, "skip", None)
+        skip = getattr(optimizer, "skip_clarification", None) or getattr(
+            optimizer, "skip", None
+        )
         if skip is None:
-            raise HTTPException(status_code=501, detail="Clarification skip is unavailable")
+            raise HTTPException(
+                status_code=501, detail="Clarification skip is unavailable"
+            )
         try:
             result = skip(run_id)
         except (KeyError, LookupError) as exc:

@@ -17,9 +17,7 @@ from typing import Any
 SOURCE_REAL = "real"
 SOURCE_SYNTHETIC = "synthetic"
 SOURCE_HAND_LABELED = "hand_labeled"
-DATASET_SOURCES = frozenset(
-    {SOURCE_REAL, SOURCE_SYNTHETIC, SOURCE_HAND_LABELED}
-)
+DATASET_SOURCES = frozenset({SOURCE_REAL, SOURCE_SYNTHETIC, SOURCE_HAND_LABELED})
 
 _GAP_KEYS = ("gap_type", "type", "kind", "name", "key", "id")
 _GAP_FIELDS = (
@@ -201,13 +199,17 @@ class EvaluationCase:
             )
         nested_metadata = value.get("metadata", {})
         if not isinstance(nested_metadata, Mapping):
-            raise DatasetError(f"{dataset_name} case {case_id!r} metadata must be an object")
+            raise DatasetError(
+                f"{dataset_name} case {case_id!r} metadata must be an object"
+            )
         metadata = dict(nested_metadata)
         for key, item in value.items():
             if key in _CASE_METADATA_EXCLUSIONS or key == "metadata":
                 continue
             if key in metadata and metadata[key] != item:
-                raise DatasetError(f"{dataset_name} case {case_id!r} has conflicting metadata for {key!r}")
+                raise DatasetError(
+                    f"{dataset_name} case {case_id!r} has conflicting metadata for {key!r}"
+                )
             metadata[key] = item
         return cls(
             id=case_id,
@@ -216,7 +218,11 @@ class EvaluationCase:
             expected_gaps=expected,
             notes=notes,
             metadata=metadata,
-            labels_present=bool(value.get("labels_present", any(field in value for field in _GAP_FIELDS))),
+            labels_present=bool(
+                value.get(
+                    "labels_present", any(field in value for field in _GAP_FIELDS)
+                )
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -246,7 +252,10 @@ class Dataset:
 
     @classmethod
     def from_dict(
-        cls, value: Mapping[str, Any] | Sequence[Mapping[str, Any]], *, name: str | None = None
+        cls,
+        value: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+        *,
+        name: str | None = None,
     ) -> Dataset:
         if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
             raw_cases: object = value
@@ -267,9 +276,7 @@ class Dataset:
         else:
             raise DatasetError("dataset JSON must be an object or a list of cases")
 
-        if not isinstance(raw_cases, Sequence) or isinstance(
-            raw_cases, (str, bytes)
-        ):
+        if not isinstance(raw_cases, Sequence) or isinstance(raw_cases, (str, bytes)):
             raise DatasetError("dataset requires a cases array")
         if not raw_cases:
             raise DatasetError("dataset requires at least one case")
@@ -278,9 +285,7 @@ class Dataset:
         seen_ids: set[str] = set()
         for position, raw_case in enumerate(raw_cases, start=1):
             if not isinstance(raw_case, Mapping):
-                raise DatasetError(
-                    f"{dataset_name} case {position} must be an object"
-                )
+                raise DatasetError(f"{dataset_name} case {position} must be an object")
             case = EvaluationCase.from_dict(
                 raw_case, position=position, dataset_name=dataset_name
             )
@@ -344,8 +349,7 @@ def load_datasets(paths: Iterable[str | Path]) -> Dataset:
         name = " + ".join(names)
         metadata = {
             "datasets": [
-                {"name": dataset.name, "digest": dataset.digest}
-                for dataset in datasets
+                {"name": dataset.name, "digest": dataset.digest} for dataset in datasets
             ]
         }
     return Dataset(name=name, cases=cases, metadata=metadata)
@@ -361,9 +365,7 @@ def _canonical_digest(value: object) -> str:
 def canonical_json(value: object) -> str:
     """Serialize report inputs deterministically."""
 
-    return json.dumps(
-        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-    )
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def replay_digest(path: str | Path) -> str:

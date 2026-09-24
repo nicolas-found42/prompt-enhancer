@@ -45,10 +45,27 @@ cancel a run, and reattaches after a reload. The synchronous
 ## Check the implementation
 
 ```sh
+uv sync --extra dev
+npm --prefix web ci
+uv run pre-commit install
+uv run pre-commit run --all-files
+```
+
+The commit hook formats and lints staged Python and web files first. It then
+checks Python types and lint, builds the web app (including TypeScript checks),
+and runs both the Python and Playwright suites. Install Playwright's browser
+once with `npm --prefix web exec -- playwright install chromium` if it is missing.
+Run checks individually with:
+
+```sh
+uv run ruff format --check src scripts tests
 uv run pytest -q
 uv run ruff check .
 uv run ty check src scripts
-cd web && npm run build && npx playwright test
+npm --prefix web run lint
+npm --prefix web run typecheck
+npm --prefix web run build
+npm --prefix web run test:e2e
 ```
 
 The [spec](docs/spec.md) defines the product and acceptance criteria. The

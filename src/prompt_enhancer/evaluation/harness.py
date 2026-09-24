@@ -122,8 +122,7 @@ class DiagnosisSummary:
             "excluded_failed_cases": self.excluded_failed_cases,
             "micro": self.micro.to_dict(),
             "per_gap": {
-                name: metric.to_dict()
-                for name, metric in sorted(self.per_gap.items())
+                name: metric.to_dict() for name, metric in sorted(self.per_gap.items())
             },
         }
 
@@ -263,7 +262,9 @@ class _ReplayBundle:
     jev_model: str | None = None
     decision_provenance: Mapping[str, Any] = field(default_factory=dict)
     case_latency_ms: Mapping[str, float] = field(default_factory=dict)
-    case_costs: Mapping[str, tuple[float, Mapping[str, float]]] = field(default_factory=dict)
+    case_costs: Mapping[str, tuple[float, Mapping[str, float]]] = field(
+        default_factory=dict
+    )
     rubric_thresholds: Mapping[str, float] | None = None
     writer_instruction_version: int = HISTORICAL_WRITER_INSTRUCTION_VERSION
     faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
@@ -372,7 +373,9 @@ class EvaluationHarness:
         if factory is not None:
             engine = factory(replay.path if replay is not None else None)
         elif replay is not None:
-            engine = default_engine_factory(replay.path, allow_snapshot_mismatch=self._allow_snapshot_mismatch)
+            engine = default_engine_factory(
+                replay.path, allow_snapshot_mismatch=self._allow_snapshot_mismatch
+            )
         else:
             raise EvaluationError(
                 "a live engine must be injected explicitly; replay or inject a gateway"
@@ -397,20 +400,29 @@ class EvaluationHarness:
         )
         started = perf_counter()
         try:
-            result = _as_mapping(engine.optimize(case.prompt, options.optimize_options()))
+            result = _as_mapping(
+                engine.optimize(case.prompt, options.optimize_options())
+            )
             requested_clarification = _status(result) == "needs_input"
             resumed = False
             answers = case.metadata.get("clarification_answers")
             if requested_clarification and answers is not None:
                 provenance = case.metadata.get("clarification_answer_provenance")
-                if not isinstance(provenance, str) or provenance not in {"human", "source"}:
+                if not isinstance(provenance, str) or provenance not in {
+                    "human",
+                    "source",
+                }:
                     raise EvaluationError(
                         "clarification answers require human or source provenance"
                     )
-                if not isinstance(answers, Mapping) or not answers or any(
-                    not isinstance(key, str) for key in answers
+                if (
+                    not isinstance(answers, Mapping)
+                    or not answers
+                    or any(not isinstance(key, str) for key in answers)
                 ):
-                    raise EvaluationError("clarification answers must be a non-empty object")
+                    raise EvaluationError(
+                        "clarification answers must be a non-empty object"
+                    )
                 run_id = result.get("run_id")
                 if not isinstance(run_id, str) or not run_id:
                     raise EvaluationError("paused engine result requires a run_id")
@@ -419,12 +431,18 @@ class EvaluationHarness:
             report = _as_mapping(result.get("report", {}))
             observation.predicted_gaps = _predicted_gaps(result, report)
             if requested_clarification:
-                observation.predicted_gaps = tuple(sorted({*observation.predicted_gaps, "clarification_need"}))
+                observation.predicted_gaps = tuple(
+                    sorted({*observation.predicted_gaps, "clarification_need"})
+                )
             evaluation_gaps = case.metadata.get("evaluation_gaps")
             if isinstance(evaluation_gaps, list):
                 scope = {normalize_gap_type(item) for item in evaluation_gaps}
-                observation.expected_gaps = tuple(gap for gap in observation.expected_gaps if gap in scope)
-                observation.predicted_gaps = tuple(gap for gap in observation.predicted_gaps if gap in scope)
+                observation.expected_gaps = tuple(
+                    gap for gap in observation.expected_gaps if gap in scope
+                )
+                observation.predicted_gaps = tuple(
+                    gap for gap in observation.predicted_gaps if gap in scope
+                )
             observation.original_kept = _optional_bool(result.get("original_kept"))
             observation.final_prompt = _optional_string(result.get("final_prompt"))
             observation.original_score, observation.winner_score = _scores(
@@ -433,15 +451,21 @@ class EvaluationHarness:
             observation.cost, observation.cost_by_role = _cost(result)
             if replay is not None:
                 if case.id in replay.case_costs:
-                    observation.cost, observation.cost_by_role = replay.case_costs[case.id]
+                    observation.cost, observation.cost_by_role = replay.case_costs[
+                        case.id
+                    ]
                 observation.latency_ms = replay.case_latency_ms.get(case.id)
             else:
-                observation.latency_ms = None if resumed else _latency_ms(result, report)
+                observation.latency_ms = (
+                    None if resumed else _latency_ms(result, report)
+                )
                 if observation.latency_ms is None:
                     observation.latency_ms = (perf_counter() - started) * 1000
             observation.status = _status(result)
             if observation.status == "failed":
-                observation.error = _optional_string(report.get("error")) or "engine returned failed"
+                observation.error = (
+                    _optional_string(report.get("error")) or "engine returned failed"
+                )
         except Exception as exc:
             if options.fail_fast:
                 raise
@@ -451,7 +475,9 @@ class EvaluationHarness:
         return observation
 
 
-def default_engine_factory(replay_path: Path | None = None, *, allow_snapshot_mismatch: bool = False) -> Engine:
+def default_engine_factory(
+    replay_path: Path | None = None, *, allow_snapshot_mismatch: bool = False
+) -> Engine:
     """Build the product optimizer with a strict replay gateway when requested."""
 
     from dataclasses import replace
@@ -475,21 +501,33 @@ def default_engine_factory(replay_path: Path | None = None, *, allow_snapshot_mi
     recordings = cast(Mapping[Any, Any], bundle.gateway_recordings)
     rubric = (
         replace(DEFAULT_RUBRIC, gap_thresholds=bundle.rubric_thresholds)
-        if bundle.rubric_thresholds is not None else DEFAULT_RUBRIC
+        if bundle.rubric_thresholds is not None
+        else DEFAULT_RUBRIC
     )
     recorded_keys = bundle.checklist_keys
     if recorded_keys is None:
-        recorded_keys = tuple(key for key in checklist_keys(rubric) if key not in HISTORICAL_CHECKLIST_EXCLUSIONS)
+        recorded_keys = tuple(
+            key
+            for key in checklist_keys(rubric)
+            if key not in HISTORICAL_CHECKLIST_EXCLUSIONS
+        )
     rubric = restrict_checklist(rubric, recorded_keys)
     rubric = with_impacts(
-        rubric, bundle.checklist_impacts if bundle.checklist_impacts is not None else HISTORICAL_CHECKLIST_IMPACTS
+        rubric,
+        bundle.checklist_impacts
+        if bundle.checklist_impacts is not None
+        else HISTORICAL_CHECKLIST_IMPACTS,
     )
     configured_pin = Settings.from_env().judge_model
     recorded_pin = bundle.jev_model or configured_pin
     try:
-        replay_gateway = ReplayGateway(recordings, decision_provenance=bundle.decision_provenance,
-                                       jev_model=recorded_pin, expected_snapshot=configured_pin,
-                                       allow_snapshot_mismatch=allow_snapshot_mismatch)
+        replay_gateway = ReplayGateway(
+            recordings,
+            decision_provenance=bundle.decision_provenance,
+            jev_model=recorded_pin,
+            expected_snapshot=configured_pin,
+            allow_snapshot_mismatch=allow_snapshot_mismatch,
+        )
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
     return PromptOptimizer(
@@ -518,8 +556,12 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_latencies = raw.get("case_latency_ms", {})
         raw_costs = raw.get("case_costs", {})
         raw_thresholds = raw.get("rubric_thresholds")
-        writer_version = raw.get("writer_instruction_version", HISTORICAL_WRITER_INSTRUCTION_VERSION)
-        faithfulness = raw.get("faithfulness_threshold", HISTORICAL_FAITHFULNESS_THRESHOLD)
+        writer_version = raw.get(
+            "writer_instruction_version", HISTORICAL_WRITER_INSTRUCTION_VERSION
+        )
+        faithfulness = raw.get(
+            "faithfulness_threshold", HISTORICAL_FAITHFULNESS_THRESHOLD
+        )
         raw_checklist = raw.get("checklist_keys")
         raw_impacts = raw.get("checklist_impacts")
     else:
@@ -535,21 +577,45 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_impacts = None
     if raw_impacts is not None and (
         not isinstance(raw_impacts, Mapping)
-        or any(not isinstance(key, str) or value not in {impact.value for impact in GapImpact} for key, value in raw_impacts.items())
+        or any(
+            not isinstance(key, str)
+            or value not in {impact.value for impact in GapImpact}
+            for key, value in raw_impacts.items()
+        )
     ):
-        raise EvaluationError("replay checklist_impacts must map question ids to known impacts")
+        raise EvaluationError(
+            "replay checklist_impacts must map question ids to known impacts"
+        )
     if not isinstance(provenance, Mapping) or any(
-        not isinstance(item, Mapping) or not isinstance(item.get("answered_by"), str) or not item["answered_by"]
+        not isinstance(item, Mapping)
+        or not isinstance(item.get("answered_by"), str)
+        or not item["answered_by"]
         for item in provenance.values()
     ):
-        raise EvaluationError("replay decision_provenance requires an answering snapshot for each decision")
-    if recorded_jev_model is not None and (not isinstance(recorded_jev_model, str) or not recorded_jev_model):
+        raise EvaluationError(
+            "replay decision_provenance requires an answering snapshot for each decision"
+        )
+    if recorded_jev_model is not None and (
+        not isinstance(recorded_jev_model, str) or not recorded_jev_model
+    ):
         raise EvaluationError("replay jev_model must be a model ID")
-    if raw_checklist is not None and (not isinstance(raw_checklist, list) or any(not isinstance(key, str) or not key for key in raw_checklist)):
+    if raw_checklist is not None and (
+        not isinstance(raw_checklist, list)
+        or any(not isinstance(key, str) or not key for key in raw_checklist)
+    ):
         raise EvaluationError("replay checklist_keys must be a list of question ids")
-    if isinstance(writer_version, bool) or writer_version not in WRITER_INSTRUCTION_VERSIONS:
-        raise EvaluationError("replay writer_instruction_version is not a known version")
-    if isinstance(faithfulness, bool) or not isinstance(faithfulness, (int, float)) or not 0 <= faithfulness <= 1:
+    if (
+        isinstance(writer_version, bool)
+        or writer_version not in WRITER_INSTRUCTION_VERSIONS
+    ):
+        raise EvaluationError(
+            "replay writer_instruction_version is not a known version"
+        )
+    if (
+        isinstance(faithfulness, bool)
+        or not isinstance(faithfulness, (int, float))
+        or not 0 <= faithfulness <= 1
+    ):
         raise EvaluationError("replay faithfulness_threshold must be a probability")
     if not isinstance(raw_latencies, Mapping):
         raise EvaluationError("replay case_latency_ms must be an object")
@@ -560,17 +626,27 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         if not isinstance(value, (int, float)) or isinstance(value, bool):
             raise EvaluationError(f"replay latency for {case_id!r} must be numeric")
         if not math.isfinite(float(value)) or float(value) < 0:
-            raise EvaluationError(f"replay latency for {case_id!r} must be finite and non-negative")
+            raise EvaluationError(
+                f"replay latency for {case_id!r} must be finite and non-negative"
+            )
         latencies[case_id] = float(value)
     if not isinstance(raw_costs, Mapping):
         raise EvaluationError("replay case_costs must be an object")
     costs: dict[str, tuple[float, Mapping[str, float]]] = {}
     for case_id, value in raw_costs.items():
-        if not isinstance(case_id, str) or not case_id or not isinstance(value, Mapping):
-            raise EvaluationError("replay case costs require non-empty case ids and objects")
+        if (
+            not isinstance(case_id, str)
+            or not case_id
+            or not isinstance(value, Mapping)
+        ):
+            raise EvaluationError(
+                "replay case costs require non-empty case ids and objects"
+            )
         total, roles = _cost({"cost": value})
         if total is None or total < 0 or any(amount < 0 for amount in roles.values()):
-            raise EvaluationError(f"replay cost for {case_id!r} must be finite and non-negative")
+            raise EvaluationError(
+                f"replay cost for {case_id!r} must be finite and non-negative"
+            )
         costs[case_id] = (total, roles)
     thresholds: dict[str, float] | None = None
     if raw_thresholds is not None:
@@ -578,8 +654,17 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
             raise EvaluationError("replay rubric_thresholds must be an object")
         thresholds = {}
         for question_id, value in raw_thresholds.items():
-            if not isinstance(question_id, str) or not question_id or not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(float(value)) or not 0 <= float(value) <= 1:
-                raise EvaluationError("replay rubric thresholds require question ids and probabilities")
+            if (
+                not isinstance(question_id, str)
+                or not question_id
+                or not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+                or not 0 <= float(value) <= 1
+            ):
+                raise EvaluationError(
+                    "replay rubric thresholds require question ids and probabilities"
+                )
             thresholds[question_id] = float(value)
     return _ReplayBundle(
         path=replay_path,
@@ -731,9 +816,7 @@ def _cost_summary(cases: Sequence[CaseEvaluation]) -> CostSummary:
 def _latency_summary(
     cases: Sequence[CaseEvaluation], *, replayed: bool
 ) -> LatencySummary:
-    values = sorted(
-        case.latency_ms for case in cases if case.latency_ms is not None
-    )
+    values = sorted(case.latency_ms for case in cases if case.latency_ms is not None)
     if replayed:
         measurement = "recorded_case_latency" if values else "unavailable_in_replay"
     else:
@@ -784,7 +867,8 @@ def _predicted_gaps(
         value = diagnosis.get(
             "gaps",
             diagnosis.get(
-                "confirmed_gaps", diagnosis.get("missing_pieces", result.get("gaps", []))
+                "confirmed_gaps",
+                diagnosis.get("missing_pieces", result.get("gaps", [])),
             ),
         )
     else:
@@ -836,13 +920,15 @@ def _scores(
     original_kept: bool | None,
 ) -> tuple[float | None, float | None]:
     ranking: Mapping[str, Any] = {}
-    for candidate in (report.get("selection_evidence"), report.get("ranking"), report.get("selection")):
+    for candidate in (
+        report.get("selection_evidence"),
+        report.get("ranking"),
+        report.get("selection"),
+    ):
         if isinstance(candidate, Mapping):
             ranking = candidate
             break
-    original = _score(
-        ranking.get("original_score", result.get("original_score"))
-    )
+    original = _score(ranking.get("original_score", result.get("original_score")))
     winner = _score(
         ranking.get(
             "winner_score",
@@ -911,9 +997,7 @@ def _cost(result: Mapping[str, Any]) -> tuple[float | None, Mapping[str, float]]
     return total, roles
 
 
-def _latency_ms(
-    result: Mapping[str, Any], report: Mapping[str, Any]
-) -> float | None:
+def _latency_ms(result: Mapping[str, Any], report: Mapping[str, Any]) -> float | None:
     candidates = (result.get("timing"), result.get("latency_ms"), report.get("timing"))
     for candidate in candidates:
         if isinstance(candidate, bool):
@@ -986,9 +1070,7 @@ def compare_reports(before: HarnessReport, after: HarnessReport) -> dict[str, An
             "mean_per_case": _optional_numeric_delta(
                 before.latency_ms.mean_per_case, after.latency_ms.mean_per_case
             ),
-            "p95": _optional_numeric_delta(
-                before.latency_ms.p95, after.latency_ms.p95
-            ),
+            "p95": _optional_numeric_delta(before.latency_ms.p95, after.latency_ms.p95),
         },
     }
 
@@ -1022,7 +1104,9 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             source=str(item.get("source", "real")),
             status=str(item.get("status", "unknown")),
             expected_gaps=tuple(item.get("expected_gaps", [])),
-            labels_present=bool(item.get("labels_present", bool(item.get("expected_gaps")))),
+            labels_present=bool(
+                item.get("labels_present", bool(item.get("expected_gaps")))
+            ),
             predicted_gaps=tuple(item.get("predicted_gaps", [])),
             original_kept=item.get("original_kept"),
             final_prompt=item.get("final_prompt"),

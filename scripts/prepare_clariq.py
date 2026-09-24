@@ -37,7 +37,9 @@ def prepare(source: str, *, per_level: int | None = None) -> dict[str, object]:
             by_level[level].append(row)
     for level, quota in quotas.items():
         if len(by_level[level]) < quota:
-            raise ValueError(f"ClariQ level {level} has fewer than {quota} unique prompts")
+            raise ValueError(
+                f"ClariQ level {level} has fewer than {quota} unique prompts"
+            )
     cases = [
         {
             "id": f"clariq-{row['topic_id']}",
@@ -69,13 +71,23 @@ def prepare(source: str, *, per_level: int | None = None) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--source", default=SOURCE, help="pinned ClariQ train.tsv URL or local file URL")
-    parser.add_argument("--per-level", type=int, help="select this many topics from each of ratings 1–4")
+    parser.add_argument(
+        "--source", default=SOURCE, help="pinned ClariQ train.tsv URL or local file URL"
+    )
+    parser.add_argument(
+        "--per-level", type=int, help="select this many topics from each of ratings 1–4"
+    )
     args = parser.parse_args()
     dataset = prepare(args.source, per_level=args.per_level)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    count = args.per_level * len(QUOTAS) if args.per_level is not None else sum(QUOTAS.values())
+    args.output.write_text(
+        json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    count = (
+        args.per_level * len(QUOTAS)
+        if args.per_level is not None
+        else sum(QUOTAS.values())
+    )
     print(f"Wrote {count} real prompts to {args.output}")
 
 

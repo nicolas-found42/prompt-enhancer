@@ -34,6 +34,10 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.6.2",
     "ruff>=0.16.8",
     "ty>=0.0.83",
 ]
+
+[tool.ruff]
+line-length = 88

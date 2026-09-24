@@ -293,7 +293,11 @@ class RepeatCoordinator:
         # A round may decline the offer (``report.offer_deep`` false) when a
         # Deep pass could not do anything the lower tier did not.
         deep_declined = outcome.report().get("offer_deep") is False
-        offer = _deep_offer(run_id, selected_tier, history) if original_kept and not deep_declined else None
+        offer = (
+            _deep_offer(run_id, selected_tier, history)
+            if original_kept and not deep_declined
+            else None
+        )
         return RepeatResult(
             run_id=run_id,
             tier=selected_tier,
@@ -305,7 +309,9 @@ class RepeatCoordinator:
             offer_deep=offer,
         )
 
-    def deep_pass(self, run: Mapping[str, Any], execute_round: RoundRunner) -> RepeatResult:
+    def deep_pass(
+        self, run: Mapping[str, Any], execute_round: RoundRunner
+    ) -> RepeatResult:
         """Accept the offered Deep pass without changing the public run ID."""
         if not isinstance(run, Mapping) or not run.get("run_id"):
             raise ValueError(
@@ -418,13 +424,20 @@ def _run_tier(
         )
         history = (*history, evidence)
         failures = evidence.candidate_failures
-        if tier_round >= tier.max_rounds or not evidence.continuation_requested or not evidence.original_kept or not failures:
+        if (
+            tier_round >= tier.max_rounds
+            or not evidence.continuation_requested
+            or not evidence.original_kept
+            or not failures
+        ):
             return history, outcome
         next_round_number += 1
         tier_round += 1
 
 
-def _supplied_failure(value: CandidateFailure | Mapping[str, Any] | str) -> CandidateFailure:
+def _supplied_failure(
+    value: CandidateFailure | Mapping[str, Any] | str,
+) -> CandidateFailure:
     """Read a failure passed in with the ``prior_round_failures`` option."""
     if isinstance(value, CandidateFailure):
         return value

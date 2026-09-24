@@ -106,14 +106,16 @@ def _execute_one(
     run_id: str | None,
 ) -> PanelResult:
     seed = _stable_seed(run_seed, candidate_id, model, sample)
-    output = _output_text(gateway.chat(
-        model,
-        [{"role": "user", "content": prompt}],
-        role="weak",
-        run_id=run_id,
-        seed=seed,
-        temperature=WEAK_TEMPERATURE,
-    ))
+    output = _output_text(
+        gateway.chat(
+            model,
+            [{"role": "user", "content": prompt}],
+            role="weak",
+            run_id=run_id,
+            seed=seed,
+            temperature=WEAK_TEMPERATURE,
+        )
+    )
     return PanelResult(candidate_id, model, sample, seed, output, prompt)
 
 
@@ -139,7 +141,9 @@ def _run_panel(
         return [_execute_one(gateway, *request) for request in requests]
     with ThreadPoolExecutor(max_workers=workers) as executor:
         # executor.map preserves input order, and requests are deliberately ordered.
-        return list(executor.map(lambda request: _execute_one(gateway, *request), requests))
+        return list(
+            executor.map(lambda request: _execute_one(gateway, *request), requests)
+        )
 
 
 def run_candidates(
@@ -181,10 +185,18 @@ def run_candidates(
 
     results: list[PanelResult] = []
     for candidate_id, prompt in items:
-        results.extend(_run_panel(
-            candidate_id, prompt, models, gateway,
-            samples=selected_samples, run_seed=run_seed, max_workers=max_workers, run_id=run_id,
-        ))
+        results.extend(
+            _run_panel(
+                candidate_id,
+                prompt,
+                models,
+                gateway,
+                samples=selected_samples,
+                run_seed=run_seed,
+                max_workers=max_workers,
+                run_id=run_id,
+            )
+        )
     return PanelRunResult(
         tuple(results),
         tuple(candidate_id for candidate_id, _ in items),

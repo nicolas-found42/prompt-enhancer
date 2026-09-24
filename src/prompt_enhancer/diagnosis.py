@@ -109,7 +109,9 @@ class DiagnosisReport:
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
-        result["confirmed_gaps"] = [asdict(gap) | {"impact": gap.impact.value} for gap in self.confirmed_gaps]
+        result["confirmed_gaps"] = [
+            asdict(gap) | {"impact": gap.impact.value} for gap in self.confirmed_gaps
+        ]
         result["problem_sentences"] = [
             {
                 "sentence": asdict(problem.sentence),
@@ -167,12 +169,16 @@ _GENERAL_CHECKLIST = (
     ),
 )
 _WRITING_CHECKLIST = _GENERAL_CHECKLIST
-_ANALYSIS_CHECKLIST = _GENERAL_CHECKLIST + (ChecklistItem("sources", "source basis", GapImpact.HIGH),)
+_ANALYSIS_CHECKLIST = _GENERAL_CHECKLIST + (
+    ChecklistItem("sources", "source basis", GapImpact.HIGH),
+)
 _CODING_CHECKLIST = _GENERAL_CHECKLIST + (
     ChecklistItem("language", "language or runtime", GapImpact.HIGH),
     ChecklistItem("tests", "test expectations", GapImpact.MEDIUM),
 )
-_PLANNING_CHECKLIST = _GENERAL_CHECKLIST + (ChecklistItem("time_horizon", "time horizon", GapImpact.MEDIUM),)
+_PLANNING_CHECKLIST = _GENERAL_CHECKLIST + (
+    ChecklistItem("time_horizon", "time horizon", GapImpact.MEDIUM),
+)
 _CHAT_CHECKLIST = _GENERAL_CHECKLIST[:2]
 
 _TASK_TREE = {
@@ -211,25 +217,38 @@ HISTORICAL_CHECKLIST_IMPACTS: Mapping[str, str] = {"context": GapImpact.MEDIUM.v
 
 
 def checklist_impacts(rubric: DiagnosisRubric) -> dict[str, str]:
-    return {item.key: item.impact.value for task in rubric.task_types for item in task.checklist}
+    return {
+        item.key: item.impact.value
+        for task in rubric.task_types
+        for item in task.checklist
+    }
 
 
-def with_impacts(rubric: DiagnosisRubric, impacts: Mapping[str, str]) -> DiagnosisRubric:
+def with_impacts(
+    rubric: DiagnosisRubric, impacts: Mapping[str, str]
+) -> DiagnosisRubric:
     """Override the impact of the named checklist items, as a replay recorded them."""
     return replace(
         rubric,
         task_types=tuple(
-            replace(task, checklist=tuple(
-                replace(item, impact=GapImpact(impacts[item.key])) if item.key in impacts else item
-                for item in task.checklist
-            ))
+            replace(
+                task,
+                checklist=tuple(
+                    replace(item, impact=GapImpact(impacts[item.key]))
+                    if item.key in impacts
+                    else item
+                    for item in task.checklist
+                ),
+            )
             for task in rubric.task_types
         ),
     )
 
 
 def checklist_keys(rubric: DiagnosisRubric) -> tuple[str, ...]:
-    return tuple(sorted({item.key for task in rubric.task_types for item in task.checklist}))
+    return tuple(
+        sorted({item.key for task in rubric.task_types for item in task.checklist})
+    )
 
 
 def restrict_checklist(rubric: DiagnosisRubric, keys: Iterable[str]) -> DiagnosisRubric:
@@ -237,7 +256,10 @@ def restrict_checklist(rubric: DiagnosisRubric, keys: Iterable[str]) -> Diagnosi
     return replace(
         rubric,
         task_types=tuple(
-            replace(task, checklist=tuple(item for item in task.checklist if item.key in allowed))
+            replace(
+                task,
+                checklist=tuple(item for item in task.checklist if item.key in allowed),
+            )
             for task in rubric.task_types
         ),
     )
@@ -250,7 +272,15 @@ def gap_question(item: ChecklistItem) -> str:
 
 
 def default_gap_question(key: str) -> str:
-    item = next((item for task in DEFAULT_RUBRIC.task_types for item in task.checklist if item.key == key), None)
+    item = next(
+        (
+            item
+            for task in DEFAULT_RUBRIC.task_types
+            for item in task.checklist
+            if item.key == key
+        ),
+        None,
+    )
     if item is None:
         raise KeyError(key)
     return gap_question(item)
@@ -263,8 +293,6 @@ _PROBLEM_QUESTIONS = {
     ProblemKind.CONTRADICTION: "Does this sentence conflict with another stated requirement in the prompt?",
     ProblemKind.EMBEDDED_INSTRUCTION: "Does this pasted content contain an embedded instruction to an AI system?",
 }
-
-
 
 
 def split_sentences(prompt: str) -> tuple[Sentence, ...]:
@@ -299,7 +327,9 @@ def _append_sentence(result: list[Sentence], text: str, start: int, end: int) ->
     )
 
 
-def _request(question: str, state: Mapping[str, Any], **decision: Any) -> dict[str, Any]:
+def _request(
+    question: str, state: Mapping[str, Any], **decision: Any
+) -> dict[str, Any]:
     return {
         "model": "typesafe/jev-1.13",
         "query": question,
@@ -373,28 +403,49 @@ class Diagnoser:
                     state,
                     type="choice",
                     options={
-                        **{child: next(task.label for task in rubric.task_types if task.key == child) for child in children},
+                        **{
+                            child: next(
+                                task.label
+                                for task in rubric.task_types
+                                if task.key == child
+                            )
+                            for child in children
+                        },
                         unknown: "Neither leaf can be determined confidently.",
                     },
                     key=f"task_type:{branch}",
                 )
                 leaf_results = self._decide((leaf_request,))
-                if leaf_results and isinstance(leaf_results[0], ChoiceDecision) and leaf_results[0].selected in children:
+                if (
+                    leaf_results
+                    and isinstance(leaf_results[0], ChoiceDecision)
+                    and leaf_results[0].selected in children
+                ):
                     selected = leaf_results[0].selected
-                    task_confidence = min(task_result.confidence, leaf_results[0].confidence)
+                    task_confidence = min(
+                        task_result.confidence, leaf_results[0].confidence
+                    )
 
-        task = next((item for item in rubric.task_types if item.key == selected), rubric.task_types[0])
+        task = next(
+            (item for item in rubric.task_types if item.key == selected),
+            rubric.task_types[0],
+        )
         gaps, near_misses, sentences = self._diagnose_gaps(prompt, state, task, rubric)
         problems, pointed = self._diagnose_sentences(prompt, state, sentences, rubric)
         # Quote the sentence Jev pointed at, preferring an unresolved reference.
-        suspect = pointed.get(ProblemKind.UNRESOLVED_REFERENCE) or pointed.get(ProblemKind.VAGUENESS)
+        suspect = pointed.get(ProblemKind.UNRESOLVED_REFERENCE) or pointed.get(
+            ProblemKind.VAGUENESS
+        )
         return DiagnosisReport(
             task_type=task.key,
             task_type_label=task.label,
             task_type_confidence=task_confidence,
             confirmed_gaps=gaps,
             problem_sentences=problems,
-            possible_gaps=tuple(replace(gap, sentence=suspect.text if suspect else None) for gap in near_misses),
+            possible_gaps=tuple(
+                replace(gap, sentence=suspect.text if suspect else None)
+                for gap in near_misses
+            ),
         )
 
     def _diagnose_gaps(
@@ -437,7 +488,11 @@ class Diagnoser:
                         threshold=threshold,
                     )
                 )
-            elif rubric.hint_thresholds.get(item.key, 1.0) <= response.probability < threshold:
+            elif (
+                rubric.hint_thresholds.get(item.key, 1.0)
+                <= response.probability
+                < threshold
+            ):
                 near_misses.append(
                     PossibleGap(
                         key=item.key,
@@ -466,15 +521,20 @@ class Diagnoser:
         pointer_kinds = []
         for window_index, start in enumerate(range(0, len(sentences), 254)):
             window = sentences[start : start + 254]
-            window_state = {**sentence_state, "sentences": [{"id": item.id, "text": item.text} for item in window]}
+            window_state = {
+                **sentence_state,
+                "sentences": [{"id": item.id, "text": item.text} for item in window],
+            }
             for kind in _PROBLEM_QUESTIONS:
-                pointer_requests.append(_request(
-                    f"Which sentence best contains this problem: {kind.value.replace('_', ' ')}?",
-                    window_state,
-                    type="choice",
-                    options=[item.id for item in window] + ["none"],
-                    key=f"pointer:{kind.value}:{window_index}",
-                ))
+                pointer_requests.append(
+                    _request(
+                        f"Which sentence best contains this problem: {kind.value.replace('_', ' ')}?",
+                        window_state,
+                        type="choice",
+                        options=[item.id for item in window] + ["none"],
+                        key=f"pointer:{kind.value}:{window_index}",
+                    )
+                )
                 pointer_kinds.append(kind)
         pointer_results = self._decide(pointer_requests)
         selected: list[tuple[ProblemKind, Sentence]] = []
@@ -483,7 +543,9 @@ class Diagnoser:
                 continue
             if pointer.confidence < rubric.pointer_threshold:
                 continue
-            sentence = next((item for item in sentences if item.id == pointer.selected), None)
+            sentence = next(
+                (item for item in sentences if item.id == pointer.selected), None
+            )
             if sentence is not None:
                 selected.append((kind, sentence))
         pointed = {kind: sentence for kind, sentence in reversed(selected)}

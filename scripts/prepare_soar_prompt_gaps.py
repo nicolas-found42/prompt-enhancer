@@ -46,7 +46,10 @@ def _labels(raw: object) -> frozenset[str]:
     if not isinstance(raw, set):
         raise TypeError("expected a set of labels per prompt turn")
     labels = {
-        str(label).strip().lower().replace("missing specfications", "missing specification")
+        str(label)
+        .strip()
+        .lower()
+        .replace("missing specfications", "missing specification")
         for label in raw
     }
     labels.discard("")
@@ -66,17 +69,27 @@ def prepare(source: str) -> dict[str, object]:
         prompts = ast.literal_eval(row["prompts"])
         annotations = ast.literal_eval(row["annotated_gaps"])
         if not isinstance(prompts, list) or len(prompts) != len(annotations):
-            raise ValueError(f"prompt/annotation mismatch in conversation {row['conversation_id']}")
-        for index, (prompt, raw_labels) in enumerate(zip(prompts, annotations, strict=True), start=1):
-            if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > MAX_PROMPT_LENGTH:
+            raise ValueError(
+                f"prompt/annotation mismatch in conversation {row['conversation_id']}"
+            )
+        for index, (prompt, raw_labels) in enumerate(
+            zip(prompts, annotations, strict=True), start=1
+        ):
+            if (
+                not isinstance(prompt, str)
+                or not prompt.strip()
+                or len(prompt) > MAX_PROMPT_LENGTH
+            ):
                 continue
-            available.append(Candidate(
-                id=f"soar-{row['conversation_id']}-turn-{index}",
-                conversation_id=row["conversation_id"],
-                turn=index,
-                prompt=prompt,
-                labels=_labels(raw_labels),
-            ))
+            available.append(
+                Candidate(
+                    id=f"soar-{row['conversation_id']}-turn-{index}",
+                    conversation_id=row["conversation_id"],
+                    turn=index,
+                    prompt=prompt,
+                    labels=_labels(raw_labels),
+                )
+            )
 
     selected: list[Candidate] = []
     used_conversations: set[str] = set()
@@ -96,7 +109,9 @@ def prepare(source: str) -> dict[str, object]:
             if added == quota:
                 break
         if added != quota:
-            raise ValueError(f"only {added} distinct conversations available for {label}; need {quota}")
+            raise ValueError(
+                f"only {added} distinct conversations available for {label}; need {quota}"
+            )
 
     cases = [
         {
@@ -129,11 +144,15 @@ def prepare(source: str) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--source", default=SOURCE, help="pinned source CSV URL or local file URL")
+    parser.add_argument(
+        "--source", default=SOURCE, help="pinned source CSV URL or local file URL"
+    )
     args = parser.parse_args()
     dataset = prepare(args.source)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     print(f"Wrote {sum(QUOTAS.values())} real, human-labeled prompts to {args.output}")
 
 

@@ -432,7 +432,9 @@ def search_strategies(
         return StrategySearchResult((), (), tuple(rejected), selected_budget, failures)
 
     request = CandidateBatchRequest(
-        prompt, tuple(eligible), failures,
+        prompt,
+        tuple(eligible),
+        failures,
         diagnosis=diagnosis if isinstance(diagnosis, Mapping) else {},
     )
     generated: list[str] | None = None
@@ -440,10 +442,19 @@ def search_strategies(
         generated = _writer_texts(_call_writer(writer, request), eligible)
     if writer is not None and (generated is None or len(generated) < len(eligible)):
         return StrategySearchResult(
-            (), (), tuple(rejected) + tuple(
-                StrategyRejection(strategy.name, "writer did not return a complete candidate", _strategy_score(strategy, prompt, diagnosis, failures))
+            (),
+            (),
+            tuple(rejected)
+            + tuple(
+                StrategyRejection(
+                    strategy.name,
+                    "writer did not return a complete candidate",
+                    _strategy_score(strategy, prompt, diagnosis, failures),
+                )
                 for strategy in eligible
-            ), selected_budget, failures,
+            ),
+            selected_budget,
+            failures,
         )
     if generated is None or len(generated) < len(eligible):
         generated = [text or "" for text in (generated or [])]

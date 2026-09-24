@@ -73,13 +73,17 @@ def check_candidate_fidelity(
     try:
         answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
         decisions = [parse_decision(answer) for answer in answers]
-        if len(decisions) != len(_CHECKS) or any(not isinstance(answer, NoulDecision) for answer in decisions):
+        if len(decisions) != len(_CHECKS) or any(
+            not isinstance(answer, NoulDecision) for answer in decisions
+        ):
             raise JevResponseError("incomplete fidelity response")
     except (ProviderError, JevResponseError) as exc:
         return FidelityResult(False, False, False, {"error": type(exc).__name__})
     probabilities = {
         name: decision.probability
-        for name, decision in zip(_CHECKS, cast(list[NoulDecision], decisions), strict=True)
+        for name, decision in zip(
+            _CHECKS, cast(list[NoulDecision], decisions), strict=True
+        )
     }
     return FidelityResult(
         meaning_preserved=probabilities["meaning_preserved"] >= 0.8,

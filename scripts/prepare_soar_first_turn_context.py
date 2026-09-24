@@ -37,42 +37,64 @@ def prepare(text: str, *, split: str = "development") -> dict[str, object]:
             continue
         prompt = prompts[0]
         labels = {str(label).lower() for label in annotations[0]}
-        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000 or has_soar_placeholder(prompt):
+        if (
+            not isinstance(prompt, str)
+            or not prompt.strip()
+            or len(prompt) > 8000
+            or has_soar_placeholder(prompt)
+        ):
             continue
         case = {
-            "id": f"soar-first-{row['conversation_id']}", "source": "real", "prompt": prompt,
+            "id": f"soar-first-{row['conversation_id']}",
+            "source": "real",
+            "prompt": prompt,
             "expected_gaps": ["context"] if "missing context" in labels else [],
-            "source_labels": sorted(labels), "evaluation_gaps": ["context"],
-            "conversation_id": row["conversation_id"], "turn": 1,
+            "source_labels": sorted(labels),
+            "evaluation_gaps": ["context"],
+            "conversation_id": row["conversation_id"],
+            "turn": 1,
         }
         if "missing context" in labels:
             positive.append(case)
         elif labels == {"no gap"}:
             negative.append(case)
+
     def unique_sorted(cases: list[dict[str, object]]) -> list[dict[str, object]]:
         seen_prompts: set[str] = set()
         selected: list[dict[str, object]] = []
-        for case in sorted(cases, key=lambda item: hashlib.sha256(str(item["id"]).encode()).hexdigest()):
+        for case in sorted(
+            cases, key=lambda item: hashlib.sha256(str(item["id"]).encode()).hexdigest()
+        ):
             prompt = str(case["prompt"]).strip().casefold()
             if prompt in seen_prompts:
                 continue
             seen_prompts.add(prompt)
             selected.append(case)
         return selected
+
     positive = unique_sorted(positive)
     negative = unique_sorted(negative)
     if len(positive) < POSITIVE_COUNT + 20 or len(negative) < NEGATIVE_COUNT + 40:
-        raise ValueError("source lacks enough first-turn context labels after screening")
+        raise ValueError(
+            "source lacks enough first-turn context labels after screening"
+        )
     if split == "development":
-        chosen_positive, chosen_negative = positive[:POSITIVE_COUNT], negative[:NEGATIVE_COUNT]
+        chosen_positive, chosen_negative = (
+            positive[:POSITIVE_COUNT],
+            negative[:NEGATIVE_COUNT],
+        )
     else:
         chosen_positive = positive[POSITIVE_COUNT : POSITIVE_COUNT + 20]
         chosen_negative = negative[NEGATIVE_COUNT : NEGATIVE_COUNT + 40]
-    selected = sorted(chosen_positive + chosen_negative, key=lambda case: str(case["id"]))
+    selected = sorted(
+        chosen_positive + chosen_negative, key=lambda case: str(case["id"])
+    )
     return {
-        "schema_version": 1, "name": f"soar-first-turn-context-{split}-{len(selected)}",
+        "schema_version": 1,
+        "name": f"soar-first-turn-context-{split}-{len(selected)}",
         "metadata": {
-            "source_url": SOURCE, "source_commit": COMMIT,
+            "source_url": SOURCE,
+            "source_commit": COMMIT,
             "selection": f"{len(chosen_positive)} missing-context and {len(chosen_negative)} no-gap first turns in the {split} slice of stable SHA-256 ID ordering; obvious processed-text placeholders excluded",
             "source_scope": "single first turns from distinct developer conversations; exact source context label only",
             "redistribution": "source repository declares no license; generated file remains local",
@@ -84,12 +106,16 @@ def prepare(text: str, *, split: str = "development") -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--split", choices=("development", "holdout"), default="development")
+    parser.add_argument(
+        "--split", choices=("development", "holdout"), default="development"
+    )
     args = parser.parse_args()
     with urlopen(SOURCE, timeout=30) as response:
         dataset = prepare(response.read().decode("utf-8-sig"), split=args.split)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(
+        json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
     count = POSITIVE_COUNT + NEGATIVE_COUNT if args.split == "development" else 60
     print(f"Wrote {count} first-turn context cases to {args.output}")
 

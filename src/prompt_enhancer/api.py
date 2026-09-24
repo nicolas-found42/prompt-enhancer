@@ -69,7 +69,9 @@ def _percentile(values: list[float], fraction: float) -> float:
     ordered = sorted(values)
     if len(ordered) == 1:
         return ordered[0]
-    return statistics.quantiles(ordered, n=100, method="inclusive")[round(fraction * 100) - 1]
+    return statistics.quantiles(ordered, n=100, method="inclusive")[
+        round(fraction * 100) - 1
+    ]
 
 
 def run_estimates(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -82,9 +84,15 @@ def run_estimates(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         cost = run.get("cost") or {}
         total_ms = timing.get("total_ms") if isinstance(timing, Mapping) else None
         total_cost = cost.get("total") if isinstance(cost, Mapping) else None
-        if not isinstance(total_ms, (int, float)) or not isinstance(total_cost, (int, float)) or total_ms <= 0:
+        if (
+            not isinstance(total_ms, (int, float))
+            or not isinstance(total_cost, (int, float))
+            or total_ms <= 0
+        ):
             continue
-        samples.setdefault(str(run["tier"]), []).append((total_ms / 60000, float(total_cost)))
+        samples.setdefault(str(run["tier"]), []).append(
+            (total_ms / 60000, float(total_cost))
+        )
     estimates: dict[str, Any] = {}
     for tier, values in samples.items():
         minutes = [item[0] for item in values]
@@ -132,7 +140,9 @@ def create_app(
     @app.post("/api/optimize")
     def optimize(request: OptimizeRequest) -> dict[str, Any]:
         try:
-            return dict(app_optimizer.optimize(request.prompt, _optimize_options(request)))
+            return dict(
+                app_optimizer.optimize(request.prompt, _optimize_options(request))
+            )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -140,15 +150,20 @@ def create_app(
         record = app_optimizer.store.get_run(run_id)
         return str((record or {}).get("prompt") or "")
 
-    def submit(run_id: str, kind: str, work: Callable[[Any], Any], prompt: str | None = None) -> dict[str, Any]:
+    def submit(
+        run_id: str, kind: str, work: Callable[[Any], Any], prompt: str | None = None
+    ) -> dict[str, Any]:
         job_prompt = prompt if prompt is not None else recorded_prompt(run_id)
 
         def on_failure(exc: BaseException) -> dict[str, Any]:
             return dict(app_optimizer.failure_result(run_id, job_prompt, exc))
+
         try:
             return jobs.submit(run_id, kind, work, on_failure, prompt=job_prompt)
         except JobBusy as exc:
-            raise HTTPException(status_code=409, detail="this run is already in progress") from exc
+            raise HTTPException(
+                status_code=409, detail="this run is already in progress"
+            ) from exc
 
     def require_run(run_id: str) -> None:
         if app_optimizer.store.get_run(run_id) is None:
@@ -163,25 +178,44 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         run_id = new_run_id()
         return submit(
-            run_id, "optimize",
-            lambda progress: app_optimizer.optimize(request.prompt, options, run_id=run_id, progress=progress),
+            run_id,
+            "optimize",
+            lambda progress: app_optimizer.optimize(
+                request.prompt, options, run_id=run_id, progress=progress
+            ),
             prompt=request.prompt,
         )
 
     @app.post("/api/jobs/{run_id}/resume", status_code=202)
     def start_resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:
         require_run(run_id)
-        return submit(run_id, "resume", lambda progress: app_optimizer.resume(run_id, request.answers, progress=progress))
+        return submit(
+            run_id,
+            "resume",
+            lambda progress: app_optimizer.resume(
+                run_id, request.answers, progress=progress
+            ),
+        )
 
     @app.post("/api/jobs/{run_id}/skip", status_code=202)
     def start_skip(run_id: str) -> dict[str, Any]:
         require_run(run_id)
-        return submit(run_id, "skip", lambda progress: app_optimizer.skip_clarification(run_id, progress=progress))
+        return submit(
+            run_id,
+            "skip",
+            lambda progress: app_optimizer.skip_clarification(
+                run_id, progress=progress
+            ),
+        )
 
     @app.post("/api/jobs/{run_id}/deep", status_code=202)
     def start_deep_job(run_id: str) -> dict[str, Any]:
         require_run(run_id)
-        return submit(run_id, "deep", lambda progress: app_optimizer.start_deep_pass(run_id, progress=progress))
+        return submit(
+            run_id,
+            "deep",
+            lambda progress: app_optimizer.start_deep_pass(run_id, progress=progress),
+        )
 
     @app.get("/api/jobs")
     def active_jobs() -> list[dict[str, Any]]:
@@ -193,14 +227,18 @@ def create_app(
         try:
             return jobs.get(run_id)
         except JobNotFound as exc:
-            raise HTTPException(status_code=404, detail="no run in progress with this ID") from exc
+            raise HTTPException(
+                status_code=404, detail="no run in progress with this ID"
+            ) from exc
 
     @app.post("/api/jobs/{run_id}/cancel")
     def cancel_job(run_id: str) -> dict[str, Any]:
         try:
             return jobs.cancel(run_id)
         except JobNotFound as exc:
-            raise HTTPException(status_code=404, detail="no run in progress with this ID") from exc
+            raise HTTPException(
+                status_code=404, detail="no run in progress with this ID"
+            ) from exc
 
     @app.get("/api/estimates")
     def estimates() -> dict[str, Any]:
@@ -212,8 +250,13 @@ def create_app(
         health = getattr(app_optimizer.gateway, "provider_health", None)
         models = (config.writer_model, config.strong_check_model) if probe else ()
         return {
-            "providers": dict(health(probe_models=models)) if health is not None else {},
-            "fallback": {"writer": config.fallback_writer_model, "strong": config.fallback_strong_check_model},
+            "providers": dict(health(probe_models=models))
+            if health is not None
+            else {},
+            "fallback": {
+                "writer": config.fallback_writer_model,
+                "strong": config.fallback_strong_check_model,
+            },
         }
 
     @app.get("/api/runs")
@@ -311,10 +354,16 @@ def create_app(
         try:
             # The model catalog is not part of the Gateway interface; live and
             # scripted gateways offer it, and any failure falls back below.
-            return cast(Any, app_optimizer.gateway).list_models(refresh=True).to_public_dict()
+            return (
+                cast(Any, app_optimizer.gateway)
+                .list_models(refresh=True)
+                .to_public_dict()
+            )
         except Exception as exc:
             if app_settings.openrouter_api_key or app_settings.opencode_go_key:
-                raise HTTPException(status_code=503, detail="model catalog is unavailable") from exc
+                raise HTTPException(
+                    status_code=503, detail="model catalog is unavailable"
+                ) from exc
             return _public_catalog(app_settings)
 
     @app.get("/api/settings")

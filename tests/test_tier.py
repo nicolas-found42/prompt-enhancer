@@ -22,9 +22,16 @@ def test_tier_behaves_as_its_string_in_reports() -> None:
     ("tier", "candidates", "models", "samples", "rounds"),
     [(Tier.FAST, 3, 2, 1, 1), (Tier.STANDARD, 4, 3, 2, 2), (Tier.DEEP, 6, 5, 3, 3)],
 )
-def test_each_tier_owns_its_budget(tier: Tier, candidates: int, models: int, samples: int, rounds: int) -> None:
+def test_each_tier_owns_its_budget(
+    tier: Tier, candidates: int, models: int, samples: int, rounds: int
+) -> None:
     budget = tier.budget
 
-    assert (budget.candidates, budget.models, budget.samples, budget.max_rounds) == (candidates, models, samples, rounds)
+    assert (budget.candidates, budget.models, budget.samples, budget.max_rounds) == (
+        candidates,
+        models,
+        samples,
+        rounds,
+    )
     assert tier.max_rounds == rounds
     assert tier.weak_model_evaluations == candidates * models * samples * rounds

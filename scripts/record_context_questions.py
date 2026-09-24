@@ -26,18 +26,27 @@ def main() -> None:
     parser.add_argument("--question", default=default_gap_question("context"))
     args = parser.parse_args()
     dataset = load_dataset(args.dataset)
-    reused = json.loads(args.reuse.read_text(encoding="utf-8")).get("responses", {}) if args.reuse else {}
+    reused = (
+        json.loads(args.reuse.read_text(encoding="utf-8")).get("responses", {})
+        if args.reuse
+        else {}
+    )
     if not isinstance(reused, dict):
         raise TypeError("reuse replay requires response object")
-    recording = RecordingGateway(HttpGateway(config=GatewayConfig.from_env()), args.record)
+    recording = RecordingGateway(
+        HttpGateway(config=GatewayConfig.from_env()), args.record
+    )
     if args.record.exists():
         prior = json.loads(args.record.read_text(encoding="utf-8"))
         recording.responses.update(prior.get("responses", {}))
     copied = live = 0
     for case in dataset.cases:
         question = {
-            "model": JEV_MODEL, "query": args.question,
-            "state": {"prompt": case.prompt}, "type": "noul", "key": "gap:context",
+            "model": JEV_MODEL,
+            "query": args.question,
+            "state": {"prompt": case.prompt},
+            "type": "noul",
+            "key": "gap:context",
         }
         key = ReplayGateway.request_key("decide", JEV_MODEL, question, "judge")
         if key in recording.responses:
@@ -52,7 +61,9 @@ def main() -> None:
             live += 1
         if not isinstance(parse_decision(answer), NoulDecision):
             raise TypeError(f"context response was not noul for {case.id}")
-    print(f"Validated {len(dataset.cases)} context answers: {copied} reused, {live} new live")
+    print(
+        f"Validated {len(dataset.cases)} context answers: {copied} reused, {live} new live"
+    )
 
 
 if __name__ == "__main__":

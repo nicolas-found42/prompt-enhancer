@@ -16,7 +16,12 @@ def test_candidate_writer_keeps_user_text_in_state_and_preserves_language() -> N
     def chat(model, messages, **kwargs):
         calls.append({"model": model, "messages": messages, **kwargs})
         strategies = json.loads(messages[1]["content"])["strategies"]
-        return json.dumps({strategy["name"]: "Escribe un resumen específico." for strategy in strategies})
+        return json.dumps(
+            {
+                strategy["name"]: "Escribe un resumen específico."
+                for strategy in strategies
+            }
+        )
 
     result = search_strategies(
         "Escribe un resumen.",
@@ -24,7 +29,9 @@ def test_candidate_writer_keeps_user_text_in_state_and_preserves_language() -> N
         writer=CandidateWriter(ScriptedGateway(chat=chat)),
     )
 
-    assert {candidate.text for candidate in result.candidates} == {"Escribe un resumen específico."}
+    assert {candidate.text for candidate in result.candidates} == {
+        "Escribe un resumen específico."
+    }
     assert calls[0]["model"] == "space-bunny-free"
     assert calls[0]["role"] == "writer"
     system, user = calls[0]["messages"]
@@ -44,9 +51,16 @@ def _fidelity(decide):
     )
 
 
-@pytest.mark.parametrize("failing", ["meaning_preserved", "no_invention", "edits_confined"])
+@pytest.mark.parametrize(
+    "failing", ["meaning_preserved", "no_invention", "edits_confined"]
+)
 def test_each_fidelity_check_can_reject_a_candidate(failing: str) -> None:
-    result = _fidelity(lambda request, **_: {"type": "noul", "noul": 0.1 if request["key"] == failing else 0.99})
+    result = _fidelity(
+        lambda request, **_: {
+            "type": "noul",
+            "noul": 0.1 if request["key"] == failing else 0.99,
+        }
+    )
 
     assert result.passed is False
     assert result.to_dict()[failing] is False

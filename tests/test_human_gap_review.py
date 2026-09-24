@@ -13,17 +13,51 @@ from human_gap_review import batch_digest, import_review, make_review_html
 
 
 def _batch():
-    return {"cases": [
-        {"id": "one", "prompt": "Write an outline", "result": "Outline", "source": "codex", "session": "one.jsonl"},
-        {"id": "two", "prompt": "Fix it", "result": "Fixed", "source": "claude", "session": "two.jsonl"},
-    ]}
+    return {
+        "cases": [
+            {
+                "id": "one",
+                "prompt": "Write an outline",
+                "result": "Outline",
+                "source": "codex",
+                "session": "one.jsonl",
+            },
+            {
+                "id": "two",
+                "prompt": "Fix it",
+                "result": "Fixed",
+                "source": "claude",
+                "session": "two.jsonl",
+            },
+        ]
+    }
 
 
 def _review(batch):
-    return {"batch_digest": batch_digest(batch), "reviewer": "Reviewer A", "reviews": [
-        {"id": "one", "judgment": "labeled", "task_type": "writing", "gaps": [], "context_mode": "standalone", "context_text": "", "source_session_reviewed": True},
-        {"id": "two", "judgment": "labeled", "task_type": "coding", "gaps": ["context"], "context_mode": "reconstructed", "context_text": "The prior turn names src/app.py.", "source_session_reviewed": True},
-    ]}
+    return {
+        "batch_digest": batch_digest(batch),
+        "reviewer": "Reviewer A",
+        "reviews": [
+            {
+                "id": "one",
+                "judgment": "labeled",
+                "task_type": "writing",
+                "gaps": [],
+                "context_mode": "standalone",
+                "context_text": "",
+                "source_session_reviewed": True,
+            },
+            {
+                "id": "two",
+                "judgment": "labeled",
+                "task_type": "coding",
+                "gaps": ["context"],
+                "context_mode": "reconstructed",
+                "context_text": "The prior turn names src/app.py.",
+                "source_session_reviewed": True,
+            },
+        ],
+    }
 
 
 def test_review_import_preserves_human_negatives_and_supplied_context():
@@ -55,7 +89,10 @@ def test_delegated_review_keeps_model_provenance_separate_from_human_labels():
     dataset = import_review(batch, review, minimum=2)
 
     assert dataset["metadata"]["label_provenance"] == "user_delegated_model"
-    assert all(case["source"] == "real" and case["label_provenance"] == "user_delegated_model" for case in dataset["cases"])
+    assert all(
+        case["source"] == "real" and case["label_provenance"] == "user_delegated_model"
+        for case in dataset["cases"]
+    )
 
 
 def test_review_import_rejects_gap_outside_task_checklist():
@@ -81,10 +118,20 @@ def test_writer_comparison_excludes_unavailable_pairs():
     def report(writer, deltas):
         return {
             "run_identity": {"dataset_digest": "same"},
-            "options": {"tier": "fast", "seed": 0, "model_overrides": {"writer": writer}},
-            "cases": [{"case_id": str(i), "status": "completed", "score_delta": value} for i, value in enumerate(deltas)],
-            "improvement": {"comparable_cases": sum(value is not None for value in deltas)},
-            "cost": {"total": 0.01}, "latency_ms": {"p50": 100},
+            "options": {
+                "tier": "fast",
+                "seed": 0,
+                "model_overrides": {"writer": writer},
+            },
+            "cases": [
+                {"case_id": str(i), "status": "completed", "score_delta": value}
+                for i, value in enumerate(deltas)
+            ],
+            "improvement": {
+                "comparable_cases": sum(value is not None for value in deltas)
+            },
+            "cost": {"total": 0.01},
+            "latency_ms": {"p50": 100},
         }
 
     result = compare(report("a", [0.2, None, 0.1]), report("b", [0.1, 0.3, 0.1]))
@@ -94,16 +141,46 @@ def test_writer_comparison_excludes_unavailable_pairs():
     assert (result["left_wins"], result["right_wins"], result["ties"]) == (1, 0, 1)
 
 
-def test_faithfulness_review_checks_provenance_and_keeps_conversations_together(tmp_path):
-    train_id = next(f"case-{i}" for i in range(100) if int(hashlib.sha256(f"case-{i}".encode()).hexdigest()[:8], 16) % 5 != 0)
-    holdout_id = next(f"case-{i}" for i in range(100) if int(hashlib.sha256(f"case-{i}".encode()).hexdigest()[:8], 16) % 5 == 0)
+def test_faithfulness_review_checks_provenance_and_keeps_conversations_together(
+    tmp_path,
+):
+    train_id = next(
+        f"case-{i}"
+        for i in range(100)
+        if int(hashlib.sha256(f"case-{i}".encode()).hexdigest()[:8], 16) % 5 != 0
+    )
+    holdout_id = next(
+        f"case-{i}"
+        for i in range(100)
+        if int(hashlib.sha256(f"case-{i}".encode()).hexdigest()[:8], 16) % 5 == 0
+    )
     rows = []
     evidence = {"question": "faithful?", "rows": {}}
-    for case_id, answer, probability in [(train_id, "yes", 0.95), (holdout_id, "no", 0.1)]:
+    for case_id, answer, probability in [
+        (train_id, "yes", 0.95),
+        (holdout_id, "no", 0.1),
+    ]:
         row_id = f"{case_id}/writer/test-1"
-        row = {"row_id": row_id, "source_case_id": case_id, "writer": "writer", "prompt": "Write a report", "proposed_test": '{"question":"Report?"}', "human_faithful": answer, "human_notes": "", "human_reviewer": "A", "reviewed_at": "2026-09-23"}
+        row = {
+            "row_id": row_id,
+            "source_case_id": case_id,
+            "writer": "writer",
+            "prompt": "Write a report",
+            "proposed_test": '{"question":"Report?"}',
+            "human_faithful": answer,
+            "human_notes": "",
+            "human_reviewer": "A",
+            "reviewed_at": "2026-09-23",
+        }
         rows.append(row)
-        evidence["rows"][row_id] = {"source_case_id": case_id, "writer": "writer", "probability": probability, "content_digest": hashlib.sha256((row["prompt"] + "\n" + row["proposed_test"]).encode()).hexdigest()}
+        evidence["rows"][row_id] = {
+            "source_case_id": case_id,
+            "writer": "writer",
+            "probability": probability,
+            "content_digest": hashlib.sha256(
+                (row["prompt"] + "\n" + row["proposed_test"]).encode()
+            ).hexdigest(),
+        }
     review_path = tmp_path / "review.csv"
     evidence_path = tmp_path / "evidence.json"
     with review_path.open("w", newline="") as file:

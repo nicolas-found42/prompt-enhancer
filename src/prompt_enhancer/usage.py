@@ -24,6 +24,7 @@ class Usage:
             payload = response["usage"]
         if not isinstance(payload, Mapping):
             return cls()
+
         def integer(*names: str) -> int:
             for name in names:
                 value = payload.get(name)
@@ -33,6 +34,7 @@ class Usage:
                 except (TypeError, ValueError):
                     continue
             return 0
+
         return cls(
             input_tokens=integer("input_tokens", "prompt_tokens", "input"),
             output_tokens=integer("output_tokens", "completion_tokens", "output"),

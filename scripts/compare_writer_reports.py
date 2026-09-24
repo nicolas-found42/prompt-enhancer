@@ -15,7 +15,10 @@ def _comparable_options(options: dict[str, Any]) -> dict[str, Any]:
 
 
 def compare(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    if left["run_identity"]["dataset_digest"] != right["run_identity"]["dataset_digest"]:
+    if (
+        left["run_identity"]["dataset_digest"]
+        != right["run_identity"]["dataset_digest"]
+    ):
         raise ValueError("writer reports must use the same dataset")
     if _comparable_options(left["options"]) != _comparable_options(right["options"]):
         raise ValueError("writer reports differ in an option besides writer")
@@ -47,7 +50,10 @@ def compare(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
         "ties": ties,
         "left": {
             "writer": left["options"]["model_overrides"].get("writer", "default"),
-            "completed": sum(case["status"] not in {"failed", "error"} for case in left_cases.values()),
+            "completed": sum(
+                case["status"] not in {"failed", "error"}
+                for case in left_cases.values()
+            ),
             "scored": left["improvement"]["comparable_cases"],
             "improvement": left["improvement"],
             "metered_openrouter_usd": left["cost"]["total"],
@@ -55,7 +61,10 @@ def compare(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
         },
         "right": {
             "writer": right["options"]["model_overrides"].get("writer", "default"),
-            "completed": sum(case["status"] not in {"failed", "error"} for case in right_cases.values()),
+            "completed": sum(
+                case["status"] not in {"failed", "error"}
+                for case in right_cases.values()
+            ),
             "scored": right["improvement"]["comparable_cases"],
             "improvement": right["improvement"],
             "metered_openrouter_usd": right["cost"]["total"],

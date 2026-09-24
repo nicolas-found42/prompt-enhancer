@@ -67,7 +67,18 @@ class RunStore:
         result = dict(record.get("result") or {})
         feedback = record.get("feedback", result.get("feedback"))
         feedback_at = record.get("feedback_at", result.get("feedback_at"))
-        known = {"run_id", "created_at", "prompt", "tier", "options", "result", "cost", "timing", "feedback", "feedback_at"}
+        known = {
+            "run_id",
+            "created_at",
+            "prompt",
+            "tier",
+            "options",
+            "result",
+            "cost",
+            "timing",
+            "feedback",
+            "feedback_at",
+        }
         evidence = {key: value for key, value in record.items() if key not in known}
         with self._lock:
             self._connection.execute(

@@ -19,16 +19,23 @@ from typing import Any
 from evaluation_review_common import save_json
 
 
-def merge(base: dict[str, Any], retry: dict[str, Any], *, retry_case_ids: set[str]) -> dict[str, Any]:
+def merge(
+    base: dict[str, Any], retry: dict[str, Any], *, retry_case_ids: set[str]
+) -> dict[str, Any]:
     if not retry_case_ids or not retry_case_ids <= set(base["case_costs"]):
         raise ValueError("retry case IDs must be a nonempty subset of base cases")
-    if set(retry["case_costs"]) != retry_case_ids or set(retry["case_latency_ms"]) != retry_case_ids:
+    if (
+        set(retry["case_costs"]) != retry_case_ids
+        or set(retry["case_latency_ms"]) != retry_case_ids
+    ):
         raise ValueError("retry recording case metrics differ from retry report")
     if set(base["case_costs"]) != set(base["case_latency_ms"]):
         raise ValueError("base recording has incomplete case metrics")
     if base["rubric_thresholds"] != retry["rubric_thresholds"]:
         raise ValueError("recordings use different rubric thresholds")
-    if base.get("faithfulness_threshold", 0.9) != retry.get("faithfulness_threshold", 0.9):
+    if base.get("faithfulness_threshold", 0.9) != retry.get(
+        "faithfulness_threshold", 0.9
+    ):
         raise ValueError("recordings use different faithfulness thresholds")
     return {
         "responses": {**base["responses"], **retry["responses"]},

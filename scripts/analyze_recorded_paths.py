@@ -16,7 +16,9 @@ from prompt_enhancer.evaluation.harness import HarnessOptions, default_engine_fa
 from prompt_enhancer.optimizer import PromptOptimizer
 
 
-def analyze(dataset_path: Path, replay_path: Path, options: HarnessOptions) -> dict[str, Any]:
+def analyze(
+    dataset_path: Path, replay_path: Path, options: HarnessOptions
+) -> dict[str, Any]:
     dataset = load_dataset(dataset_path)
     engine = cast(PromptOptimizer, default_engine_factory(replay_path))
     counts: Counter[str] = Counter()
@@ -54,7 +56,9 @@ def analyze(dataset_path: Path, replay_path: Path, options: HarnessOptions) -> d
         )
         strong = report.get("strong_check", {})
         counts["strong_attempted"] += len(strong.get("candidates", []))
-        counts["strong_passed"] += sum(item.get("passed", False) for item in strong.get("candidates", []))
+        counts["strong_passed"] += sum(
+            item.get("passed", False) for item in strong.get("candidates", [])
+        )
         counts["cases_with_comparable_score"] += bool(report.get("selection_evidence"))
         for candidate in candidates:
             reasons.update(candidate.get("rejection_reasons", []))
@@ -86,7 +90,11 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     overrides = {"writer": args.writer_model} if args.writer_model else {}
-    report = analyze(args.dataset, args.replay, HarnessOptions(tier=args.tier, model_overrides=overrides))
+    report = analyze(
+        args.dataset,
+        args.replay,
+        HarnessOptions(tier=args.tier, model_overrides=overrides),
+    )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -113,6 +113,7 @@ class DecisionStump:
             right_delta=right_delta,
         )
 
+
 @dataclass(frozen=True)
 class LoggedExample:
     """Normalized model input derived from one persisted run."""
@@ -385,8 +386,16 @@ def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
     jev_answers = _answer_sequence(run.get("jev_answers") or run.get("answers"))
     for index, raw_answer in enumerate(jev_answers):
         logged = _as_mapping(raw_answer)
-        answer = _as_mapping(logged.get("answer")) if isinstance(logged.get("answer"), Mapping) else logged
-        question = _as_mapping(logged.get("question")) if isinstance(logged.get("question"), Mapping) else {}
+        answer = (
+            _as_mapping(logged.get("answer"))
+            if isinstance(logged.get("answer"), Mapping)
+            else logged
+        )
+        question = (
+            _as_mapping(logged.get("question"))
+            if isinstance(logged.get("question"), Mapping)
+            else {}
+        )
         kind = (
             str(
                 answer.get("kind")
@@ -643,9 +652,7 @@ def _split_examples(
     holdout_count = min(holdout_count, count - config.minimum_training_runs)
     ranked = sorted(
         examples,
-        key=lambda item: sha256(
-            f"{config.seed}:{item.run_id}".encode()
-        ).hexdigest(),
+        key=lambda item: sha256(f"{config.seed}:{item.run_id}".encode()).hexdigest(),
     )
     selected: set[str] = set()
     for label in (0, 1):

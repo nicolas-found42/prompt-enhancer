@@ -42,7 +42,9 @@ def _outcome(
     )
 
 
-def _failure(reason: str = "candidate-1 missed the required output format") -> CandidateFailure:
+def _failure(
+    reason: str = "candidate-1 missed the required output format",
+) -> CandidateFailure:
     return CandidateFailure(
         candidate_id="candidate-1",
         strategy="specify_output_format",
@@ -53,10 +55,14 @@ def _failure(reason: str = "candidate-1 missed the required output format") -> C
 
 
 def _run(tier: Tier, execute_round, run_id: str = "run"):
-    return RepeatCoordinator().run(run_id=run_id, prompt="original", tier=tier, execute_round=execute_round)
+    return RepeatCoordinator().run(
+        run_id=run_id, prompt="original", tier=tier, execute_round=execute_round
+    )
 
 
-@pytest.mark.parametrize(("tier", "expected_rounds"), [(Tier.FAST, 1), (Tier.STANDARD, 2), (Tier.DEEP, 3)])
+@pytest.mark.parametrize(
+    ("tier", "expected_rounds"), [(Tier.FAST, 1), (Tier.STANDARD, 2), (Tier.DEEP, 3)]
+)
 def test_each_tier_honors_its_max_round_limit(tier: Tier, expected_rounds: int) -> None:
     requests = []
 
@@ -68,7 +74,9 @@ def test_each_tier_honors_its_max_round_limit(tier: Tier, expected_rounds: int) 
 
     assert tier.max_rounds == expected_rounds
     assert len(requests) == expected_rounds
-    assert [request.tier_round for request in requests] == list(range(1, expected_rounds + 1))
+    assert [request.tier_round for request in requests] == list(
+        range(1, expected_rounds + 1)
+    )
     assert all(request.max_rounds == expected_rounds for request in requests)
     assert len(result.history) == expected_rounds
 
@@ -79,14 +87,19 @@ def test_later_round_receives_previous_candidate_failures() -> None:
     def execute_round(request):
         requests.append(request)
         if request.round_number == 1:
-            return _outcome(request, failures=(_failure("candidate-2 lost on the smallest weak model"),))
+            return _outcome(
+                request,
+                failures=(_failure("candidate-2 lost on the smallest weak model"),),
+            )
         return _outcome(request)
 
     result = _run(Tier.STANDARD, execute_round)
 
     assert requests[0].prior_failures == ()
     assert requests[1].prior_round_failures[0].candidate_id == "candidate-1"
-    assert "candidate-2 lost on the smallest weak model" in requests[1].prior_failures[0]
+    assert (
+        "candidate-2 lost on the smallest weak model" in requests[1].prior_failures[0]
+    )
     assert requests[1].prior_failures == (requests[1].prior_round_failures[0].summary,)
     assert result.history[0].candidate_failures[0].weak_pass_rates == {"weak-a": 0.25}
     assert result.history[0].cost == {"total": 0.001}
@@ -106,7 +119,9 @@ def test_a_round_without_failures_ends_the_tier_early() -> None:
 
 
 def test_lower_tier_no_change_result_offers_a_more_expensive_deep_pass() -> None:
-    payload = _run(Tier.FAST, lambda request: _outcome(request), run_id="run-offer").as_payload()
+    payload = _run(
+        Tier.FAST, lambda request: _outcome(request), run_id="run-offer"
+    ).as_payload()
     offer = payload["report"]["offer_deep"]
 
     assert payload["final_prompt"] == "original"
@@ -129,7 +144,10 @@ def test_round_without_confirmed_gaps_is_not_offered_deep() -> None:
 
 
 def test_improved_result_does_not_offer_deep() -> None:
-    result = _run(Tier.FAST, lambda request: _outcome(request, final_prompt="Summarize in three bullets."))
+    result = _run(
+        Tier.FAST,
+        lambda request: _outcome(request, final_prompt="Summarize in three bullets."),
+    )
 
     assert result.as_payload()["report"]["offer_deep"] is None
 
@@ -145,12 +163,18 @@ def test_deep_pass_keeps_run_id_and_appends_tiered_round_history() -> None:
         answers={"q1": "unit"},
         assumptions=["Use the default formatter"],
     )
-    persisted_run = {**lower.as_payload(), "original_prompt": "Repair the failing test."}
+    persisted_run = {
+        **lower.as_payload(),
+        "original_prompt": "Repair the failing test.",
+    }
     deep_requests = []
 
     def deep_round(request):
         deep_requests.append(request)
-        return _outcome(request, failures=(_failure(f"deep candidate {request.tier_round} still failed"),))
+        return _outcome(
+            request,
+            failures=(_failure(f"deep candidate {request.tier_round} still failed"),),
+        )
 
     payload = coordinator.deep_pass(persisted_run, deep_round).as_payload()
 
@@ -158,7 +182,10 @@ def test_deep_pass_keeps_run_id_and_appends_tiered_round_history() -> None:
     assert payload["tier"] == "deep"
     assert len(deep_requests) == 3
     assert all(request.workflow.run_id == "run-same" for request in deep_requests)
-    assert all(request.workflow.original_prompt == "Repair the failing test." for request in deep_requests)
+    assert all(
+        request.workflow.original_prompt == "Repair the failing test."
+        for request in deep_requests
+    )
     assert deep_requests[0].workflow.answers == {"q1": "unit"}
     assert [
         (entry["tier"], entry["tier_round"], entry["round_number"])

@@ -172,9 +172,13 @@ def _make_question(gap: GapAssessment) -> ClarificationQuestion:
     # "No additional detail" is intentionally an ordinary answer, not a hidden
     # default, and can be edited later as an assumption.
     if not options:
-        options.append(ClarificationOption("not_specified", "No additional detail", likely=True))
+        options.append(
+            ClarificationOption("not_specified", "No additional detail", likely=True)
+        )
     elif not any(option.likely for option in options):
-        options[0] = ClarificationOption(options[0].value, options[0].label, likely=True)
+        options[0] = ClarificationOption(
+            options[0].value, options[0].label, likely=True
+        )
 
     other_exists = any(option.other for option in options)
     if not other_exists:
@@ -209,7 +213,9 @@ def build_plan(
         if gap.present is True:
             continue
         has_value = gap.value is not None and str(gap.value).strip() != ""
-        confident_inference = has_value and gap.inferred and gap.confidence >= INFERENCE_CONFIDENCE
+        confident_inference = (
+            has_value and gap.inferred and gap.confidence >= INFERENCE_CONFIDENCE
+        )
         if confident_inference:
             assumptions.append(
                 Assumption(
@@ -265,7 +271,9 @@ def _selected_answer(question: ClarificationQuestion, answer: Any) -> str:
     if not matching and value == OTHER_VALUE:
         matching = [option for option in question.options if option.other]
     if not matching:
-        raise InvalidAnswerError(f"Answer for {question.id!r} is not one of its options")
+        raise InvalidAnswerError(
+            f"Answer for {question.id!r} is not one of its options"
+        )
     if matching[0].other:
         if text is None and value != OTHER_VALUE:
             text = value
@@ -285,7 +293,9 @@ def apply_answers(
         state: dict[str, Any] = {
             "status": "needs_input" if plan_or_state.questions else "completed",
             "questions": [question.as_dict() for question in plan_or_state.questions],
-            "assumptions": [assumption.as_dict() for assumption in plan_or_state.assumptions],
+            "assumptions": [
+                assumption.as_dict() for assumption in plan_or_state.assumptions
+            ],
         }
     else:
         state = json.loads(json.dumps(dict(plan_or_state)))
@@ -311,14 +321,18 @@ def apply_answers(
     return state
 
 
-def skip_questions(plan_or_state: ClarificationPlan | Mapping[str, Any]) -> dict[str, Any]:
+def skip_questions(
+    plan_or_state: ClarificationPlan | Mapping[str, Any],
+) -> dict[str, Any]:
     """Complete a paused plan using each question's preselected likely answer."""
 
     if isinstance(plan_or_state, ClarificationPlan):
         state: dict[str, Any] = {
             "status": "needs_input" if plan_or_state.questions else "completed",
             "questions": [question.as_dict() for question in plan_or_state.questions],
-            "assumptions": [assumption.as_dict() for assumption in plan_or_state.assumptions],
+            "assumptions": [
+                assumption.as_dict() for assumption in plan_or_state.assumptions
+            ],
         }
     else:
         state = json.loads(json.dumps(dict(plan_or_state)))
@@ -326,7 +340,9 @@ def skip_questions(plan_or_state: ClarificationPlan | Mapping[str, Any]) -> dict
     for raw_question in state.get("questions", []):
         question = _question_from_dict(raw_question)
         default = next(
-            option.label for option in question.options if option.value == question.default_answer
+            option.label
+            for option in question.options
+            if option.value == question.default_answer
         )
         assumptions[question.id] = {
             "key": question.id,
@@ -356,11 +372,9 @@ def _question_from_dict(raw: Mapping[str, Any]) -> ClarificationQuestion:
 class ClarificationRepository(Protocol):
     """Persistence seam used by :class:`ClarificationService`."""
 
-    def load(self, run_id: str) -> Mapping[str, Any] | None:
-        ...
+    def load(self, run_id: str) -> Mapping[str, Any] | None: ...
 
-    def save(self, run_id: str, state: Mapping[str, Any]) -> None:
-        ...
+    def save(self, run_id: str, state: Mapping[str, Any]) -> None: ...
 
 
 class InMemoryClarificationRepository:

@@ -29,16 +29,33 @@ def _pipeline_gateway() -> ScriptedGateway:
         if role == "writer":
             return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Invented rewrite","specify_output_format":"Safe rewrite","add_done_criteria":"Other rewrite"}'
         prompt = messages[0]["content"]
-        return {"choices": [{"message": {"content": "pass" if prompt != "Original request" else "fail"}}]}
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": "pass" if prompt != "Original request" else "fail"
+                    }
+                }
+            ]
+        }
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         if str(request.get("key", "")).startswith(("gap:goal", "faithful:")):
             probability = 1.0
         elif "candidate_prompt" in request.get("state", {}):
-            probability = 0.0 if request["state"]["candidate_prompt"] == "Invented rewrite" else 1.0
+            probability = (
+                0.0
+                if request["state"]["candidate_prompt"] == "Invented rewrite"
+                else 1.0
+            )
         elif "output" in request.get("state", {}):
             probability = float(request["state"]["output"] == "pass")
         else:
@@ -52,11 +69,18 @@ def _deep_gateway() -> ScriptedGateway:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
-            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         probability = 0.99 if request.get("key") == "gap:goal" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    return ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
+    return ScriptedGateway(
+        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+    )
 
 
 def _clarification_gateway() -> ScriptedGateway:
@@ -66,11 +90,26 @@ def _clarification_gateway() -> ScriptedGateway:
     def decide(request, **_kwargs):
         key = request.get("key")
         if key == "task_type":
-            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
         if key == "infer:goal":
-            return {"type": "choice", "choice": "unknown", "probabilities": {"unknown": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "unknown",
+                "probabilities": {"unknown": 1.0},
+                "confidence": 1.0,
+            }
         if request.get("type") == "choice":
-            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
         if "updated_prompt" in request.get("state", {}):
             return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
         probability = 0.99 if key == "gap:goal" else 0.01
@@ -106,37 +145,57 @@ def _no_strategy_gateway() -> ScriptedGateway:
 
 
 def _kept_over_two_rounds(optimizer: PromptOptimizer) -> list[Any]:
-    return [optimizer.optimize("Original request", {"tier": "standard", "clarification_allowed": False})]
+    return [
+        optimizer.optimize(
+            "Original request", {"tier": "standard", "clarification_allowed": False}
+        )
+    ]
 
 
 def _deep_pass_after_kept(optimizer: PromptOptimizer) -> list[Any]:
     # The Deep pass rebuilds its first round's failures from the stored run.
-    kept = optimizer.optimize("Original request", {"tier": "standard", "clarification_allowed": False})
+    kept = optimizer.optimize(
+        "Original request", {"tier": "standard", "clarification_allowed": False}
+    )
     return [kept, optimizer.start_deep_pass(kept["run_id"])]
 
 
 def _no_strategy(optimizer: PromptOptimizer) -> list[Any]:
-    return [optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})]
+    return [
+        optimizer.optimize(
+            "Original request", {"tier": "fast", "clarification_allowed": False}
+        )
+    ]
 
 
 def _full_pipeline(optimizer: PromptOptimizer) -> list[Any]:
-    return [optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})]
+    return [
+        optimizer.optimize(
+            "Original request", {"tier": "fast", "clarification_allowed": False}
+        )
+    ]
 
 
 def _deep_pass(optimizer: PromptOptimizer) -> list[Any]:
-    first = optimizer.optimize("Write a clear report.", {"tier": "fast", "clarification_allowed": False})
+    first = optimizer.optimize(
+        "Write a clear report.", {"tier": "fast", "clarification_allowed": False}
+    )
     return [first, optimizer.start_deep_pass(first["run_id"])]
 
 
 def _clarify_resume_edit(optimizer: PromptOptimizer) -> list[Any]:
     pending = optimizer.optimize("Write a concise report.")
     resumed = optimizer.resume(pending["run_id"], {"goal": "summarize"})
-    edited = optimizer.update_assumption(pending["run_id"], {"key": "goal", "value": "analyze"})
+    edited = optimizer.update_assumption(
+        pending["run_id"], {"key": "goal", "value": "analyze"}
+    )
     return [pending, resumed, edited]
 
 
 # Each scenario returns every public result it produced, in order.
-SCENARIOS: dict[str, tuple[Callable[[], ScriptedGateway], Callable[[PromptOptimizer], list[Any]]]] = {
+SCENARIOS: dict[
+    str, tuple[Callable[[], ScriptedGateway], Callable[[PromptOptimizer], list[Any]]]
+] = {
     "full_pipeline": (_pipeline_gateway, _full_pipeline),
     "deep_pass": (_deep_gateway, _deep_pass),
     "clarify_resume_edit": (_clarification_gateway, _clarify_resume_edit),

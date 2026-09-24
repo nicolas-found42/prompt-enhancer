@@ -3,7 +3,12 @@ export type Tier = "fast" | "standard" | "deep";
 export type ClarificationQuestion = {
   id: string;
   prompt: string;
-  options: { value: string; label: string; preselected?: boolean; other?: boolean }[];
+  options: {
+    value: string;
+    label: string;
+    preselected?: boolean;
+    other?: boolean;
+  }[];
   default?: string;
   default_answer?: string;
   allow_other?: boolean;
@@ -29,7 +34,12 @@ export type Failure = {
   http_status?: number | null;
 };
 
-export type ModelInfo = { id: string; name?: string; provider: string; safe_for_default?: boolean };
+export type ModelInfo = {
+  id: string;
+  name?: string;
+  provider: string;
+  safe_for_default?: boolean;
+};
 export type ModelCatalog = {
   judge: ModelInfo;
   providers: { go: ModelInfo[]; openrouter: ModelInfo[] };
@@ -52,7 +62,17 @@ export type OptimizeResult = {
   report: Record<string, unknown>;
   cost: {
     total: number;
-    by_role?: Record<string, { provider?: string; model?: string; cost?: number; cap?: number; cap_used?: number; cap_remaining?: number }[]>;
+    by_role?: Record<
+      string,
+      {
+        provider?: string;
+        model?: string;
+        cost?: number;
+        cap?: number;
+        cap_used?: number;
+        cap_remaining?: number;
+      }[]
+    >;
     cost_by_role?: Record<string, number>;
   };
   timing: { total_ms: number };
@@ -72,17 +92,28 @@ export type Job = {
   result: OptimizeResult | null;
 };
 
-export type ProviderState = { status: "ok" | "unavailable" | "unknown"; http_status?: number | null; model?: string };
+export type ProviderState = {
+  status: "ok" | "unavailable" | "unknown";
+  http_status?: number | null;
+  model?: string;
+};
 export type ProviderReport = {
   providers: Record<string, ProviderState>;
   fallback: { writer: string; strong: string };
 };
 
-export type TierEstimate = { runs: number; minutes: [number, number]; cost: [number, number] };
+export type TierEstimate = {
+  runs: number;
+  minutes: [number, number];
+  cost: [number, number];
+};
 
 /** An HTTP error from the local API, with the server's `detail` when present. */
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
     super(message);
   }
 }
@@ -90,7 +121,10 @@ export class ApiError extends Error {
 export const connectionLostMessage =
   "Lost connection to the local engine. Check that it is still running. A run in progress may still finish; it will show up in History.";
 
-export async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+export async function requestJson<T>(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<T> {
   let response: Response;
   try {
     response = await fetch(input, init);
@@ -106,8 +140,12 @@ export async function requestJson<T>(input: RequestInfo | URL, init?: RequestIni
     } catch {
       // Not JSON; keep the raw text.
     }
-    if (response.status >= 502 && response.status <= 504 && !detail) detail = connectionLostMessage;
-    throw new ApiError(detail || `Request failed (${response.status})`, response.status);
+    if (response.status >= 502 && response.status <= 504 && !detail)
+      detail = connectionLostMessage;
+    throw new ApiError(
+      detail || `Request failed (${response.status})`,
+      response.status
+    );
   }
   return (await response.json()) as T;
 }
@@ -120,12 +158,25 @@ function postJson<T>(url: string, body?: unknown): Promise<T> {
   });
 }
 
-export function startOptimize(prompt: string, tier: Tier, modelOverrides?: ModelSelection): Promise<Job> {
-  return postJson<Job>("/api/jobs/optimize", { prompt, tier, model_overrides: modelOverrides });
+export function startOptimize(
+  prompt: string,
+  tier: Tier,
+  modelOverrides?: ModelSelection
+): Promise<Job> {
+  return postJson<Job>("/api/jobs/optimize", {
+    prompt,
+    tier,
+    model_overrides: modelOverrides,
+  });
 }
 
-export function startResume(runId: string, answers: Record<string, unknown>): Promise<Job> {
-  return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/resume`, { answers });
+export function startResume(
+  runId: string,
+  answers: Record<string, unknown>
+): Promise<Job> {
+  return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/resume`, {
+    answers,
+  });
 }
 
 export function startSkip(runId: string): Promise<Job> {
@@ -144,8 +195,12 @@ export function getActiveJobs(): Promise<Job[]> {
   return requestJson<Job[]>("/api/jobs");
 }
 
-export function getRunResult(runId: string): Promise<{ result?: OptimizeResult | null }> {
-  return requestJson<{ result?: OptimizeResult | null }>(`/api/runs/${encodeURIComponent(runId)}`);
+export function getRunResult(
+  runId: string
+): Promise<{ result?: OptimizeResult | null }> {
+  return requestJson<{ result?: OptimizeResult | null }>(
+    `/api/runs/${encodeURIComponent(runId)}`
+  );
 }
 
 export function cancelJob(runId: string): Promise<Job> {
@@ -153,7 +208,9 @@ export function cancelJob(runId: string): Promise<Job> {
 }
 
 export function getProviders(probe: boolean): Promise<ProviderReport> {
-  return requestJson<ProviderReport>(`/api/providers?probe=${probe ? "true" : "false"}`);
+  return requestJson<ProviderReport>(
+    `/api/providers?probe=${probe ? "true" : "false"}`
+  );
 }
 
 export function getEstimates(): Promise<Partial<Record<Tier, TierEstimate>>> {
@@ -168,7 +225,9 @@ export function getSettings(): Promise<ModelSettings> {
   return requestJson<ModelSettings>("/api/settings");
 }
 
-export function saveSettings(selection: ModelSelection): Promise<ModelSettings> {
+export function saveSettings(
+  selection: ModelSelection
+): Promise<ModelSettings> {
   return requestJson<ModelSettings>("/api/settings", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -180,10 +239,16 @@ export function saveSettings(selection: ModelSelection): Promise<ModelSettings> 
   });
 }
 
-export function updateAssumption(runId: string, assumption: Assumption): Promise<OptimizeResult> {
-  return requestJson<OptimizeResult>(`/api/runs/${encodeURIComponent(runId)}/assumption`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ assumption }),
-  });
+export function updateAssumption(
+  runId: string,
+  assumption: Assumption
+): Promise<OptimizeResult> {
+  return requestJson<OptimizeResult>(
+    `/api/runs/${encodeURIComponent(runId)}/assumption`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ assumption }),
+    }
+  );
 }
