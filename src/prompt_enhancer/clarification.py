@@ -65,11 +65,13 @@ class ClarificationQuestion:
     prompt: str
     options: tuple[ClarificationOption, ...]
     default_answer: str
+    label: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "prompt": self.prompt,
+            **({"label": self.label} if self.label else {}),
             "options": [option.as_dict() for option in self.options],
             "default_answer": self.default_answer,
             "default": self.default_answer,
@@ -90,6 +92,7 @@ class Assumption:
     value: str
     source: str
     confidence: float | None = None
+    label: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result: dict[str, Any] = {
@@ -99,6 +102,8 @@ class Assumption:
         }
         if self.confidence is not None:
             result["confidence"] = self.confidence
+        if self.label:
+            result["label"] = self.label
         return result
 
 
@@ -178,9 +183,10 @@ def _make_question(gap: GapAssessment) -> ClarificationQuestion:
     default = next(option.value for option in options if option.likely)
     return ClarificationQuestion(
         id=gap.id,
-        prompt=gap.question or f"What should be used for {gap.label}?",
+        prompt=gap.question or f"Can you add the {gap.label}?",
         options=tuple(options),
         default_answer=default,
+        label=gap.label,
     )
 
 
@@ -211,6 +217,7 @@ def build_plan(
                     value=str(gap.value),
                     source="inferred",
                     confidence=gap.confidence,
+                    label=gap.label,
                 )
             )
             continue
@@ -221,6 +228,7 @@ def build_plan(
                     value=str(gap.value or "Not specified"),
                     source="skipped_low_impact",
                     confidence=gap.confidence,
+                    label=gap.label,
                 )
             )
             continue
@@ -233,6 +241,7 @@ def build_plan(
                     value=str(gap.value or "Not specified"),
                     source="skipped_clarification",
                     confidence=gap.confidence,
+                    label=gap.label,
                 )
             )
 
@@ -293,6 +302,7 @@ def apply_answers(
             "key": question.id,
             "value": answered[question.id],
             "source": "answer",
+            **({"label": question.label} if question.label else {}),
         }
     state["assumptions"] = list(assumptions.values())
     state["questions"] = []
@@ -339,6 +349,7 @@ def _question_from_dict(raw: Mapping[str, Any]) -> ClarificationQuestion:
         prompt=str(raw.get("prompt", "")),
         options=options,
         default_answer=default,
+        label=str(raw["label"]) if raw.get("label") else None,
     )
 
 

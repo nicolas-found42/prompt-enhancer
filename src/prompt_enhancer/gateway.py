@@ -34,6 +34,8 @@ DEFAULT_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_USER_AGENT = "prompt-enhancer/0.1"
 RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+ACCESS_DENIED_STATUS = {401, 402, 403}
+PROVIDER_STATUS_TTL = 600.0
 
 
 def _completion_chat_request(request: Mapping[str, Any]) -> tuple[str, list[dict[str, str]], str]:
@@ -113,11 +115,35 @@ class ProviderError(RuntimeError):
     accidentally disclose credentials or provider diagnostics.
     """
 
-    def __init__(self, provider: str, model: str, status: int | None, message: str = "provider request failed") -> None:
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        status: int | None,
+        message: str = "provider request failed",
+        *,
+        role: str | None = None,
+        kind: str | None = None,
+    ) -> None:
         self.provider = provider
         self.model = model
         self.status = status
-        super().__init__(f"{provider} request for {model} failed ({status or 'network error'}): {message}")
+        self.role = role
+        # ``http`` has a status; ``network`` never reached a response; and
+        # ``invalid_response`` means a reply arrived but could not be used.
+        self.kind = kind or ("http" if status is not None else "network")
+        detail = {"http": f"HTTP {status}", "network": "no response", "invalid_response": "invalid response"}.get(self.kind, self.kind)
+        super().__init__(f"{provider} request for {model} failed ({detail}): {message}")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "http_status": self.status,
+            "role": self.role,
+            "kind": self.kind,
+            "message": str(self),
+        }
 
 
 class HttpTransport:
@@ -220,6 +246,7 @@ class ModelGateway:
         }
         self.calls: list[dict[str, Any]] = []
         self.decision_log: list[dict[str, Any]] = []
+        self._provider_status: dict[str, dict[str, Any]] = {}
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None, **kwargs: Any) -> ModelGateway:
@@ -323,7 +350,10 @@ class ModelGateway:
                     if status in RETRYABLE_STATUS and attempt + 1 < attempts:
                         self._backoff(attempt)
                         continue
-                    raise ProviderError(decision.provider, decision.model, status)
+                    if status in ACCESS_DENIED_STATUS:
+                        self._note_provider(decision.provider, "unavailable", status, decision.model)
+                    raise ProviderError(decision.provider, decision.model, status, role=role)
+                self._note_provider(decision.provider, "ok", status, decision.model)
                 decoded = _response_json(response)
                 usage = decoded if isinstance(decoded, Mapping) else {}
                 model_info = self._model_info(decision.model)
@@ -347,9 +377,55 @@ class ModelGateway:
                 raise
             except Exception as exc:
                 if attempt + 1 >= attempts:
-                    raise ProviderError(decision.provider, decision.model, last_status) from exc
+                    raise ProviderError(decision.provider, decision.model, last_status, role=role) from exc
                 self._backoff(attempt)
-        raise ProviderError(decision.provider, decision.model, last_status)
+        raise ProviderError(decision.provider, decision.model, last_status, role=role)
+
+    def _note_provider(self, provider: str, status: str, http_status: int | None, model: str) -> None:
+        self._provider_status[provider] = {
+            "status": status,
+            "http_status": http_status,
+            "model": model,
+            "checked_at": time.time(),
+        }
+
+    def _probe(self, model: str) -> None:
+        # Sent straight through the transport so the probe never lands in the
+        # usage ledger of a run that may be in progress.
+        decision = self.route_model(model)
+        payload: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": "Reply with OK."}], "max_tokens": 16}
+        if decision.url.endswith("/responses"):
+            payload = {"model": model, "input": payload["messages"], "max_output_tokens": 16}
+        try:
+            status = _response_status(self._attempt(decision, payload))
+        except (OSError, ValueError):
+            self._note_provider(decision.provider, "unknown", None, model)
+            return
+        if status is not None and status in ACCESS_DENIED_STATUS:
+            self._note_provider(decision.provider, "unavailable", status, model)
+        elif status is not None and status >= 400:
+            self._note_provider(decision.provider, "unknown", status, model)
+        else:
+            self._note_provider(decision.provider, "ok", status, model)
+
+    def provider_health(self, *, probe_models: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
+        """Return the last known access state of each provider.
+
+        A provider that has not been used recently is probed with a one-line
+        chat request to the first of ``probe_models`` routed to it, so the UI
+        can warn before a run is spent on a provider that refuses every call.
+        """
+        now = time.time()
+        for model in probe_models:
+            provider = self.route_model(model).provider
+            known = self._provider_status.get(provider)
+            if known is not None and now - float(known["checked_at"]) < PROVIDER_STATUS_TTL:
+                continue
+            self._probe(model)
+        return {
+            provider: {key: value for key, value in state.items() if key != "checked_at"}
+            for provider, state in self._provider_status.items()
+        }
 
     def _backoff(self, attempt: int) -> None:
         if self.config.backoff:
@@ -532,6 +608,10 @@ class ScriptedGateway:
         return [self.jev(request, role=role, run_id=run_id) for request in requests]
     def list_models(self, *, refresh: bool = False) -> CatalogSnapshot:
         return self.catalog.fetch(force=refresh) if hasattr(self.catalog, "fetch") else self.catalog
+
+    def provider_health(self, *, probe_models: Iterable[str] = ()) -> dict[str, dict[str, Any]]:
+        del probe_models
+        return {}
 
     usage_report = ModelGateway.usage_report
 

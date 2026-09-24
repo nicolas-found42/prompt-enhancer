@@ -66,7 +66,7 @@ export function ClarificationPanel({ questions, onSubmit, onSkip, busy = false, 
   if (questions.length === 0) return null;
 
   return (
-    <section className="clarification-panel" aria-labelledby="clarification-heading">
+    <section className="result clarification-panel" aria-labelledby="clarification-heading">
       <h2 id="clarification-heading">A few details will improve the result</h2>
       <p>Choose the closest answer. You can skip these and continue with assumptions.</p>
       <form onSubmit={submit}>
@@ -118,10 +118,10 @@ export function ClarificationPanel({ questions, onSubmit, onSkip, busy = false, 
           );
         })}
         {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={busy}>
+        <button className="primary" type="submit" disabled={busy}>
           {busy ? "Continuing…" : "Continue"}
         </button>
-        <button type="button" onClick={skip} disabled={busy}>
+        <button className="secondary" type="button" onClick={skip} disabled={busy}>
           Skip and continue
         </button>
       </form>

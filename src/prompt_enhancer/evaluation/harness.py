@@ -264,6 +264,7 @@ class _ReplayBundle:
     rubric_thresholds: Mapping[str, float] | None
     writer_instruction_version: int = HISTORICAL_WRITER_INSTRUCTION_VERSION
     faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
+    checklist_keys: tuple[str, ...] | None = None
 
 
 @dataclass(slots=True)
@@ -449,7 +450,12 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
 
     from dataclasses import replace
 
-    from ..diagnosis import DEFAULT_RUBRIC
+    from ..diagnosis import (
+        DEFAULT_RUBRIC,
+        HISTORICAL_CHECKLIST_EXCLUSIONS,
+        checklist_keys,
+        restrict_checklist,
+    )
     from ..optimizer import PromptOptimizer
 
     if replay_path is None:
@@ -462,6 +468,10 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
         replace(DEFAULT_RUBRIC, gap_thresholds=bundle.rubric_thresholds)
         if bundle.rubric_thresholds is not None else DEFAULT_RUBRIC
     )
+    recorded_keys = bundle.checklist_keys
+    if recorded_keys is None:
+        recorded_keys = tuple(key for key in checklist_keys(rubric) if key not in HISTORICAL_CHECKLIST_EXCLUSIONS)
+    rubric = restrict_checklist(rubric, recorded_keys)
     return PromptOptimizer(
         gateway=ReplayGateway(recordings, strict=True),
         diagnosis_rubric=rubric,
@@ -487,6 +497,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_thresholds = raw.get("rubric_thresholds")
         writer_version = raw.get("writer_instruction_version", HISTORICAL_WRITER_INSTRUCTION_VERSION)
         faithfulness = raw.get("faithfulness_threshold", HISTORICAL_FAITHFULNESS_THRESHOLD)
+        raw_checklist = raw.get("checklist_keys")
     else:
         recordings = replay_path
         raw_latencies = {}
@@ -494,6 +505,9 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_thresholds = None
         writer_version = HISTORICAL_WRITER_INSTRUCTION_VERSION
         faithfulness = HISTORICAL_FAITHFULNESS_THRESHOLD
+        raw_checklist = None
+    if raw_checklist is not None and (not isinstance(raw_checklist, list) or any(not isinstance(key, str) or not key for key in raw_checklist)):
+        raise EvaluationError("replay checklist_keys must be a list of question ids")
     if isinstance(writer_version, bool) or writer_version not in WRITER_INSTRUCTION_VERSIONS:
         raise EvaluationError("replay writer_instruction_version is not a known version")
     if isinstance(faithfulness, bool) or not isinstance(faithfulness, (int, float)) or not 0 <= faithfulness <= 1:
@@ -537,6 +551,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         rubric_thresholds=thresholds,
         writer_instruction_version=writer_version,
         faithfulness_threshold=float(faithfulness),
+        checklist_keys=tuple(raw_checklist) if raw_checklist is not None else None,
     )
 
 

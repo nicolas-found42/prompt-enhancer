@@ -26,6 +26,10 @@ class Settings:
         "mistralai/mistral-nemo",
         "meta-llama/llama-3.2-3b-instruct",
     )
+    # Offered by the web app when OpenCode Go refuses requests, so a user
+    # without an active subscription can switch in one click.
+    fallback_writer_model: str = "~deepseek/deepseek-flash-latest"
+    fallback_strong_check_model: str = "deepseek/deepseek-v4.1-flash"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -39,6 +43,12 @@ class Settings:
             ),
             strong_check_model=os.getenv(
                 "PROMPT_ENHANCER_STRONG_MODEL", "glm-5.3-flash"
+            ),
+            fallback_writer_model=os.getenv(
+                "PROMPT_ENHANCER_FALLBACK_WRITER_MODEL", "~deepseek/deepseek-flash-latest"
+            ),
+            fallback_strong_check_model=os.getenv(
+                "PROMPT_ENHANCER_FALLBACK_STRONG_MODEL", "deepseek/deepseek-v4.1-flash"
             ),
         )
 

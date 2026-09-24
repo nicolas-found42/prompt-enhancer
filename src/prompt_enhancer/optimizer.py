@@ -8,7 +8,8 @@ and a durable run identifier.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from hashlib import sha256
 from pathlib import Path
@@ -34,6 +35,7 @@ from .diagnosis import (
     DiagnosisRubric,
     GapImpact,
 )
+from .failures import describe_failure
 from .fidelity import check_candidate_fidelity
 from .gateway import (
     GatewayConfig,
@@ -70,6 +72,22 @@ from .success_tests import (
 
 class RunNotFoundError(KeyError):
     """Raised when a caller resumes or edits an unknown run."""
+
+
+ProgressCallback = Callable[[str, Mapping[str, Any]], None]
+"""Called with a stage name at each stage boundary; may raise RunCancelled."""
+
+STAGES = (
+    "diagnosing",
+    "clarifying",
+    "writing_tests",
+    "choosing_strategy",
+    "writing_candidates",
+    "running_weak_models",
+    "grading",
+    "checking_fidelity",
+    "strong_check",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +142,8 @@ class PromptOptimizer:
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (SQLiteRubricStore(self.store.path) if self.store.path != ":memory:" else None)
         self.repeat = RepeatCoordinator()
+        self._progress: ProgressCallback | None = None
+        self._round: dict[str, int] = {}
         self._clarification = ClarificationService(
             self._clarification_repository(),
             continuation=self._continue_clarification,
@@ -206,41 +226,88 @@ class PromptOptimizer:
             "weak": list(settings.weak_models),
         }
 
-    def optimize(
-        self, prompt: str, options: dict[str, Any] | None = None
-    ) -> OptimizeResult:
+    def validate_request(self, prompt: str, options: Mapping[str, Any] | None = None) -> None:
+        """Raise ValueError for a request that optimize() would refuse."""
+        self._prepare(prompt, options)
+
+    def _prepare(
+        self, prompt: str, options: Mapping[str, Any] | None
+    ) -> tuple[dict[str, Any], str, Settings, int]:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
         supplied_options = _safe_options(options or {})
         tier = normalize_tier(supplied_options.pop("tier", "standard"))
         run_settings = self._run_settings(supplied_options, tier)
         run_seed = _run_seed(prompt, supplied_options.get("seed"))
-        run_id = new_run_id()
+        return supplied_options, tier, run_settings, run_seed
+
+    @contextmanager
+    def _progress_scope(self, progress: ProgressCallback | None) -> Iterator[None]:
+        previous, previous_round = self._progress, self._round
+        self._progress, self._round = progress, {}
+        try:
+            yield
+        finally:
+            self._progress, self._round = previous, previous_round
+
+    def _stage(self, name: str) -> None:
+        if self._progress is not None:
+            self._progress(name, dict(self._round))
+
+    def optimize(
+        self,
+        prompt: str,
+        options: dict[str, Any] | None = None,
+        *,
+        run_id: str | None = None,
+        progress: ProgressCallback | None = None,
+    ) -> OptimizeResult:
+        supplied_options, tier, run_settings, run_seed = self._prepare(prompt, options)
+        run_id = run_id or new_run_id()
         started_perf = perf_counter()
         started_at = utc_now()
         self.gateway.new_run(run_id)
 
         try:
-            result = self._optimize_started(prompt, supplied_options, tier, run_settings, run_seed, run_id, started_at, started_perf)
-        except ProviderError as exc:
-            result = OptimizeResult(
-                status="failed", run_id=run_id, final_prompt=prompt, original_kept=True,
-                report={"status": "failed", "summary": "A model provider was unavailable; the original prompt was saved.", "error": str(exc), "diagnosis": {"confirmed_gaps": [], "problem_sentences": []}, "assumptions": []},
-                cost=self._usage_cost(), timing={"total_ms": 0, "started_at": started_at, "finished_at": utc_now()},
-            )
+            with self._progress_scope(progress):
+                result = self._optimize_started(prompt, supplied_options, tier, run_settings, run_seed, run_id, started_at, started_perf)
+        except Exception as exc:  # noqa: BLE001 - a failed run is still saved and explained
+            result = self.failure_result(run_id, prompt, exc, started_at=started_at)
+            result["report"]["models"] = self._model_roles(run_settings)
         result["timing"]["total_ms"] = max(0, round((perf_counter() - started_perf) * 1000))
         result["timing"]["started_at"] = started_at
         result["timing"]["finished_at"] = utc_now()
         self._save_result(prompt, tier, supplied_options, result, started_at)
         return result
 
+    def failure_result(
+        self, run_id: str, prompt: str, exc: BaseException, *, started_at: str | None = None
+    ) -> OptimizeResult:
+        """Build the public result for a run that stopped before finishing."""
+        failure = describe_failure(exc)
+        cancelled = failure["kind"] == "cancelled"
+        return OptimizeResult(
+            status="failed", run_id=run_id, final_prompt=prompt, original_kept=True,
+            report={
+                "status": "cancelled" if cancelled else "failed",
+                "summary": failure["hint"] if cancelled else "The run stopped before finishing; your original prompt was saved unchanged.",
+                "error": failure["message"],
+                "failure": failure,
+                "diagnosis": {"confirmed_gaps": [], "problem_sentences": []},
+                "assumptions": [],
+            },
+            cost=self._usage_cost(), timing={"total_ms": 0, "started_at": started_at or utc_now(), "finished_at": utc_now()},
+        )
+
     def _optimize_started(
         self, prompt: str, options: Mapping[str, Any], tier: str, run_settings: Settings,
         run_seed: int, run_id: str, started_at: str, started_perf: float,
     ) -> OptimizeResult:
+        self._stage("diagnosing")
         diagnosis = self._diagnose(prompt)
         diagnosis_payload = diagnosis.as_dict() if diagnosis is not None else {"confirmed_gaps": [], "problem_sentences": []}
         gaps = tuple(diagnosis.confirmed_gaps) if diagnosis is not None else ()
+        self._stage("clarifying")
         plan = Clarifier(
             self.gateway,
             writer_model=run_settings.writer_model,
@@ -265,6 +332,7 @@ class PromptOptimizer:
 
     def _round_executor(self, context: _RunContext) -> Any:
         def execute(request: RoundRequest) -> Mapping[str, Any]:
+            self._round = {"round": request.round_number, "max_rounds": request.max_rounds}
             result = self._run_optimization(context, request.tier.value, request.prior_failures)
             report = result["report"]
             failures = [
@@ -341,6 +409,7 @@ class PromptOptimizer:
         selected_settings = context.settings
         models = self._model_roles(selected_settings)
         working_prompt = _prompt_with_assumptions(prompt, assumptions)
+        self._stage("writing_tests")
         try:
             compiled = SuccessTestCompiler(
                 cast(CompletionGateway, self.gateway),
@@ -348,7 +417,7 @@ class PromptOptimizer:
                 faithfulness_threshold=self.faithfulness_threshold,
             ).compile(working_prompt)
         except (ValueError, TypeError) as exc:
-            raise ProviderError("writer", selected_settings.writer_model, None, "invalid success-test response") from exc
+            raise ProviderError("writer", selected_settings.writer_model, None, "invalid success-test response", role="writer", kind="invalid_response") from exc
         test_payload = [asdict(test) for test in compiled.tests]
 
         confirmed_gaps = diagnosis_payload.get("confirmed_gaps", [])
@@ -369,6 +438,7 @@ class PromptOptimizer:
             )
             return self._result(run_id, working_prompt, working_prompt == prompt, report)
 
+        self._stage("choosing_strategy")
         strategy_choice = self.gateway.decide(
             {"model": selected_settings.judge_model, "key": "strategy_choice", "type": "choice", "query": "Which rewrite strategy best addresses the diagnosed weakness?", "criteria": {**{item.name: item.description for item in STRATEGY_LIBRARY}, "none": "No rewrite strategy is suitable."}, "state": {"prompt": working_prompt, "diagnosis": diagnosis_payload, "prior_failures": list(prior_failures)}},
             role="judge", run_id=run_id,
@@ -384,6 +454,7 @@ class PromptOptimizer:
             decision = parse_decision(answer)
             return {"eligible": isinstance(decision, NoulDecision) and decision.probability >= 0.8}
 
+        self._stage("writing_candidates")
         search = search_strategies(
             working_prompt,
             diagnosis_payload,
@@ -411,6 +482,7 @@ class PromptOptimizer:
                 ),
             )
 
+        self._stage("running_weak_models")
         panel = run_candidates(
             candidates,
             selected_settings.weak_models,
@@ -420,6 +492,7 @@ class PromptOptimizer:
             run_seed=run_seed,
             run_id=run_id,
         )
+        self._stage("grading")
         panel_grades, grading_answers = grade_panel_with_jev(
             panel, test_payload, self.gateway,
             judge_model=selected_settings.judge_model, run_id=run_id,
@@ -429,6 +502,7 @@ class PromptOptimizer:
             for candidate in candidates
         ]
         original_grade = panel_grades["original"]
+        self._stage("checking_fidelity")
         ranking_candidates = [
             {
                 "candidate_id": candidate.candidate_id,
@@ -448,6 +522,7 @@ class PromptOptimizer:
             }
             for candidate, grade in grades
         ]
+        self._stage("strong_check")
         strong = StrongCheckPolicy(selected_settings.strong_check_model).check(
             working_prompt,
             [candidate for candidate in ranking_candidates if candidate["eligible"]],
@@ -580,33 +655,42 @@ class PromptOptimizer:
         )
         return self._run_rounds(context, tier)
 
-    def resume(self, run_id: str, answers: dict[str, Any]) -> OptimizeResult:
+    def resume(
+        self, run_id: str, answers: dict[str, Any], *, progress: ProgressCallback | None = None
+    ) -> OptimizeResult:
         usage_before = self._usage_cost()
+        started_perf = perf_counter()
         try:
-            state = self._clarification.resume(run_id, answers)
+            with self._progress_scope(progress):
+                state = self._clarification.resume(run_id, answers)
         except UnknownRunError as exc:
             if self.store.get_run(run_id) is not None:
                 raise RunNotPausedError(f"Run {run_id!r} is not paused") from exc
             raise RunNotFoundError(run_id) from exc
-        return self._save_clarification_result(run_id, state, usage_before)
+        return self._save_clarification_result(run_id, state, usage_before, started_perf)
 
-    def skip_clarification(self, run_id: str) -> OptimizeResult:
+    def skip_clarification(
+        self, run_id: str, *, progress: ProgressCallback | None = None
+    ) -> OptimizeResult:
         usage_before = self._usage_cost()
+        started_perf = perf_counter()
         try:
-            state = self._clarification.skip(run_id)
+            with self._progress_scope(progress):
+                state = self._clarification.skip(run_id)
         except UnknownRunError as exc:
             if self.store.get_run(run_id) is not None:
                 raise RunNotPausedError(f"Run {run_id!r} is not paused") from exc
             raise RunNotFoundError(run_id) from exc
-        return self._save_clarification_result(run_id, state, usage_before)
+        return self._save_clarification_result(run_id, state, usage_before, started_perf)
 
-    def _save_clarification_result(self, run_id: str, state: Mapping[str, Any], usage_before: Mapping[str, Any]) -> OptimizeResult:
+    def _save_clarification_result(self, run_id: str, state: Mapping[str, Any], usage_before: Mapping[str, Any], started_perf: float) -> OptimizeResult:
         result = state.get("result")
         if not isinstance(result, Mapping):
             raise RunNotFoundError(run_id)
+        result = dict(result)
+        result["timing"] = _finished_timing(result.get("timing"), started_perf)
         record = self.store.get_run(run_id)
         if record is not None:
-            result = dict(result)
             result["cost"] = _add_usage_delta(dict(record.get("cost") or {}), usage_before, self._usage_cost())
             evidence = self._training_evidence(result, record)
             result["report"]["jev_answers"] = evidence["jev_answers"]
@@ -685,7 +769,16 @@ class PromptOptimizer:
         self.store.save_run({**record, "result": result, "cost": result["cost"]})
         return result
 
-    def start_deep_pass(self, run_id: str) -> OptimizeResult:
+    def start_deep_pass(
+        self, run_id: str, *, progress: ProgressCallback | None = None
+    ) -> OptimizeResult:
+        started_perf = perf_counter()
+        with self._progress_scope(progress):
+            result = self._start_deep_pass(run_id)
+        result["timing"] = _finished_timing(result.get("timing"), started_perf)
+        return result
+
+    def _start_deep_pass(self, run_id: str) -> OptimizeResult:
         record = self.store.get_run(run_id)
         if record is None:
             raise RunNotFoundError(run_id)
@@ -816,11 +909,21 @@ class PromptOptimizer:
         return evidence
 
 
+# How a clarification appears in the returned prompt when its key alone would
+# read as an internal marker.
+_CLARIFICATION_LINE_LABELS = {"outside_reference": "Details"}
+
+
+def _clarification_label(key: str) -> str:
+    return _CLARIFICATION_LINE_LABELS.get(key, key)
+
+
 def _apply_assumption(prompt: str, key: str, old_value: str, value: str) -> str | None:
-    line = f"{key}: {value}"
+    label = _clarification_label(key)
+    line = f"{label}: {value}"
     lines = prompt.splitlines()
     for index, existing in enumerate(lines):
-        if existing.strip().casefold() == f"{key.casefold()}: {old_value.casefold()}":
+        if existing.strip().casefold() == f"{label.casefold()}: {old_value.casefold()}":
             lines[index] = line
             return "\n".join(lines)
     if old_value and prompt.count(old_value) == 1:
@@ -836,7 +939,7 @@ def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
         key = str(item.get("key", "")).strip()
         value = str(item.get("value", "")).strip()
         if key and value:
-            lines.append(f"{key}: {value}")
+            lines.append(f"{_clarification_label(key)}: {value}")
     if not lines:
         return prompt
     return prompt.rstrip() + "\n\nClarifications:\n" + "\n".join(lines)
@@ -855,6 +958,13 @@ def _add_usage_delta(previous: dict[str, Any], before: Mapping[str, Any], after:
             roles[str(role)] = float(roles.get(str(role), 0.0)) + max(0.0, float(amount) - float(before_roles.get(role, 0.0)))
     updated["cost_by_role"] = roles
     return updated
+
+def _finished_timing(timing: Any, started_perf: float) -> Any:
+    updated = dict(timing) if isinstance(timing, Mapping) else {}
+    updated["total_ms"] = max(0, round((perf_counter() - started_perf) * 1000))
+    updated["finished_at"] = utc_now()
+    return updated
+
 
 def _safe_options(options: Mapping[str, Any]) -> dict[str, Any]:
     def clean(value: Any) -> Any:

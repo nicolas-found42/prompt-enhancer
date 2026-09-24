@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { requestJson } from "./api";
+import { requestJson, type OptimizeResult } from "./api";
+import FailureCard from "./components/FailureCard";
+import { outcomeOf, record } from "./outcome";
 
 export type RunSummary = {
   run_id: string;
@@ -7,6 +9,7 @@ export type RunSummary = {
   status?: string;
   prompt: string;
   final_prompt?: string | null;
+  original_kept?: boolean | null;
   tier?: string | null;
   feedback?: "accept" | "reject" | null;
   cost?: Record<string, unknown>;
@@ -26,21 +29,44 @@ export type RunDetail = RunSummary & {
   report?: unknown;
   metadata?: Record<string, unknown>;
   feedback_at?: string;
+  result?: OptimizeResult;
 };
 
 type HistoryProps = {
-  onSelect?: (run: RunDetail) => void;
+  onOpen?: (result: OptimizeResult) => void;
   refreshKey?: string;
 };
 
-function valueText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value === undefined || value === null) return "—";
-  return JSON.stringify(value, null, 2);
+type Badge = { label: string; tone: "good" | "neutral" | "warn" | "bad" };
+
+function badgeFor(run: RunSummary | RunDetail): Badge {
+  const reportStatus = String(record(record((run as RunDetail).result).report).status ?? "");
+  if (run.status === "failed") return reportStatus === "cancelled" ? { label: "Cancelled", tone: "neutral" } : { label: "Failed", tone: "bad" };
+  if (run.status === "needs_input") return { label: "Waiting for answers", tone: "warn" };
+  if (run.original_kept === false) return { label: "Improved", tone: "good" };
+  return { label: "Kept original", tone: "neutral" };
+}
+
+function when(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+function money(cost?: Record<string, unknown>): string {
+  const total = cost?.total;
+  return typeof total === "number" ? `$${total.toFixed(4)}` : "—";
+}
+
+function duration(run: RunDetail): string {
+  const timing = run.timings ?? run.timing;
+  const ms = timing?.total_ms;
+  if (typeof ms !== "number") return "—";
+  return ms < 60000 ? `${Math.round(ms / 1000)} s` : `${(ms / 60000).toFixed(1)} min`;
 }
 
 /** A small history browser backed only by the local HTTP API. */
-export function History({ onSelect, refreshKey }: HistoryProps) {
+export function History({ onOpen, refreshKey }: HistoryProps) {
   const [query, setQuery] = useState("");
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<RunDetail | null>(null);
@@ -67,7 +93,6 @@ export function History({ onSelect, refreshKey }: HistoryProps) {
     try {
       const run = await requestJson<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`);
       setSelected(run);
-      onSelect?.(run);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Could not load run details");
     }
@@ -121,9 +146,12 @@ export function History({ onSelect, refreshKey }: HistoryProps) {
         <ul aria-label="Saved optimization runs">
           {runs.map((run) => (
             <li key={run.run_id}>
-              <button type="button" onClick={() => void openRun(run.run_id)} aria-pressed={selected?.run_id === run.run_id}>
-                <strong>{run.tier || "Run"}</strong> — {run.prompt}
-                {run.feedback ? ` (${run.feedback})` : ""}
+              <button type="button" className="history-row" onClick={() => void openRun(run.run_id)} aria-pressed={selected?.run_id === run.run_id}>
+                <span className={`badge badge-${badgeFor(run).tone}`}>{badgeFor(run).label}</span>
+                <span className="history-prompt">{run.prompt}</span>
+                <span className="history-meta">
+                  {[when(run.created_at), run.tier, run.feedback ? `you ${run.feedback}ed it` : ""].filter(Boolean).join(" · ")}
+                </span>
               </button>
             </li>
           ))}
@@ -131,27 +159,45 @@ export function History({ onSelect, refreshKey }: HistoryProps) {
       ) : null}
       {selected ? (
         <article aria-labelledby="selected-run-heading">
-          <h3 id="selected-run-heading">Run details</h3>
-          <dl>
-            <dt>Tier</dt><dd>{selected.tier || "—"}</dd>
-            <dt>Original prompt</dt><dd>{valueText(selected.original_prompt ?? selected.prompt)}</dd>
-            <dt>Final prompt</dt><dd>{valueText(selected.final_prompt)}</dd>
-            <dt>Diagnosis</dt><dd>{valueText(selected.diagnosis)}</dd>
-            <dt>Tests</dt><dd>{valueText(selected.tests)}</dd>
-            <dt>Candidates</dt><dd>{valueText(selected.candidates)}</dd>
-            <dt>Outputs</dt><dd>{valueText(selected.outputs)}</dd>
-            <dt>Grades</dt><dd>{valueText(selected.grades)}</dd>
-            <dt>Cost</dt><dd>{valueText(selected.cost)}</dd>
-            <dt>Timings</dt><dd>{valueText(selected.timings ?? selected.timing)}</dd>
-          </dl>
-          <div role="group" aria-label="Result feedback">
-            <button type="button" onClick={() => void saveFeedback("accept")} aria-pressed={selected.feedback === "accept"}>
-              Accept result
-            </button>
-            <button type="button" onClick={() => void saveFeedback("reject")} aria-pressed={selected.feedback === "reject"}>
-              Reject result
-            </button>
-            {selected.feedback ? <span> Saved feedback: {selected.feedback}</span> : null}
+          <div className="run-details-heading">
+            <h3 id="selected-run-heading">Run details</h3>
+            <span className={`badge badge-${badgeFor(selected).tone}`}>{badgeFor(selected).label}</span>
+          </div>
+          <p className="history-meta">
+            {[when(selected.created_at), selected.tier, duration(selected), money(selected.cost)].filter(Boolean).join(" · ")}
+          </p>
+          {selected.status === "failed" && selected.result ? (
+            <FailureCard result={{ ...selected.result, report: record(selected.result.report) }} />
+          ) : (
+            <>
+              {selected.result?.status === "completed" && <p className="history-outcome">{outcomeOf(selected.result).headline}</p>}
+              <h4>Your prompt</h4>
+              <pre className="history-text">{selected.original_prompt ?? selected.prompt}</pre>
+              {selected.final_prompt && selected.final_prompt !== (selected.original_prompt ?? selected.prompt) && (
+                <>
+                  <h4>Final prompt</h4>
+                  <pre className="history-text">{selected.final_prompt}</pre>
+                </>
+              )}
+            </>
+          )}
+          <div className="history-actions">
+            {selected.result && selected.status !== "failed" && onOpen && (
+              <button type="button" className="secondary" onClick={() => onOpen(selected.result as OptimizeResult)}>
+                Open in result view
+              </button>
+            )}
+            {selected.status === "completed" && (
+              <div role="group" aria-label="Result feedback" className="feedback-group">
+                <button type="button" className="secondary" onClick={() => void saveFeedback("accept")} aria-pressed={selected.feedback === "accept"}>
+                  Accept result
+                </button>
+                <button type="button" className="secondary" onClick={() => void saveFeedback("reject")} aria-pressed={selected.feedback === "reject"}>
+                  Reject result
+                </button>
+                {selected.feedback ? <span> Saved feedback: {selected.feedback}</span> : null}
+              </div>
+            )}
           </div>
         </article>
       ) : null}

@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from typing import Any, Protocol
 
@@ -40,6 +40,7 @@ class ChecklistItem:
     key: str
     label: str
     impact: GapImpact
+    question: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +128,19 @@ _GENERAL_CHECKLIST = (
     ChecklistItem("constraints", "constraints", GapImpact.MEDIUM),
     ChecklistItem("output_format", "output format", GapImpact.LOW),
     ChecklistItem("done_criteria", "done criteria", GapImpact.HIGH),
+    # References to material the prompt never includes ("like last time",
+    # "the thing about the warranty") cannot be inferred by any writer, so
+    # they are asked about rather than assumed.
+    ChecklistItem(
+        "outside_reference",
+        "details only you know",
+        GapImpact.HIGH,
+        question=(
+            "Does the request depend on specific details that it refers to but never includes, "
+            "such as earlier work ('like last time'), a previous conversation, or a named thing "
+            "it does not describe ('the thing about the warranty')?"
+        ),
+    ),
 )
 _WRITING_CHECKLIST = _GENERAL_CHECKLIST
 _ANALYSIS_CHECKLIST = _GENERAL_CHECKLIST + (ChecklistItem("sources", "source basis", GapImpact.HIGH),)
@@ -157,7 +171,30 @@ DEFAULT_RUBRIC = DiagnosisRubric(
 )
 
 
+# Checklist items added after replay bundles began recording their checklist.
+# A bundle without ``checklist_keys`` replays without these questions, because
+# its strict recordings never saw them.
+HISTORICAL_CHECKLIST_EXCLUSIONS = ("outside_reference",)
+
+
+def checklist_keys(rubric: DiagnosisRubric) -> tuple[str, ...]:
+    return tuple(sorted({item.key for task in rubric.task_types for item in task.checklist}))
+
+
+def restrict_checklist(rubric: DiagnosisRubric, keys: Iterable[str]) -> DiagnosisRubric:
+    allowed = set(keys)
+    return replace(
+        rubric,
+        task_types=tuple(
+            replace(task, checklist=tuple(item for item in task.checklist if item.key in allowed))
+            for task in rubric.task_types
+        ),
+    )
+
+
 def gap_question(item: ChecklistItem) -> str:
+    if item.question is not None:
+        return item.question
     return f"Is the required piece '{item.label}' confidently missing from the request?"
 
 

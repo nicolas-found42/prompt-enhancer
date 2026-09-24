@@ -1,4 +1,5 @@
-import type { ModelCatalog, ModelSelection } from "./api";
+import { useState } from "react";
+import type { ModelCatalog, ModelInfo, ModelSelection, ProviderState } from "./api";
 
 type Props = {
   catalog: ModelCatalog | null;
@@ -6,9 +7,20 @@ type Props = {
   onChange: (selection: ModelSelection) => void;
   onSave: () => void;
   busy: boolean;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  providers: Record<string, ProviderState>;
 };
 
-export default function ModelPicker({ catalog, selection, onChange, onSave, busy }: Props) {
+const MATCH_LIMIT = 30;
+
+function optionLabel(model: ModelInfo, providers: Record<string, ProviderState>): string {
+  const unavailable = providers[model.provider]?.status === "unavailable";
+  return `${model.name ?? model.id} (${model.provider}${unavailable ? " · unavailable" : ""})`;
+}
+
+export default function ModelPicker({ catalog, selection, onChange, onSave, busy, open, onToggle, providers }: Props) {
+  const [query, setQuery] = useState("");
   const available = [
     ...(catalog?.providers.go ?? []),
     ...(catalog?.providers.openrouter ?? []),
@@ -19,41 +31,70 @@ export default function ModelPicker({ catalog, selection, onChange, onSave, busy
       models.push({ id, provider: "configured" });
     }
   }
+  const byId = new Map(models.map((model) => [model.id, model]));
+  const chosenWeak = selection.weak.map((id) => byId.get(id) ?? { id, provider: "configured" });
+  const needle = query.trim().toLowerCase();
+  const unchosen = models.filter((model) => !selection.weak.includes(model.id));
+  const matches = needle
+    ? unchosen.filter((model) => `${model.name ?? ""} ${model.id} ${model.provider}`.toLowerCase().includes(needle))
+    : unchosen;
+  const shown = matches.slice(0, MATCH_LIMIT);
+
+  function toggleWeak(id: string, checked: boolean) {
+    onChange({
+      ...selection,
+      weak: checked ? [...selection.weak, id] : selection.weak.filter((item) => item !== id),
+    });
+  }
 
   return (
-    <details className="model-picker">
+    <details className="model-picker" open={open} onToggle={(event) => onToggle(event.currentTarget.open)}>
       <summary>Model choices</summary>
-      <p>Change models for this run, or save these choices as your defaults. Jev remains the judge.</p>
+      <div className="model-picker-intro">
+        <p>Change models for this run, or save these choices as your defaults. The judge model is fixed.</p>
+        <button className="secondary" type="button" disabled={busy || selection.weak.length === 0} onClick={onSave}>
+          Save model defaults
+        </button>
+      </div>
       <p>Judge: {catalog?.judge.id ?? "typesafe/jev-1.13"} (fixed)</p>
       <label htmlFor="writer-model">Writer</label>
       <select id="writer-model" value={selection.writer} onChange={(event) => onChange({ ...selection, writer: event.target.value })}>
-        {models.map((model) => <option key={model.id} value={model.id}>{model.name ?? model.id} ({model.provider})</option>)}
+        {models.map((model) => <option key={model.id} value={model.id}>{optionLabel(model, providers)}</option>)}
       </select>
       <label htmlFor="strong-model">Strong check</label>
       <select id="strong-model" value={selection.strong} onChange={(event) => onChange({ ...selection, strong: event.target.value })}>
-        {models.map((model) => <option key={model.id} value={model.id}>{model.name ?? model.id} ({model.provider})</option>)}
+        {models.map((model) => <option key={model.id} value={model.id}>{optionLabel(model, providers)}</option>)}
       </select>
       <fieldset>
-        <legend>Weak panel</legend>
-        {models.map((model) => (
-          <label key={model.id}>
-            <input
-              type="checkbox"
-              checked={selection.weak.includes(model.id)}
-              onChange={(event) => onChange({
-                ...selection,
-                weak: event.target.checked
-                  ? [...selection.weak, model.id]
-                  : selection.weak.filter((id) => id !== model.id),
-              })}
-            />
-            {model.name ?? model.id} ({model.provider})
+        <legend>Weak panel ({selection.weak.length} selected)</legend>
+        {chosenWeak.map((model) => (
+          <label key={model.id} className="chosen">
+            <input type="checkbox" checked onChange={(event) => toggleWeak(model.id, event.target.checked)} />
+            {optionLabel(model, providers)}
           </label>
         ))}
+        <label htmlFor="weak-search" className="weak-search-label">Add models</label>
+        <input
+          id="weak-search"
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search models, e.g. llama or openrouter"
+        />
+        {shown.map((model) => (
+          <label key={model.id}>
+            <input type="checkbox" checked={false} onChange={(event) => toggleWeak(model.id, event.target.checked)} />
+            {optionLabel(model, providers)}
+          </label>
+        ))}
+        <p className="match-count">
+          {matches.length === 0
+            ? "No models match."
+            : matches.length > shown.length
+              ? `Showing ${shown.length} of ${matches.length}. Type to narrow the list.`
+              : `Showing all ${matches.length}.`}
+        </p>
       </fieldset>
-      <button className="secondary" type="button" disabled={busy || selection.weak.length === 0} onClick={onSave}>
-        Save model defaults
-      </button>
     </details>
   );
 }

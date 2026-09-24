@@ -29,7 +29,16 @@ Space Bunny Free on OpenCode Go; Jev 1.13 is the fixed judge. The app's
 weak-panel models per run.
 
 Go writer models require an active OpenCode Go subscription. Without one,
-every writer call returns HTTP 403 and the run fails with a provider error.
+every writer call returns HTTP 403. The app checks Go when it loads and, if Go
+refuses requests, shows a banner that switches the writer and strong check to
+OpenRouter models (`PROMPT_ENHANCER_FALLBACK_WRITER_MODEL` and
+`PROMPT_ENHANCER_FALLBACK_STRONG_MODEL` override the choices). A run that fails
+anyway shows what went wrong and what to do next.
+
+The web app starts runs in the background (`POST /api/jobs/optimize`, then
+poll `GET /api/jobs/{run_id}`), so it shows each stage and elapsed time, can
+cancel a run, and reattaches after a reload. The synchronous
+`POST /api/optimize` endpoint remains for API clients.
 
 ## Check the implementation
 

@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import statistics
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .clarification import RunNotPausedError
 from .config import Settings
 from .history import RunNotFound
+from .jobs import JobBusy, JobNotFound, RunJobs
+from .models import new_run_id
 from .optimizer import PromptOptimizer, RunNotFoundError
 from .repeat import _reject_provider_secrets
 from .store import RunStore
@@ -49,6 +52,51 @@ def _public_catalog(settings: Settings) -> dict[str, Any]:
     return {"models": models, **models}
 
 
+def _optimize_options(request: OptimizeRequest) -> dict[str, Any]:
+    options = dict(request.options)
+    options["tier"] = request.tier
+    if request.model_overrides:
+        options["model_overrides"] = {
+            **options.get("model_overrides", {}),
+            **request.model_overrides,
+        }
+    if request.clarification_allowed is not None:
+        options["clarification_allowed"] = request.clarification_allowed
+    return options
+
+
+def _percentile(values: list[float], fraction: float) -> float:
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    return statistics.quantiles(ordered, n=100, method="inclusive")[round(fraction * 100) - 1]
+
+
+def run_estimates(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Typical time and cost per tier from completed local runs."""
+    samples: dict[str, list[tuple[float, float]]] = {}
+    for run in runs:
+        if run.get("status") != "completed" or not run.get("tier"):
+            continue
+        timing = run.get("timings") or run.get("timing") or {}
+        cost = run.get("cost") or {}
+        total_ms = timing.get("total_ms") if isinstance(timing, Mapping) else None
+        total_cost = cost.get("total") if isinstance(cost, Mapping) else None
+        if not isinstance(total_ms, (int, float)) or not isinstance(total_cost, (int, float)) or total_ms <= 0:
+            continue
+        samples.setdefault(str(run["tier"]), []).append((total_ms / 60000, float(total_cost)))
+    estimates: dict[str, Any] = {}
+    for tier, values in samples.items():
+        minutes = [item[0] for item in values]
+        costs = [item[1] for item in values]
+        estimates[tier] = {
+            "runs": len(values),
+            "minutes": [_percentile(minutes, 0.5), _percentile(minutes, 0.9)],
+            "cost": [_percentile(costs, 0.5), _percentile(costs, 0.9)],
+        }
+    return estimates
+
+
 def create_app(
     optimizer: PromptOptimizer | None = None,
     store: RunStore | None = None,
@@ -64,6 +112,8 @@ def create_app(
     app_optimizer = optimizer or PromptOptimizer(store=app_store, config=app_settings)
     app_settings = getattr(app_optimizer, "config", app_settings)
     app = FastAPI(title="Prompt Enhancer", version="0.1.0")
+    jobs = RunJobs()
+    app.state.jobs = jobs
     app.state.optimizer = app_optimizer
     app.state.store = app_store
     app.state.settings = app_settings
@@ -81,19 +131,88 @@ def create_app(
 
     @app.post("/api/optimize")
     def optimize(request: OptimizeRequest) -> dict[str, Any]:
-        options = dict(request.options)
-        options["tier"] = request.tier
-        if request.model_overrides:
-            options["model_overrides"] = {
-                **options.get("model_overrides", {}),
-                **request.model_overrides,
-            }
-        if request.clarification_allowed is not None:
-            options["clarification_allowed"] = request.clarification_allowed
         try:
-            return dict(app_optimizer.optimize(request.prompt, options))
+            return dict(app_optimizer.optimize(request.prompt, _optimize_options(request)))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def recorded_prompt(run_id: str) -> str:
+        record = app_optimizer.store.get_run(run_id)
+        return str((record or {}).get("prompt") or "")
+
+    def submit(run_id: str, kind: str, work: Callable[[Any], Any], prompt: str | None = None) -> dict[str, Any]:
+        def on_failure(exc: BaseException) -> dict[str, Any]:
+            return dict(app_optimizer.failure_result(run_id, prompt if prompt is not None else recorded_prompt(run_id), exc))
+        try:
+            return jobs.submit(run_id, kind, work, on_failure)
+        except JobBusy as exc:
+            raise HTTPException(status_code=409, detail="this run is already in progress") from exc
+
+    def require_run(run_id: str) -> None:
+        if app_optimizer.store.get_run(run_id) is None:
+            raise HTTPException(status_code=404, detail="run not found")
+
+    @app.post("/api/jobs/optimize", status_code=202)
+    def start_optimize(request: OptimizeRequest) -> dict[str, Any]:
+        options = _optimize_options(request)
+        try:
+            app_optimizer.validate_request(request.prompt, options)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        run_id = new_run_id()
+        return submit(
+            run_id, "optimize",
+            lambda progress: app_optimizer.optimize(request.prompt, options, run_id=run_id, progress=progress),
+            prompt=request.prompt,
+        )
+
+    @app.post("/api/jobs/{run_id}/resume", status_code=202)
+    def start_resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:
+        require_run(run_id)
+        return submit(run_id, "resume", lambda progress: app_optimizer.resume(run_id, request.answers, progress=progress))
+
+    @app.post("/api/jobs/{run_id}/skip", status_code=202)
+    def start_skip(run_id: str) -> dict[str, Any]:
+        require_run(run_id)
+        return submit(run_id, "skip", lambda progress: app_optimizer.skip_clarification(run_id, progress=progress))
+
+    @app.post("/api/jobs/{run_id}/deep", status_code=202)
+    def start_deep_job(run_id: str) -> dict[str, Any]:
+        require_run(run_id)
+        return submit(run_id, "deep", lambda progress: app_optimizer.start_deep_pass(run_id, progress=progress))
+
+    @app.get("/api/jobs")
+    def active_jobs() -> list[dict[str, Any]]:
+        return jobs.active()
+
+    @app.get("/api/jobs/{run_id}")
+    def get_job(run_id: str, response: Response) -> dict[str, Any]:
+        response.headers["Cache-Control"] = "no-store"
+        try:
+            return jobs.get(run_id)
+        except JobNotFound as exc:
+            raise HTTPException(status_code=404, detail="no run in progress with this ID") from exc
+
+    @app.post("/api/jobs/{run_id}/cancel")
+    def cancel_job(run_id: str) -> dict[str, Any]:
+        try:
+            return jobs.cancel(run_id)
+        except JobNotFound as exc:
+            raise HTTPException(status_code=404, detail="no run in progress with this ID") from exc
+
+    @app.get("/api/estimates")
+    def estimates() -> dict[str, Any]:
+        return run_estimates(app_optimizer.history.list_runs(None, limit=200))
+
+    @app.get("/api/providers")
+    def providers(probe: bool = False) -> dict[str, Any]:
+        config = app_optimizer.config
+        health = getattr(app_optimizer.gateway, "provider_health", None)
+        models = (config.writer_model, config.strong_check_model) if probe else ()
+        return {
+            "providers": dict(health(probe_models=models)) if health is not None else {},
+            "fallback": {"writer": config.fallback_writer_model, "strong": config.fallback_strong_check_model},
+        }
 
     @app.get("/api/runs")
     def list_runs(

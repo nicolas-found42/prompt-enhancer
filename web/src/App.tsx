@@ -1,30 +1,58 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  optimizePrompt,
+  ApiError,
+  cancelJob,
+  getActiveJobs,
   getCatalog,
+  getEstimates,
+  getJob,
+  getProviders,
   getSettings,
-  resumeRun,
   saveSettings,
-  skipClarification,
-  startDeepPass,
+  startDeep,
+  startOptimize,
+  startResume,
+  startSkip,
   updateAssumption,
   type Assumption,
-  type OptimizeResult,
+  type Job,
   type ModelCatalog,
   type ModelSelection,
+  type OptimizeResult,
+  type ProviderReport,
   type Tier,
+  type TierEstimate,
 } from "./api";
 import ClarificationPanel, { type ClarificationQuestion } from "./components/ClarificationPanel";
+import FailureCard from "./components/FailureCard";
+import RunProgress from "./components/RunProgress";
 import History from "./History";
 import ModelPicker from "./ModelPicker";
+import { confirmedGaps, estimateText, humanize, outcomeOf, record } from "./outcome";
 import RunReport from "./RunReport";
 
-const defaultPrompt = "Summarize this article in three concise bullets for a busy reader.";
-const tierEstimates: Record<Tier, string> = {
-  fast: "About 1–2 min · ~$0.001–$0.004 · up to 1 round",
-  standard: "About 2–5 min · ~$0.006–$0.015 · up to 2 rounds",
-  deep: "About 5–15 min · ~$0.03–$0.08 · up to 3 rounds",
-};
+const ACTIVE_RUN_KEY = "prompt-enhancer.active-run";
+const POLL_MS = 1000;
+
+type RememberedRun = { runId: string; prompt: string };
+
+function rememberRun(run: RememberedRun | null) {
+  try {
+    if (run) localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
+    else localStorage.removeItem(ACTIVE_RUN_KEY);
+  } catch {
+    // Storage can be unavailable; reattaching then falls back to /api/jobs.
+  }
+}
+
+function rememberedRun(): RememberedRun | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY) ?? "null") as RememberedRun | null;
+    return parsed && typeof parsed.runId === "string" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 
 type AssumptionEditorProps = {
   assumptions: Assumption[];
@@ -32,44 +60,48 @@ type AssumptionEditorProps = {
   onSave: (assumption: Assumption) => void | Promise<void>;
 };
 
+const unknownValue = "Not specified";
+
 function AssumptionEditor({ assumptions, busy, onSave }: AssumptionEditorProps) {
   const [values, setValues] = useState<Record<string, string>>({});
   const assumptionSignature = JSON.stringify(assumptions);
 
   useEffect(() => {
-    setValues(Object.fromEntries(assumptions.map((item) => [item.key, item.value])));
+    setValues(Object.fromEntries(assumptions.map((item) => [item.key, item.value === unknownValue ? "" : item.value])));
   }, [assumptionSignature]);
 
   if (assumptions.length === 0) return null;
   return (
     <section className="assumption-editor" aria-labelledby="assumptions-heading">
       <h3 id="assumptions-heading">Review assumptions</h3>
-      <p>Edit an assumption to refine the final prompt. The meaning check runs before it is accepted.</p>
-      {assumptions.map((assumption) => (
-        <div className="assumption-row" key={assumption.key}>
-          <label htmlFor={`assumption-${assumption.key}`}>{assumption.key}</label>
-          <input
-            id={`assumption-${assumption.key}`}
-            value={values[assumption.key] ?? assumption.value}
-            onChange={(event) =>
-              setValues((current) => ({ ...current, [assumption.key]: event.target.value }))
-            }
-          />
-          <button
-            className="secondary"
-            type="button"
-            disabled={busy || !(values[assumption.key] ?? assumption.value).trim()}
-            onClick={() =>
-              void onSave({
-                ...assumption,
-                value: (values[assumption.key] ?? assumption.value).trim(),
-              })
-            }
-          >
-            Save
-          </button>
-        </div>
-      ))}
+      <p>These are the details the optimizer filled in or left out. Change one to update the final prompt; it is checked to make sure your meaning is kept.</p>
+      {assumptions.map((assumption) => {
+        const unknown = assumption.value === unknownValue;
+        const value = values[assumption.key] ?? (unknown ? "" : assumption.value);
+        const label = assumption.label ? humanize(assumption.label) : humanize(assumption.key);
+        return (
+          <div className="assumption-row" key={assumption.key}>
+            <label htmlFor={`assumption-${assumption.key}`}>{label}</label>
+            <input
+              id={`assumption-${assumption.key}`}
+              value={value}
+              placeholder={unknown ? "Not given yet. Type it here if you know it." : undefined}
+              onChange={(event) =>
+                setValues((current) => ({ ...current, [assumption.key]: event.target.value }))
+              }
+            />
+            <button
+              className="secondary"
+              type="button"
+              disabled={busy || !value.trim() || value.trim() === assumption.value}
+              onClick={() => void onSave({ ...assumption, value: value.trim() })}
+            >
+              Save
+            </button>
+            {unknown && <p className="assumption-hint">The optimizer didn't know this, so the prompt leaves it out.</p>}
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -85,15 +117,35 @@ function reportAssumptions(result: OptimizeResult): Assumption[] {
   return values.filter(isAssumption);
 }
 
+function originalPromptOf(result: OptimizeResult): string | undefined {
+  return result.original_prompt ?? (result.original_kept ? result.final_prompt : undefined);
+}
+
+function deepOfferText(result: OptimizeResult): string {
+  const offer = record(result.report.offer_deep);
+  const multiplier = typeof offer.expected_evaluation_multiplier === "number" ? offer.expected_evaluation_multiplier : null;
+  if (multiplier === null) return "Deep tries more rewrites on more test models. It takes longer and costs more.";
+  const cost = result.cost.total * multiplier;
+  const costText = cost > 0 ? `, roughly $${cost.toFixed(2)}` : "";
+  return `Deep tries more rewrites on more test models. Expect about ${multiplier.toFixed(1)}× the work of this run${costText}.`;
+}
+
 export default function App() {
-  const [prompt, setPrompt] = useState(defaultPrompt);
+  const [prompt, setPrompt] = useState("");
   const [tier, setTier] = useState<Tier>("standard");
   const [result, setResult] = useState<OptimizeResult | null>(null);
+  const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [selection, setSelection] = useState<ModelSelection | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [providers, setProviders] = useState<ProviderReport | null>(null);
+  const [estimates, setEstimates] = useState<Partial<Record<Tier, TierEstimate>>>({});
+  const lastRequest = useRef<{ prompt: string; tier: Tier } | null>(null);
+  const composer = useRef<HTMLFormElement | null>(null);
+  const busy = job !== null || saving;
 
   useEffect(() => {
     void Promise.all([getCatalog(), getSettings()])
@@ -102,84 +154,124 @@ export default function App() {
         setSelection({ writer: defaults.writer_model, strong: defaults.strong_check_model, weak: defaults.weak_models });
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : "Unable to load model choices."));
+    void getProviders(true).then(setProviders).catch(() => setProviders(null));
+    void getEstimates().then(setEstimates).catch(() => setEstimates({}));
   }, []);
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
+  const finish = useCallback((finished: Job) => {
+    setJob(null);
+    rememberRun(null);
+    const finishedResult = finished.result;
+    if (finishedResult) {
+      setResult(finishedResult);
+      const original = originalPromptOf(finishedResult);
+      if (original) setPrompt((current) => current || original);
+    }
+    void getEstimates().then(setEstimates).catch(() => undefined);
+    void getProviders(false).then(setProviders).catch(() => undefined);
+  }, []);
+
+  // Reattach to a run that was in progress before a reload or dropped connection.
+  useEffect(() => {
+    const stored = rememberedRun();
+    if (stored?.prompt) setPrompt((current) => current || stored.prompt);
+    const lookup = stored
+      ? getJob(stored.runId).then((found) => [found])
+      : getActiveJobs();
+    void lookup
+      .then((found) => {
+        const current = found[0];
+        if (!current) return;
+        if (current.state === "done") finish(current);
+        else setJob(current);
+      })
+      .catch(() => rememberRun(null));
+  }, [finish]);
+
+  useEffect(() => {
+    if (!job || job.state === "done") return;
+    const runId = job.run_id;
+    const timer = window.setInterval(() => {
+      void getJob(runId)
+        .then((latest) => {
+          if (latest.state === "done") finish(latest);
+          else setJob(latest);
+        })
+        .catch((caught) => {
+          if (caught instanceof ApiError && caught.status === 404) {
+            setJob(null);
+            rememberRun(null);
+            setError("The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again.");
+          } else {
+            setError(caught instanceof Error ? caught.message : "Lost track of the run.");
+          }
+        });
+    }, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [job?.run_id, job?.state, finish]);
+
+  async function begin(start: () => Promise<Job>) {
     setError(null);
     setCopied(false);
     try {
-      setResult(await optimizePrompt(prompt, tier, selection ?? undefined));
+      const started = await start();
+      rememberRun({ runId: started.run_id, prompt });
+      setResult(null);
+      setJob(started);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to optimize this prompt.");
-    } finally {
-      setBusy(false);
+      setError(caught instanceof Error ? caught.message : "Unable to start the run.");
+    }
+  }
+
+  function submit(event?: FormEvent<HTMLFormElement>) {
+    event?.preventDefault();
+    lastRequest.current = { prompt, tier };
+    void begin(() => startOptimize(prompt, tier, selection ?? undefined));
+  }
+
+  function retry() {
+    const previous = lastRequest.current;
+    if (previous) {
+      setPrompt(previous.prompt);
+      setTier(previous.tier);
+      void begin(() => startOptimize(previous.prompt, previous.tier, selection ?? undefined));
+    } else {
+      submit();
+    }
+  }
+
+  async function cancel() {
+    if (!job) return;
+    try {
+      setJob(await cancelJob(job.run_id));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to cancel the run.");
     }
   }
 
   async function saveModelDefaults() {
     if (!selection) return;
-    setBusy(true);
+    setSaving(true);
     setError(null);
     try {
       await saveSettings(selection);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to save model defaults.");
     } finally {
-      setBusy(false);
-    }
-  }
-
-  async function resume(answers: Record<string, unknown>) {
-    if (!result) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setResult(await resumeRun(result.run_id, answers));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to continue this run.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function skip() {
-    if (!result) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setResult(await skipClarification(result.run_id));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to continue this run.");
-    } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
   async function saveAssumption(assumption: Assumption) {
     if (!result) return;
-    setBusy(true);
+    setSaving(true);
     setError(null);
     try {
       setResult(await updateAssumption(result.run_id, assumption));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to update this assumption.");
     } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deepPass() {
-    if (!result) return;
-    setBusy(true);
-    setError(null);
-    try {
-      setResult(await startDeepPass(result.run_id));
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to start Deep pass.");
-    } finally {
-      setBusy(false);
+      setSaving(false);
     }
   }
 
@@ -194,8 +286,44 @@ export default function App() {
     }
   }
 
-  const questions: ClarificationQuestion[] = result?.status === "needs_input" ? (result.questions ?? []) : [];
+  function openModels() {
+    setPickerOpen(true);
+    composer.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function openFromHistory(opened: OptimizeResult) {
+    setResult(opened);
+    setCopied(false);
+    const original = originalPromptOf(opened);
+    if (original) setPrompt(original);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  const goIds = useMemo(() => new Set((catalog?.providers.go ?? []).map((model) => model.id)), [catalog]);
+  const goUnavailable = providers?.providers.go?.status === "unavailable";
+  const goRoles = selection
+    ? [
+        goIds.has(selection.writer) ? `writer (${selection.writer})` : null,
+        goIds.has(selection.strong) ? `strong check (${selection.strong})` : null,
+        selection.weak.some((id) => goIds.has(id)) ? "some weak-panel models" : null,
+      ].filter((item): item is string => item !== null)
+    : [];
+
+  function switchToFallbackModels() {
+    if (!selection || !providers) return;
+    const openRouterIds = new Set((catalog?.providers.openrouter ?? []).map((model) => model.id));
+    setSelection({
+      writer: goIds.has(selection.writer) ? providers.fallback.writer : selection.writer,
+      strong: goIds.has(selection.strong) ? providers.fallback.strong : selection.strong,
+      weak: selection.weak.filter((id) => !goIds.has(id) || openRouterIds.has(id)),
+    });
+  }
+
+  const questions: ClarificationQuestion[] = !job && result?.status === "needs_input" ? (result.questions ?? []) : [];
   const assumptions = useMemo(() => (result ? reportAssumptions(result) : []), [result]);
+  const estimate = estimateText(tier, estimates[tier]);
+  const outcome = result?.status === "completed" ? outcomeOf(result) : null;
+  const gaps = result?.status === "completed" && result.original_kept ? confirmedGaps(result) : [];
 
   return (
     <main className="shell">
@@ -207,13 +335,24 @@ export default function App() {
         </p>
       </header>
 
-      <form className="composer" onSubmit={submit}>
+      {goUnavailable && goRoles.length > 0 && (
+        <div className="banner" role="status">
+          <p>
+            <strong>OpenCode Go isn't active</strong> (HTTP {providers?.providers.go?.http_status ?? "403"}). Your {goRoles.join(" and ")} use it, so runs will fail.
+          </p>
+          <button className="primary" type="button" onClick={switchToFallbackModels}>
+            Switch to OpenRouter models
+          </button>
+        </div>
+      )}
+
+      <form className="composer" onSubmit={submit} ref={composer}>
         <label htmlFor="prompt">Your prompt</label>
         <textarea
           id="prompt"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder="What would you like help with?"
+          placeholder="Paste your prompt here. For example: Write a friendly reply to a customer whose repair was delayed."
           rows={8}
           required
         />
@@ -227,31 +366,49 @@ export default function App() {
             </select>
           </label>
           <button className="primary" type="submit" disabled={busy || !prompt.trim()}>
-            {busy ? "Optimizing…" : "Optimize prompt"}
+            {job ? "Optimizing…" : "Optimize prompt"}
           </button>
         </div>
-        <p className="effort-estimate">{tierEstimates[tier]} (rough estimate; model choice and prompt length change time and cost).</p>
-        {selection && <ModelPicker catalog={catalog} selection={selection} onChange={setSelection} onSave={() => void saveModelDefaults()} busy={busy} />}
+        <p className="effort-estimate">{estimate}</p>
+        {selection && (
+          <ModelPicker
+            catalog={catalog}
+            selection={selection}
+            onChange={setSelection}
+            onSave={() => void saveModelDefaults()}
+            busy={busy}
+            open={pickerOpen}
+            onToggle={setPickerOpen}
+            providers={providers?.providers ?? {}}
+          />
+        )}
       </form>
 
       {error && <p className="error" role="alert">{error}</p>}
 
+      {job && <RunProgress job={job} estimate={estimate} onCancel={() => void cancel()} />}
+
       {questions.length > 0 ? (
         <ClarificationPanel
           questions={questions}
-          onSubmit={resume}
-          onSkip={skip}
+          onSubmit={(answers) => begin(() => startResume(result!.run_id, answers))}
+          onSkip={() => begin(() => startSkip(result!.run_id))}
           busy={busy}
           error={error}
         />
       ) : null}
 
-      {result?.status === "completed" ? (
+      {!job && result?.status === "failed" && (
+        <FailureCard result={result} onRetry={retry} onOpenModels={openModels} busy={busy} />
+      )}
+
+      {!job && result?.status === "completed" && outcome ? (
         <section className="result" aria-live="polite">
           <div className="result-heading">
             <div>
               <p className="eyebrow">RESULT</p>
-              <h2>{result.original_kept ? "No change needed" : "Optimized prompt"}</h2>
+              <h2>{outcome.headline}</h2>
+              {outcome.reason && <p className="outcome-reason">{outcome.reason}</p>}
             </div>
             {result.final_prompt && (
               <button className="secondary" type="button" onClick={copyPrompt}>
@@ -259,16 +416,17 @@ export default function App() {
               </button>
             )}
           </div>
+          {gaps.length > 0 && (
+            <div className="gap-list">
+              <p>What would help:</p>
+              <ul>{gaps.map((gap) => <li key={gap.key}>{humanize(gap.label)}</li>)}</ul>
+            </div>
+          )}
           {result.final_prompt && <pre className="final-prompt">{result.final_prompt}</pre>}
           {Boolean(result.report.offer_deep) && (
             <div className="deep-offer">
-              <p>Deep pass: {typeof result.report.offer_deep === "object" && result.report.offer_deep !== null
-                ? String((result.report.offer_deep as Record<string, unknown>).expected_effort ?? tierEstimates.deep)
-                : tierEstimates.deep}</p>
-              <p>{typeof result.report.offer_deep === "object" && result.report.offer_deep !== null
-                ? String((result.report.offer_deep as Record<string, unknown>).expected_cost_change ?? "Higher model cost")
-                : "Higher model cost"}</p>
-              <button className="secondary" type="button" disabled={busy} onClick={() => void deepPass()}>
+              <p>{deepOfferText(result)}</p>
+              <button className="secondary" type="button" disabled={busy} onClick={() => void begin(() => startDeep(result.run_id))}>
                 Try a Deep pass
               </button>
             </div>
@@ -277,14 +435,17 @@ export default function App() {
             <summary>View report</summary>
             <AssumptionEditor assumptions={assumptions} busy={busy} onSave={saveAssumption} />
             <p className="run-meta">
-              Run {result.run_id} · {result.timing.total_ms} ms · ${result.cost.total.toFixed(4)}
+              Run {result.run_id} · {(result.timing.total_ms / 1000).toFixed(1)} s · ${result.cost.total.toFixed(4)}
             </p>
             <RunReport result={result} />
           </details>
         </section>
       ) : null}
 
-      <History refreshKey={`${result?.run_id ?? ""}:${result?.status ?? ""}:${result?.final_prompt ?? ""}`} />
+      <History
+        onOpen={openFromHistory}
+        refreshKey={`${job?.run_id ?? ""}:${job?.state ?? ""}:${result?.run_id ?? ""}:${result?.status ?? ""}:${result?.final_prompt ?? ""}`}
+      />
     </main>
   );
 }
