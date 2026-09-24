@@ -62,6 +62,7 @@ export type JobRound = { round?: number; max_rounds?: number };
 export type Job = {
   run_id: string;
   kind: "optimize" | "resume" | "skip" | "deep";
+  prompt?: string;
   state: "queued" | "running" | "done";
   stage: string | null;
   round: JobRound;
@@ -141,6 +142,10 @@ export function getJob(runId: string): Promise<Job> {
 
 export function getActiveJobs(): Promise<Job[]> {
   return requestJson<Job[]>("/api/jobs");
+}
+
+export function getRunResult(runId: string): Promise<{ result?: OptimizeResult | null }> {
+  return requestJson<{ result?: OptimizeResult | null }>(`/api/runs/${encodeURIComponent(runId)}`);
 }
 
 export function cancelJob(runId: string): Promise<Job> {

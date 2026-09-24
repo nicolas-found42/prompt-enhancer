@@ -58,15 +58,18 @@ export default function ModelPicker({ catalog, selection, onChange, onSave, busy
       </div>
       <p>Judge: {catalog?.judge.id ?? "typesafe/jev-1.13"} (fixed)</p>
       <label htmlFor="writer-model">Writer</label>
-      <select id="writer-model" value={selection.writer} onChange={(event) => onChange({ ...selection, writer: event.target.value })}>
+      <select id="writer-model" value={selection.writer} aria-describedby="writer-hint" onChange={(event) => onChange({ ...selection, writer: event.target.value })}>
         {models.map((model) => <option key={model.id} value={model.id}>{optionLabel(model, providers)}</option>)}
       </select>
+      <p id="writer-hint" className="role-hint">Writes the improved versions and the checks for a good answer.</p>
       <label htmlFor="strong-model">Strong check</label>
-      <select id="strong-model" value={selection.strong} onChange={(event) => onChange({ ...selection, strong: event.target.value })}>
+      <select id="strong-model" value={selection.strong} aria-describedby="strong-hint" onChange={(event) => onChange({ ...selection, strong: event.target.value })}>
         {models.map((model) => <option key={model.id} value={model.id}>{optionLabel(model, providers)}</option>)}
       </select>
+      <p id="strong-hint" className="role-hint">A capable model. An improved version must not do worse on it than your prompt.</p>
       <fieldset>
         <legend>Weak panel ({selection.weak.length} selected)</legend>
+        <p className="role-hint">Cheaper test models. Each improved version is tried on these and must help them.</p>
         {chosenWeak.map((model) => (
           <label key={model.id} className="chosen">
             <input type="checkbox" checked onChange={(event) => toggleWeak(model.id, event.target.checked)} />

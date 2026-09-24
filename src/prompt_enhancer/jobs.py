@@ -35,6 +35,7 @@ class JobBusy(RuntimeError):
 class _Job:
     run_id: str
     kind: str
+    prompt: str = ""
     state: str = "queued"
     stage: str | None = None
     round: dict[str, int] = field(default_factory=dict)
@@ -49,6 +50,7 @@ class _Job:
         return {
             "run_id": self.run_id,
             "kind": self.kind,
+            "prompt": self.prompt,
             "state": self.state,
             "stage": self.stage,
             "round": dict(self.round),
@@ -66,12 +68,14 @@ class RunJobs:
         self._lock = threading.Lock()
         self._keep = keep
 
-    def submit(self, run_id: str, kind: str, work: JobWork, on_failure: FailureBuilder) -> dict[str, Any]:
+    def submit(
+        self, run_id: str, kind: str, work: JobWork, on_failure: FailureBuilder, *, prompt: str = ""
+    ) -> dict[str, Any]:
         with self._lock:
             existing = self._jobs.get(run_id)
             if existing is not None and existing.state in {"queued", "running"}:
                 raise JobBusy(run_id)
-            job = _Job(run_id, kind)
+            job = _Job(run_id, kind, prompt)
             self._jobs[run_id] = job
             self._jobs.move_to_end(run_id)
             while len(self._jobs) > self._keep:

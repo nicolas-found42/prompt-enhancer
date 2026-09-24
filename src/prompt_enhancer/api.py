@@ -141,10 +141,12 @@ def create_app(
         return str((record or {}).get("prompt") or "")
 
     def submit(run_id: str, kind: str, work: Callable[[Any], Any], prompt: str | None = None) -> dict[str, Any]:
+        job_prompt = prompt if prompt is not None else recorded_prompt(run_id)
+
         def on_failure(exc: BaseException) -> dict[str, Any]:
-            return dict(app_optimizer.failure_result(run_id, prompt if prompt is not None else recorded_prompt(run_id), exc))
+            return dict(app_optimizer.failure_result(run_id, job_prompt, exc))
         try:
-            return jobs.submit(run_id, kind, work, on_failure)
+            return jobs.submit(run_id, kind, work, on_failure, prompt=job_prompt)
         except JobBusy as exc:
             raise HTTPException(status_code=409, detail="this run is already in progress") from exc
 

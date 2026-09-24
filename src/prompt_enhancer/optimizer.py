@@ -381,6 +381,9 @@ class PromptOptimizer:
         diagnosis: Mapping[str, Any], tests: Any, assumptions: Any,
         original: str, working: str, tier: str,
     ) -> dict[str, Any]:
+        # Without a confirmed gap no strategy can run, so a Deep pass would only
+        # repeat the diagnosis; it is not offered.
+        has_gaps = bool(diagnosis.get("confirmed_gaps"))
         return {
             "status": status,
             "models": dict(models),
@@ -391,7 +394,7 @@ class PromptOptimizer:
             "per_model": {},
             "assumptions": list(assumptions),
             "diff": _diff(original, working),
-            "offer_deep": tier != "deep",
+            "offer_deep": tier != "deep" and has_gaps,
             "history": [],
         }
 

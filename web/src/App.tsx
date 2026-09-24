@@ -7,6 +7,7 @@ import {
   getEstimates,
   getJob,
   getProviders,
+  getRunResult,
   getSettings,
   saveSettings,
   startDeep,
@@ -28,30 +29,43 @@ import FailureCard from "./components/FailureCard";
 import RunProgress from "./components/RunProgress";
 import History from "./History";
 import ModelPicker from "./ModelPicker";
-import { confirmedGaps, estimateText, humanize, outcomeOf, record } from "./outcome";
+import { confirmedGaps, estimateText, humanize, outcomeOf, possibleGapHints, record, roughCost, tierDescriptions } from "./outcome";
 import RunReport from "./RunReport";
 
 const ACTIVE_RUN_KEY = "prompt-enhancer.active-run";
+const LAST_RESULT_KEY = "prompt-enhancer.last-result";
 const POLL_MS = 1000;
+// A result shown this recently comes back after a reload instead of vanishing.
+const RESTORE_RESULT_MS = 30 * 60 * 1000;
 
 type RememberedRun = { runId: string; prompt: string };
+type RememberedResult = { runId: string; at: number };
 
-function rememberRun(run: RememberedRun | null) {
+// Storage can be unavailable; reattaching then falls back to /api/jobs.
+function store(key: string, value: unknown) {
   try {
-    if (run) localStorage.setItem(ACTIVE_RUN_KEY, JSON.stringify(run));
-    else localStorage.removeItem(ACTIVE_RUN_KEY);
+    if (value) localStorage.setItem(key, JSON.stringify(value));
+    else localStorage.removeItem(key);
   } catch {
-    // Storage can be unavailable; reattaching then falls back to /api/jobs.
+    // Ignore: these are conveniences only.
   }
 }
 
-function rememberedRun(): RememberedRun | null {
+function stored<T extends { runId: string }>(key: string): T | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(ACTIVE_RUN_KEY) ?? "null") as RememberedRun | null;
+    const parsed = JSON.parse(localStorage.getItem(key) ?? "null") as T | null;
     return parsed && typeof parsed.runId === "string" ? parsed : null;
   } catch {
     return null;
   }
+}
+
+function rememberRun(run: RememberedRun | null) {
+  store(ACTIVE_RUN_KEY, run);
+}
+
+function rememberedRun(): RememberedRun | null {
+  return stored<RememberedRun>(ACTIVE_RUN_KEY);
 }
 
 type AssumptionEditorProps = {
@@ -126,7 +140,7 @@ function deepOfferText(result: OptimizeResult): string {
   const multiplier = typeof offer.expected_evaluation_multiplier === "number" ? offer.expected_evaluation_multiplier : null;
   if (multiplier === null) return "Deep tries more rewrites on more test models. It takes longer and costs more.";
   const cost = result.cost.total * multiplier;
-  const costText = cost > 0 ? `, roughly $${cost.toFixed(2)}` : "";
+  const costText = cost > 0 ? `, ${roughCost(cost)}` : "";
   return `Deep tries more rewrites on more test models. Expect about ${multiplier.toFixed(1)}× the work of this run${costText}.`;
 }
 
@@ -171,22 +185,51 @@ export default function App() {
     void getProviders(false).then(setProviders).catch(() => undefined);
   }, []);
 
+  // Bring back a result shown shortly before a reload.
+  const restoreLastResult = useCallback(() => {
+    const last = stored<RememberedResult>(LAST_RESULT_KEY);
+    if (!last || Date.now() - last.at > RESTORE_RESULT_MS) return;
+    void getRunResult(last.runId)
+      .then((found) => {
+        const restored = found.result;
+        if (!restored) return;
+        setResult((current) => current ?? restored);
+        const original = originalPromptOf(restored);
+        if (original) setPrompt((current) => current || original);
+      })
+      .catch(() => store(LAST_RESULT_KEY, null));
+  }, []);
+
   // Reattach to a run that was in progress before a reload or dropped connection.
   useEffect(() => {
-    const stored = rememberedRun();
-    if (stored?.prompt) setPrompt((current) => current || stored.prompt);
-    const lookup = stored
-      ? getJob(stored.runId).then((found) => [found])
+    const remembered = rememberedRun();
+    if (remembered?.prompt) setPrompt((current) => current || remembered.prompt);
+    const lookup = remembered
+      ? getJob(remembered.runId).then((found) => [found])
       : getActiveJobs();
     void lookup
       .then((found) => {
         const current = found[0];
-        if (!current) return;
+        if (!current) {
+          restoreLastResult();
+          return;
+        }
+        if (current.prompt) setPrompt((existing) => existing || current.prompt || "");
         if (current.state === "done") finish(current);
         else setJob(current);
       })
-      .catch(() => rememberRun(null));
-  }, [finish]);
+      .catch(() => {
+        rememberRun(null);
+        restoreLastResult();
+      });
+  }, [finish, restoreLastResult]);
+
+  useEffect(() => {
+    if (!result) return;
+    if (stored<RememberedResult>(LAST_RESULT_KEY)?.runId !== result.run_id) {
+      store(LAST_RESULT_KEY, { runId: result.run_id, at: Date.now() });
+    }
+  }, [result?.run_id]);
 
   useEffect(() => {
     if (!job || job.state === "done") return;
@@ -216,6 +259,7 @@ export default function App() {
     try {
       const started = await start();
       rememberRun({ runId: started.run_id, prompt });
+      store(LAST_RESULT_KEY, null);
       setResult(null);
       setJob(started);
     } catch (caught) {
@@ -322,8 +366,12 @@ export default function App() {
   const questions: ClarificationQuestion[] = !job && result?.status === "needs_input" ? (result.questions ?? []) : [];
   const assumptions = useMemo(() => (result ? reportAssumptions(result) : []), [result]);
   const estimate = estimateText(tier, estimates[tier]);
+  const progressEstimate = job?.kind === "deep" ? estimateText("deep", estimates.deep) : estimate;
   const outcome = result?.status === "completed" ? outcomeOf(result) : null;
   const gaps = result?.status === "completed" && result.original_kept ? confirmedGaps(result) : [];
+  const hints = result?.status === "completed" && result.original_kept ? possibleGapHints(result) : [];
+  // Deep only rewrites against a confirmed gap; without one it cannot do more.
+  const offerDeep = Boolean(result?.report.offer_deep) && gaps.length > 0;
 
   return (
     <main className="shell">
@@ -369,7 +417,7 @@ export default function App() {
             {job ? "Optimizing…" : "Optimize prompt"}
           </button>
         </div>
-        <p className="effort-estimate">{estimate}</p>
+        <p className="effort-estimate">{tierDescriptions[tier]} {estimate}</p>
         {selection && (
           <ModelPicker
             catalog={catalog}
@@ -386,7 +434,7 @@ export default function App() {
 
       {error && <p className="error" role="alert">{error}</p>}
 
-      {job && <RunProgress job={job} estimate={estimate} onCancel={() => void cancel()} />}
+      {job && <RunProgress job={job} estimate={progressEstimate} onCancel={() => void cancel()} />}
 
       {questions.length > 0 ? (
         <ClarificationPanel
@@ -422,8 +470,14 @@ export default function App() {
               <ul>{gaps.map((gap) => <li key={gap.key}>{humanize(gap.label)}</li>)}</ul>
             </div>
           )}
+          {hints.length > 0 && (
+            <div className="gap-list hint-list">
+              <p>Worth checking:</p>
+              <ul>{hints.map((hint) => <li key={hint}>{hint}</li>)}</ul>
+            </div>
+          )}
           {result.final_prompt && <pre className="final-prompt">{result.final_prompt}</pre>}
-          {Boolean(result.report.offer_deep) && (
+          {offerDeep && (
             <div className="deep-offer">
               <p>{deepOfferText(result)}</p>
               <button className="secondary" type="button" disabled={busy} onClick={() => void begin(() => startDeep(result.run_id))}>

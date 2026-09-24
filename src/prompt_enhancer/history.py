@@ -195,6 +195,7 @@ def _normalise_record(record: Mapping[str, Any], existing: Mapping[str, Any] | N
         "metadata": _jsonable(metadata),
         "feedback": feedback_value,
         "feedback_at": _first(source, "feedback_at", "feedbackAt", default=None),
+        "escalated_from": _escalated_from(report_map),
     }
 
 
@@ -288,7 +289,7 @@ class RunHistory:
                 "run_id", "id", "created_at", "updated_at", "status", "prompt", "original_prompt",
                 "final_prompt", "original_kept", "tier", "feedback", "feedback_at", "cost", "timings",
             )
-        } | {"models": detail.get("models", {})}
+        } | {"models": detail.get("models", {}), "escalated_from": detail.get("escalated_from")}
 
     @staticmethod
     def _metadata_value(metadata: Mapping[str, Any], path: str) -> Any:
@@ -426,3 +427,10 @@ def register_history_routes(app: Any, store: Any) -> Any:
 
     app.include_router(router)
     return app
+
+
+def _escalated_from(report: Mapping[str, Any]) -> str | None:
+    """The tier a Deep pass continued from, so history can show both attempts."""
+    escalation = report.get("escalation")
+    source = escalation.get("source_tier") if isinstance(escalation, Mapping) else None
+    return str(source) if source else None

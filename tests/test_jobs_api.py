@@ -35,6 +35,7 @@ def test_optimize_job_returns_run_id_at_once_and_finishes_with_the_result() -> N
     jobs.wait(run_id)
     job = client.get(f"/api/jobs/{run_id}").json()
     assert job["state"] == "done"
+    assert job["prompt"] == "Explain recursion."
     assert job["result"]["status"] == "completed"
     assert "diagnosing" in job["stages_seen"]
     assert client.get(f"/api/runs/{run_id}").status_code == 200

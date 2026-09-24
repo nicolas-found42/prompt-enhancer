@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { requestJson, type OptimizeResult } from "./api";
 import FailureCard from "./components/FailureCard";
 import { outcomeOf, record } from "./outcome";
@@ -13,6 +13,7 @@ export type RunSummary = {
   tier?: string | null;
   feedback?: "accept" | "reject" | null;
   cost?: Record<string, unknown>;
+  escalated_from?: string | null;
 };
 
 export type RunDetail = RunSummary & {
@@ -44,7 +45,15 @@ function badgeFor(run: RunSummary | RunDetail): Badge {
   if (run.status === "failed") return reportStatus === "cancelled" ? { label: "Cancelled", tone: "neutral" } : { label: "Failed", tone: "bad" };
   if (run.status === "needs_input") return { label: "Waiting for answers", tone: "warn" };
   if (run.original_kept === false) return { label: "Improved", tone: "good" };
-  return { label: "Kept original", tone: "neutral" };
+  return { label: "Unchanged", tone: "neutral" };
+}
+
+const feedbackText = { accept: "helpful", reject: "not helpful" } as const;
+
+/** "standard" or, after a Deep pass, "standard, then deep". */
+function tierText(run: RunSummary): string {
+  if (!run.tier) return "";
+  return run.escalated_from && run.escalated_from !== run.tier ? `${run.escalated_from}, then ${run.tier}` : run.tier;
 }
 
 function when(value?: string): string {
@@ -72,6 +81,12 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   const [selected, setSelected] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const details = useRef<HTMLElement | null>(null);
+
+  // Keep the opened details on screen; they appear under the clicked row.
+  useEffect(() => {
+    details.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selected?.run_id]);
 
   async function loadRuns(search = query) {
     setLoading(true);
@@ -90,6 +105,10 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
 
   async function openRun(runId: string) {
     setError(null);
+    if (selected?.run_id === runId) {
+      setSelected(null);
+      return;
+    }
     try {
       const run = await requestJson<RunDetail>(`/api/runs/${encodeURIComponent(runId)}`);
       setSelected(run);
@@ -120,6 +139,59 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
 
+  function renderDetails(run: RunDetail) {
+    return (
+      <article id="selected-run" aria-labelledby="selected-run-heading" ref={details}>
+        <div className="run-details-heading">
+          <h3 id="selected-run-heading">Run details</h3>
+          <span className={`badge badge-${badgeFor(run).tone}`}>{badgeFor(run).label}</span>
+        </div>
+        <p className="history-meta">
+          {[when(run.created_at), tierText(run), duration(run), money(run.cost)].filter(Boolean).join(" · ")}
+        </p>
+        {run.escalated_from && (
+          <p className="history-note">
+            This run started on {run.escalated_from} and then had a Deep pass; this shows the latest result.
+          </p>
+        )}
+        {run.status === "failed" && run.result ? (
+          <FailureCard result={{ ...run.result, report: record(run.result.report) }} />
+        ) : (
+          <>
+            {run.result?.status === "completed" && <p className="history-outcome">{outcomeOf(run.result).headline}</p>}
+            <h4>Your prompt</h4>
+            <pre className="history-text">{run.original_prompt ?? run.prompt}</pre>
+            {run.final_prompt && run.final_prompt !== (run.original_prompt ?? run.prompt) && (
+              <>
+                <h4>Final prompt</h4>
+                <pre className="history-text">{run.final_prompt}</pre>
+              </>
+            )}
+          </>
+        )}
+        <div className="history-actions">
+          {run.result && run.status !== "failed" && onOpen && (
+            <button type="button" className="secondary" onClick={() => onOpen(run.result as OptimizeResult)}>
+              Open this result
+            </button>
+          )}
+          {run.status === "completed" && (
+            <div role="group" aria-label="Was this helpful?" className="feedback-group">
+              <span>Was this helpful?</span>
+              <button type="button" className="secondary" onClick={() => void saveFeedback("accept")} aria-pressed={run.feedback === "accept"}>
+                Yes
+              </button>
+              <button type="button" className="secondary" onClick={() => void saveFeedback("reject")} aria-pressed={run.feedback === "reject"}>
+                No
+              </button>
+              {run.feedback ? <span role="status">Thanks, saved as {feedbackText[run.feedback]}.</span> : null}
+            </div>
+          )}
+        </div>
+      </article>
+    );
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void loadRuns();
@@ -144,62 +216,28 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
       {!loading && runs.length === 0 ? <p>No saved runs yet.</p> : null}
       {runs.length > 0 ? (
         <ul aria-label="Saved optimization runs">
-          {runs.map((run) => (
-            <li key={run.run_id}>
-              <button type="button" className="history-row" onClick={() => void openRun(run.run_id)} aria-pressed={selected?.run_id === run.run_id}>
-                <span className={`badge badge-${badgeFor(run).tone}`}>{badgeFor(run).label}</span>
-                <span className="history-prompt">{run.prompt}</span>
-                <span className="history-meta">
-                  {[when(run.created_at), run.tier, run.feedback ? `you ${run.feedback}ed it` : ""].filter(Boolean).join(" · ")}
-                </span>
-              </button>
-            </li>
-          ))}
+          {runs.map((run) => {
+            const open = selected?.run_id === run.run_id;
+            return (
+              <li key={run.run_id}>
+                <button
+                  type="button"
+                  className="history-row"
+                  onClick={() => void openRun(run.run_id)}
+                  aria-expanded={open}
+                  aria-controls={open ? "selected-run" : undefined}
+                >
+                  <span className={`badge badge-${badgeFor(run).tone}`}>{badgeFor(run).label}</span>
+                  <span className="history-prompt">{run.prompt}</span>
+                  <span className="history-meta">
+                    {[when(run.created_at), tierText(run), run.feedback ? `you found it ${feedbackText[run.feedback]}` : ""].filter(Boolean).join(" · ")}
+                  </span>
+                </button>
+                {open && selected ? renderDetails(selected) : null}
+              </li>
+            );
+          })}
         </ul>
-      ) : null}
-      {selected ? (
-        <article aria-labelledby="selected-run-heading">
-          <div className="run-details-heading">
-            <h3 id="selected-run-heading">Run details</h3>
-            <span className={`badge badge-${badgeFor(selected).tone}`}>{badgeFor(selected).label}</span>
-          </div>
-          <p className="history-meta">
-            {[when(selected.created_at), selected.tier, duration(selected), money(selected.cost)].filter(Boolean).join(" · ")}
-          </p>
-          {selected.status === "failed" && selected.result ? (
-            <FailureCard result={{ ...selected.result, report: record(selected.result.report) }} />
-          ) : (
-            <>
-              {selected.result?.status === "completed" && <p className="history-outcome">{outcomeOf(selected.result).headline}</p>}
-              <h4>Your prompt</h4>
-              <pre className="history-text">{selected.original_prompt ?? selected.prompt}</pre>
-              {selected.final_prompt && selected.final_prompt !== (selected.original_prompt ?? selected.prompt) && (
-                <>
-                  <h4>Final prompt</h4>
-                  <pre className="history-text">{selected.final_prompt}</pre>
-                </>
-              )}
-            </>
-          )}
-          <div className="history-actions">
-            {selected.result && selected.status !== "failed" && onOpen && (
-              <button type="button" className="secondary" onClick={() => onOpen(selected.result as OptimizeResult)}>
-                Open in result view
-              </button>
-            )}
-            {selected.status === "completed" && (
-              <div role="group" aria-label="Result feedback" className="feedback-group">
-                <button type="button" className="secondary" onClick={() => void saveFeedback("accept")} aria-pressed={selected.feedback === "accept"}>
-                  Accept result
-                </button>
-                <button type="button" className="secondary" onClick={() => void saveFeedback("reject")} aria-pressed={selected.feedback === "reject"}>
-                  Reject result
-                </button>
-                {selected.feedback ? <span> Saved feedback: {selected.feedback}</span> : null}
-              </div>
-            )}
-          </div>
-        </article>
       ) : null}
     </section>
   );

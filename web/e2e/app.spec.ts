@@ -57,13 +57,15 @@ test("clarification, assumption editing, history, and feedback use the local API
   await page.reload();
   await page.getByRole("list", { name: "Saved optimization runs" }).getByRole("button").click();
   await expect(page.getByRole("heading", { name: "Run details" })).toBeVisible();
-  await expect(page.getByText(/goal: Analyze/)).toBeVisible();
-  await page.getByRole("button", { name: "Accept result" }).click();
-  await expect(page.getByText("Saved feedback: accept")).toBeVisible();
+  await expect(page.locator("#selected-run").getByText(/goal: Analyze/)).toBeVisible();
+  await page.getByRole("button", { name: "Yes", exact: true }).click();
+  await expect(page.getByText("Thanks, saved as helpful.")).toBeVisible();
   await page.reload();
+  // The result shown before the reload comes back instead of vanishing.
+  await expect(page.getByRole("heading", { name: "Updated prompt" })).toBeVisible();
   await page.getByRole("list", { name: "Saved optimization runs" }).getByRole("button").click();
-  await expect(page.getByText("Saved feedback: accept")).toBeVisible();
-  await page.getByRole("button", { name: "Open in result view" }).click();
+  await expect(page.getByText("Thanks, saved as helpful.")).toBeVisible();
+  await page.getByRole("button", { name: "Open this result" }).click();
   await expect(page.locator(".final-prompt")).toContainText("goal: Analyze");
 });
 
@@ -92,6 +94,7 @@ test("a retained original with weak evidence says it could not be improved", asy
   await expect(page.getByText(/It is missing relevant context/)).toBeVisible();
   await expect(page.getByText(/passed only 0% of checks/)).toBeVisible();
   await expect(page.getByText(/about 5\.6× the work of this run, roughly \$0\.01/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try a Deep pass" })).toBeVisible();
   await page.getByText("View report").click();
   const row = page.getByRole("row", { name: /weak-one/ });
   await expect(row.getByRole("cell")).toHaveText(["weak-one", "75%", "75%"]);
@@ -102,13 +105,80 @@ test("a retained original with weak evidence says it could not be improved", asy
 test("a prompt with no gaps and strong results says it already works", async ({ page }) => {
   await mockRun(page, {
     ...completedBase, run_id: "clear-1", original_prompt: "Write two sentences.", final_prompt: "Write two sentences.",
-    report: { status: "no_change", diagnosis: { confirmed_gaps: [], problem_sentences: [] }, tests: [] },
+    report: {
+      status: "no_change", diagnosis: { confirmed_gaps: [], problem_sentences: [] }, tests: [],
+      selection_evidence: { original_score: { per_model: { "weak-one": 0.9, "weak-two": 1 } } },
+    },
   });
   await page.goto("/");
   await page.getByLabel("Your prompt").fill("Write two sentences.");
   await page.getByRole("button", { name: "Optimize prompt" }).click();
 
   await expect(page.getByRole("heading", { name: "Your prompt already works well" })).toBeVisible();
+  await expect(page.getByText(/passed at least 90% of checks on every test model/)).toBeVisible();
+});
+
+test("an untested prompt is not called good, near misses are hinted, and Deep is not offered", async ({ page }) => {
+  const prompt = "Tell the lads about the new rules for the vans. Keep it short.";
+  await mockRun(page, {
+    ...completedBase, run_id: "untested-1", original_prompt: prompt, final_prompt: prompt,
+    report: {
+      status: "no_change",
+      diagnosis: {
+        confirmed_gaps: [], problem_sentences: [],
+        possible_gaps: [{
+          key: "outside_reference", label: "details only you know", missing_probability: 0.86, threshold: 0.9,
+          sentence: "Tell the lads about the new rules for the vans.",
+        }],
+      },
+      tests: [{ id: "test-1", question: "Is it short?" }],
+      offer_deep: { expected_evaluation_multiplier: 5.625 },
+    },
+  });
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill(prompt);
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+
+  await expect(page.getByRole("heading", { name: "We didn't find anything to fix" })).toBeVisible();
+  await expect(page.getByText("Your prompt wasn't tested on other models.", { exact: false })).toBeVisible();
+  await expect(page.getByText("Your prompt already works well")).toHaveCount(0);
+  await expect(page.getByText(/It may depend on details only you know, such as what “Tell the lads about the new rules for the vans\.” refers to/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Try a Deep pass" })).toHaveCount(0);
+});
+
+test("opening a history run shows its details next to the row", async ({ page }) => {
+  const runs = Array.from({ length: 12 }, (_, index) => ({
+    run_id: `hist-${index}`, created_at: "2026-09-24T04:00:00Z", status: "completed",
+    prompt: `Saved prompt number ${index}`, final_prompt: `Saved prompt number ${index}`, original_kept: true,
+    tier: index === 0 ? "deep" : "standard", escalated_from: index === 0 ? "standard" : null,
+  }));
+  await page.route("**/api/runs?*", (route) => route.fulfill({ json: runs }));
+  await page.route("**/api/runs/hist-*", (route) => {
+    const run = runs.find((item) => route.request().url().endsWith(item.run_id))!;
+    return route.fulfill({ json: { ...run, original_prompt: run.prompt, timings: { total_ms: 28000 }, cost: { total: 0.0001 } } });
+  });
+  await page.route("**/api/estimates", (route) => route.fulfill({
+    json: { standard: { runs: 4, minutes: [0.3, 6.6], cost: [0.001, 0.012] } },
+  }));
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.goto("/");
+  await expect(page.getByText(/Standard: up to 2 rounds of rewrites, tried on 3 test models\. Usually under a minute, up to 7 min/)).toBeVisible();
+
+  const list = page.getByRole("list", { name: "Saved optimization runs" });
+  const first = list.getByRole("button", { name: /Saved prompt number 0/ });
+  await expect(first).toContainText("Unchanged");
+  await expect(first).toContainText("standard, then deep");
+  await first.click();
+  await expect(first).toHaveAttribute("aria-expanded", "true");
+  await expect(page.getByRole("heading", { name: "Run details" })).toBeInViewport();
+  await expect(page.getByText(/started on standard and then had a Deep pass/)).toBeVisible();
+  await first.click();
+  await expect(page.getByRole("heading", { name: "Run details" })).toHaveCount(0);
+
+  const later = list.getByRole("button", { name: /Saved prompt number 6/ });
+  await later.click();
+  await expect(page.getByRole("heading", { name: "Run details" })).toBeInViewport();
+  await expect(page.locator("#selected-run")).toContainText("Saved prompt number 6");
 });
 
 test("a failed run explains the provider problem and offers a fix", async ({ page }) => {
@@ -169,6 +239,18 @@ test("a running job shows its stage, elapsed time, and can be cancelled", async 
   await expect(page.getByRole("textbox", { name: "Your prompt" })).toHaveValue("Plan a trip.");
   await page.getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("heading", { name: "Run cancelled" })).toBeVisible();
+});
+
+test("another tab joining a running job shows which prompt it is working on", async ({ page }) => {
+  const running = job("other-tab-1", "running", null, { prompt: "Write the van rules notice." });
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [running] }));
+  await page.route("**/api/jobs/other-tab-1", (route) => route.fulfill({ json: running }));
+
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Improving your prompt" })).toBeVisible();
+  await expect(page.locator(".progress-prompt")).toHaveText("Write the van rules notice.");
+  await expect(page.getByRole("textbox", { name: "Your prompt" })).toHaveValue("Write the van rules notice.");
 });
 
 test("a refused provider shows a banner that switches to fallback models", async ({ page }) => {
