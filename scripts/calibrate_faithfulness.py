@@ -10,16 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-
-def _metrics(rows: list[tuple[float, bool]], threshold: float) -> dict[str, float | int]:
-    tp = sum(probability >= threshold and truth for probability, truth in rows)
-    fp = sum(probability >= threshold and not truth for probability, truth in rows)
-    fn = sum(probability < threshold and truth for probability, truth in rows)
-    tn = sum(probability < threshold and not truth for probability, truth in rows)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f05 = 1.25 * precision * recall / (0.25 * precision + recall) if precision + recall else 0.0
-    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "precision": precision, "recall": recall, "f0_5": f05}
+from evaluation_review_common import binary_metrics
 
 
 def calibrate(review_path: Path, evidence_path: Path, *, minimum: int = 80) -> dict[str, Any]:
@@ -57,13 +48,13 @@ def calibrate(review_path: Path, evidence_path: Path, *, minimum: int = 80) -> d
     if not train or not holdout:
         raise ValueError("training and held-out groups must both contain human judgments")
     thresholds = tuple(value / 100 for value in range(50, 96))
-    selected = max(thresholds, key=lambda value: (_metrics(train, value)["f0_5"], value))
+    selected = max(thresholds, key=lambda value: (binary_metrics(train, value)["f0_5"], value))
     return {
         "question": evidence["question"], "reviewed": len(train) + len(holdout), "uncertain": uncertain,
         "train_count": len(train), "holdout_count": len(holdout), "selection": "Maximum training F0.5 on 0.50–0.95 grid; source conversations grouped; higher cutoff breaks ties",
         "current_threshold": 0.9, "selected_threshold": selected,
-        "current_train": _metrics(train, 0.9), "selected_train": _metrics(train, selected),
-        "current_holdout": _metrics(holdout, 0.9), "selected_holdout": _metrics(holdout, selected),
+        "current_train": binary_metrics(train, 0.9), "selected_train": binary_metrics(train, selected),
+        "current_holdout": binary_metrics(holdout, 0.9), "selected_holdout": binary_metrics(holdout, selected),
     }
 
 

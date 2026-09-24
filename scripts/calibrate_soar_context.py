@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from evaluation_review_common import binary_metrics
+
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import default_gap_question
 from prompt_enhancer.evaluation.datasets import load_dataset, replay_digest
@@ -23,14 +25,7 @@ Row = tuple[str, float, bool, bool]
 
 
 def _metrics(rows: list[Row], threshold: float) -> dict[str, float | int]:
-    tp = sum(probability >= threshold and expected for _, probability, expected, _ in rows)
-    fp = sum(probability >= threshold and not expected for _, probability, expected, _ in rows)
-    fn = sum(probability < threshold and expected for _, probability, expected, _ in rows)
-    tn = sum(probability < threshold and not expected for _, probability, expected, _ in rows)
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f05 = 1.25 * precision * recall / (0.25 * precision + recall) if precision + recall else 0.0
-    return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "precision": precision, "recall": recall, "f0_5": f05}
+    return binary_metrics(((probability, expected) for _, probability, expected, _ in rows), threshold)
 
 
 def calibrate(dataset_path: Path, replay_path: Path, *, thresholds: tuple[float, ...] = THRESHOLDS, question_text: str = CONTEXT_QUESTION) -> dict[str, Any]:

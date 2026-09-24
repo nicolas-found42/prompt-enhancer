@@ -106,8 +106,8 @@ replay on status, diagnosed gaps, final prompt, scores, cost, and latency.
 
 The sole comparable case asked the agent to fix a failing repository test
 without the relevant repository context. Both writers proposed a rewrite, but
-the candidate failed fidelity and the strong check; both weak-panel scores
-were 0.0 and the original was retained. The five unscored cases have no
+the candidate failed fidelity, so its strong check was not run. Both weak-panel
+scores were 0.0 and the original was retained. The five unscored cases have no
 measured improvement outcome. The intentionally withheld details make some
 labels less determinable from the visible prompt than a human-reviewed gap
 label; use this pilot to exercise live paths and task breadth, not as a

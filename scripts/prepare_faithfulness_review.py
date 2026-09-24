@@ -10,16 +10,16 @@ import argparse
 import csv
 import hashlib
 import json
-import re
 from pathlib import Path
 from typing import Any
+
+from evaluation_review_common import has_soar_placeholder
 
 from prompt_enhancer.evaluation.datasets import load_dataset, replay_digest
 from prompt_enhancer.evaluation.harness import HarnessOptions, default_engine_factory
 from prompt_enhancer.jev import NoulDecision, parse_decision
 from prompt_enhancer.optimizer import PromptOptimizer
 
-_PLACEHOLDER = re.compile(r"\[[A-Z _]{3,}\]|<[^>]{3,}>|\b(?:placeholder|omitted|removed|redacted|code snippet)\b", re.IGNORECASE)
 FIELDS = ("row_id", "source_case_id", "writer", "prompt", "proposed_test", "human_faithful", "human_notes", "human_reviewer", "reviewed_at")
 
 
@@ -35,7 +35,7 @@ def collect(dataset_path: Path, replays: dict[str, Path], *, per_writer: int = 5
         options = HarnessOptions(tier="fast", model_overrides={"writer": writer} if writer != "space-bunny-free" else {})
         candidates = []
         for case in dataset.cases:
-            if case.metadata.get("turn") != 1 or _PLACEHOLDER.search(case.prompt):
+            if case.metadata.get("turn") != 1 or has_soar_placeholder(case.prompt):
                 continue
             engine.gateway.decision_log.clear()
             result = engine.optimize(case.prompt, options.optimize_options())

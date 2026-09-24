@@ -13,16 +13,15 @@ import csv
 import hashlib
 import io
 import json
-import re
 import sys
 from pathlib import Path
 from urllib.request import urlopen
 
+from evaluation_review_common import has_soar_placeholder
 from prepare_soar_prompt_gaps import COMMIT, SOURCE
 
 POSITIVE_COUNT = 80
 NEGATIVE_COUNT = 70
-_PLACEHOLDER = re.compile(r"\[[A-Z _]{3,}\]|<[^>]{3,}>|\b(?:placeholder|omitted|removed|redacted|code snippet)\b", re.IGNORECASE)
 
 
 def prepare(text: str, *, split: str = "development") -> dict[str, object]:
@@ -38,7 +37,7 @@ def prepare(text: str, *, split: str = "development") -> dict[str, object]:
             continue
         prompt = prompts[0]
         labels = {str(label).lower() for label in annotations[0]}
-        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000 or _PLACEHOLDER.search(prompt):
+        if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 8000 or has_soar_placeholder(prompt):
             continue
         case = {
             "id": f"soar-first-{row['conversation_id']}", "source": "real", "prompt": prompt,
