@@ -2,11 +2,70 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any, Literal, NotRequired, TypedDict
 from uuid import uuid4
 
-Tier = Literal["fast", "standard", "deep"]
+
+@dataclass(frozen=True)
+class TierBudget:
+    """The hard search budget for one tier: per round, and how many rounds."""
+
+    candidates: int
+    models: int
+    samples: int
+    max_rounds: int
+    name: str = "standard"
+
+    def to_dict(self) -> dict[str, int | str]:
+        return {
+            "tier": self.name,
+            "candidates": self.candidates,
+            "models": self.models,
+            "samples": self.samples,
+            "max_rounds": self.max_rounds,
+        }
+
+
+class Tier(StrEnum):
+    """How much effort a run spends: Fast, Standard, or Deep."""
+
+    FAST = "fast"
+    STANDARD = "standard"
+    DEEP = "deep"
+
+    @classmethod
+    def parse(cls, value: Any) -> Tier:
+        """Read a tier from user input; a missing tier means Standard."""
+        tier = str(value or "standard").strip().lower()
+        try:
+            return cls(tier)
+        except ValueError:
+            raise ValueError("tier must be one of: fast, standard, deep") from None
+
+    @property
+    def budget(self) -> TierBudget:
+        return _BUDGETS[self]
+
+    @property
+    def max_rounds(self) -> int:
+        return self.budget.max_rounds
+
+    @property
+    def weak_model_evaluations(self) -> int:
+        """Weak-model outputs the tier may run across all of its rounds."""
+        budget = self.budget
+        return budget.candidates * budget.models * budget.samples * budget.max_rounds
+
+
+_BUDGETS: dict[Tier, TierBudget] = {
+    Tier.FAST: TierBudget(candidates=3, models=2, samples=1, max_rounds=1, name="fast"),
+    Tier.STANDARD: TierBudget(candidates=4, models=3, samples=2, max_rounds=2, name="standard"),
+    Tier.DEEP: TierBudget(candidates=6, models=5, samples=3, max_rounds=3, name="deep"),
+}
+
 RunStatus = Literal["completed", "needs_input", "failed"]
 
 
@@ -38,10 +97,3 @@ def utc_now() -> str:
 
 def new_run_id() -> str:
     return uuid4().hex
-
-
-def normalize_tier(value: Any) -> str:
-    tier = str(value or "standard").strip().lower()
-    if tier in {"fast", "standard", "deep"}:
-        return tier
-    raise ValueError("tier must be one of: fast, standard, deep")

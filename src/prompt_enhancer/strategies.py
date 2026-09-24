@@ -11,6 +11,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from .models import Tier, TierBudget
+
 StrategyKind = Literal["safe", "crutch"]
 
 
@@ -107,65 +109,6 @@ STRATEGY_LIBRARY: tuple[RewriteStrategy, ...] = (
 
 # A short alias is useful to callers and keeps the public API discoverable.
 STRATEGIES = STRATEGY_LIBRARY
-
-
-@dataclass(frozen=True)
-class TierBudget:
-    """The hard search budget for one optimization tier."""
-
-    candidates: int
-    models: int
-    samples: int
-    max_rounds: int
-    name: str = "standard"
-
-    @property
-    def candidate_count(self) -> int:
-        return self.candidates
-
-    @property
-    def model_count(self) -> int:
-        return self.models
-
-    @property
-    def sample_count(self) -> int:
-        return self.samples
-
-    @property
-    def round_count(self) -> int:
-        return self.max_rounds
-
-    def to_dict(self) -> dict[str, int | str]:
-        return {
-            "tier": self.name,
-            "candidates": self.candidates,
-            "models": self.models,
-            "samples": self.samples,
-            "max_rounds": self.max_rounds,
-        }
-
-
-FAST_BUDGET = TierBudget(candidates=3, models=2, samples=1, max_rounds=1, name="fast")
-STANDARD_BUDGET = TierBudget(
-    candidates=4, models=3, samples=2, max_rounds=2, name="standard"
-)
-DEEP_BUDGET = TierBudget(candidates=6, models=5, samples=3, max_rounds=3, name="deep")
-BUDGETS: Mapping[str, TierBudget] = {
-    "fast": FAST_BUDGET,
-    "standard": STANDARD_BUDGET,
-    "deep": DEEP_BUDGET,
-}
-
-
-def budget_for_tier(tier: str | TierBudget) -> TierBudget:
-    """Return a validated budget for ``fast``, ``standard``, or ``deep``."""
-
-    if isinstance(tier, TierBudget):
-        return tier
-    try:
-        return BUDGETS[tier.lower()]
-    except (AttributeError, KeyError) as exc:
-        raise ValueError(f"unknown tier: {tier!r}") from exc
 
 
 @dataclass(frozen=True)
@@ -419,7 +362,7 @@ def _writer_texts(
 def search_strategies(
     prompt: str,
     diagnosis: Any = None,
-    tier: str | TierBudget = "standard",
+    tier: Tier | str = "standard",
     *,
     budget: TierBudget | None = None,
     strategies: Iterable[RewriteStrategy] = STRATEGY_LIBRARY,
@@ -437,7 +380,7 @@ def search_strategies(
     disappearing silently.
     """
 
-    selected_budget = budget or budget_for_tier(tier)
+    selected_budget = budget or Tier.parse(tier).budget
     failures = tuple(
         str(item)
         for item in (
@@ -530,10 +473,6 @@ def search_strategies(
 
 
 __all__ = [
-    "BUDGETS",
-    "DEEP_BUDGET",
-    "FAST_BUDGET",
-    "STANDARD_BUDGET",
     "STRATEGIES",
     "STRATEGY_LIBRARY",
     "CandidateBatchRequest",
@@ -542,7 +481,5 @@ __all__ = [
     "StrategyKind",
     "StrategyRejection",
     "StrategySearchResult",
-    "TierBudget",
-    "budget_for_tier",
     "search_strategies",
 ]

@@ -110,6 +110,7 @@ def test_round_picks_a_verified_winner_and_reports_the_losers() -> None:
     assert outcome.original_kept is False
     assert outcome.final_prompt.startswith("Rewrite ")
     assert outcome.selected_candidate_id is not None
+    assert outcome.selected_strategy == _candidates(outcome)[outcome.selected_candidate_id]["strategy"]
     assert {failure.candidate_id for failure in outcome.failures} == set(_candidates(outcome)) - {outcome.selected_candidate_id}
     assert outcome.continue_rounds is False
 
@@ -154,6 +155,7 @@ def test_round_keeps_the_prompt_when_no_candidate_beats_it() -> None:
 
     assert outcome.original_kept is True
     assert outcome.status == "no_change"
+    assert outcome.selected_strategy is None
     assert outcome.failures and outcome.continue_rounds is True
     assert all("weak pass rates" in failure.summary for failure in outcome.failures)
 
