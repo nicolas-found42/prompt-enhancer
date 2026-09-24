@@ -56,6 +56,12 @@ uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
+The web toolchain uses TypeScript 7 for `tsc` through the `@typescript/native`
+npm alias. The `typescript` alias points to `@typescript/typescript6` because
+`typescript-eslint` still needs the TypeScript 6 compiler API. This follows
+[TypeScript's side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60)
+and keeps `npm ci` compatible with the linter's peer dependencies.
+
 The commit hook checks file hygiene, GitHub Actions syntax, staged secrets,
 and `uv.lock`; lints and formats staged Python and web files; then checks
 Python types and dependencies, builds the web app, and runs pytest with an
