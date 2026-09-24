@@ -195,8 +195,23 @@ def grade_panel_with_jev(
                 try:
                     first = parse_decision(responses[pair_index])
                     second = parse_decision(responses[pair_index + 1])
-                    if kind == "choice" and isinstance(first, ChoiceDecision) and isinstance(second, ChoiceDecision) or kind == "score" and isinstance(first, ScoreDecision) and isinstance(second, ScoreDecision):
+                    if kind == "choice" and isinstance(first, ChoiceDecision) and isinstance(second, ChoiceDecision):
                         test_scores.append(min(first.probabilities.get(expected, 0.0), second.probabilities.get(expected, 0.0)))
+                    elif kind == "score" and isinstance(first, ScoreDecision) and isinstance(second, ScoreDecision):
+                        levels = tuple(str(level) for level in test.get("levels", ()))
+                        if expected not in levels:
+                            test_scores.append(0.0)
+                        else:
+                            first_index = levels.index(expected)
+                            second_index = len(levels) - 1 - first_index
+                            # Score answers use level indexes; the score is their weighted mean.
+                            # A test passes to the extent Jev assigns mass at or above the
+                            # expected semantic level. The reversed ask puts higher
+                            # levels at lower indexes.
+                            test_scores.append(min(
+                                sum(probability for index, probability in first.probabilities.items() if int(index) >= first_index),
+                                sum(probability for index, probability in second.probabilities.items() if int(index) <= second_index),
+                            ))
                     else:
                         test_scores.append(0.0)
                 except ValueError:

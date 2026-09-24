@@ -216,6 +216,53 @@ def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> N
     assert result["report"]["tests"][0]["kind"] == "noul"
 
 
+@pytest.mark.parametrize("second_is_good", [True, False])
+def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels(second_is_good: bool) -> None:
+    levels = ["Neither", "Partial", "Good", "Excellent"]
+    seen_criteria = []
+
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            if "state.strategies" in messages[0]["content"]:
+                return json.dumps({strategy: "Answer my question clearly." for strategy in ("add_missing_context", "specify_output_format", "add_done_criteria")})
+            return json.dumps({"tests": [{"question": "How well does the output answer?", "kind": "score", "expected": "2: Good", "levels": [f"{index}: {level}" for index, level in enumerate(levels)]}], "add_missing_context": "Answer clearly"})
+        return "A good answer."
+
+    def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        if request.get("type") == "score":
+            criteria = request["criteria"]
+            seen_criteria.append(criteria)
+            assert criteria in (levels, list(reversed(levels)))
+            reverse = key.endswith("_second")
+            return {
+                "type": "score", "score": (0.5 if second_is_good else 2.6) if reverse else 2.45,
+                "probabilities": (
+                    ({"0": 0.6, "1": 0.3, "2": 0.1, "3": 0.0} if second_is_good else {"0": 0.0, "1": 0.0, "2": 0.4, "3": 0.6})
+                    if reverse else {"0": 0, "1": 0.1, "2": 0.45, "3": 0.45}
+                ),
+                "legend": {str(index): level for index, level in enumerate(criteria)},
+                "confidence": 0.9,
+            }
+        if request.get("type") == "choice":
+            choice = "general" if key == "task_type" else "add_missing_context" if key == "strategy_choice" else "none"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+        probability = 1.0 if key.startswith(("gap:goal", "faithful:", "strategy_recheck:")) else 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    store = RunStore(":memory:")
+    result = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide)).optimize(
+        "Answer my question.", {"tier": "fast", "clarification_allowed": False}
+    )
+
+    assert result["status"] == "completed"
+    assert seen_criteria
+    record = store.get_run(result["run_id"])
+    assert record is not None
+    assert (record["original_weak_panel"]["mean_pass_rate"] > 0) is second_is_good
+    assert result["report"]["tests"][0]["levels"] == tuple(levels)
+
+
 def test_task_taxonomy_descends_to_a_research_leaf() -> None:
     def decide(request, **_kwargs):
         if request.get("key") == "task_type":

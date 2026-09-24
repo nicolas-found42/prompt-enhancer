@@ -47,13 +47,15 @@ class ScoreLevel:
 
 @dataclass(frozen=True, slots=True)
 class ScoreDecision:
-    level: int | float | str
+    score: float
+    level: int
     levels: tuple[ScoreLevel, ...]
+    legend: dict[str, str]
     confidence: float
 
     @property
-    def probabilities(self) -> dict[int | float | str, float]:
-        return {option.level: option.probability for option in self.levels}
+    def probabilities(self) -> dict[str, float]:
+        return {str(option.level): option.probability for option in self.levels}
 
 
 JevDecision: TypeAlias = NoulDecision | ChoiceDecision | ScoreDecision
@@ -228,17 +230,31 @@ def parse_decision(payload: Any) -> JevDecision:
             ScoreLevel(level=value, probability=probability)
             for value, probability in _probability_items(raw_levels)
         )
-        level_value: int | float | str
-        selected = _selected(body, [option.level for option in levels], field="score")
+        raw_score = body.get("score")
+        if raw_score is None:
+            raise JevResponseError("score is required")
         try:
-            level_value = int(selected)
-        except ValueError:
-            try:
-                level_value = float(selected)
-            except ValueError:
-                level_value = selected
-        if str(level_value) not in {str(option.level) for option in levels}:
-            raise JevResponseError("score must name one of the returned levels")
-        return ScoreDecision(level=level_value, levels=levels, confidence=_confidence(body))
+            score = float(raw_score)
+        except (TypeError, ValueError) as exc:
+            raise JevResponseError("score must be numeric") from exc
+        if not math.isfinite(score):
+            raise JevResponseError("score must be finite")
+        highest_probability = max(option.probability for option in levels)
+        try:
+            level = min(
+                int(option.level) for option in levels if option.probability == highest_probability
+            )
+        except ValueError as exc:
+            raise JevResponseError("score levels must have numeric indexes") from exc
+        raw_legend = body.get("legend", {})
+        if not isinstance(raw_legend, Mapping):
+            raise JevResponseError("score legend must be a mapping")
+        return ScoreDecision(
+            score=score,
+            level=level,
+            levels=levels,
+            legend={str(key): str(value) for key, value in raw_legend.items()},
+            confidence=_confidence(body),
+        )
 
     raise JevResponseError(f"unsupported Jev decision kind: {kind or 'unknown'}")
