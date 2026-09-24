@@ -8,7 +8,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from ..catalog import JEV_MODEL
 from ..diagnosis import DEFAULT_RUBRIC, checklist_impacts, checklist_keys
 from ..gateway import Gateway, ReplayGateway
 
@@ -18,6 +17,7 @@ class RecordingGateway:
         self.gateway = gateway
         self.path = path
         self.responses: dict[str, Any] = {}
+        self.decision_provenance: dict[str, dict[str, Any]] = {}
         self.case_latency_ms: dict[str, float] = {}
         self.case_costs: dict[str, dict[str, Any]] = {}
         self.rubric_thresholds: dict[str, float] | None = None
@@ -48,6 +48,8 @@ class RecordingGateway:
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
         bundle: dict[str, Any] = {
             "responses": self.responses,
+            "decision_provenance": self.decision_provenance,
+            "jev_model": self.gateway.jev_model,
             "case_latency_ms": self.case_latency_ms,
             "case_costs": self.case_costs,
             "rubric_thresholds": self.rubric_thresholds,
@@ -87,13 +89,22 @@ class RecordingGateway:
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
         answer = self.gateway.decide(payload, role=role, run_id=run_id)
-        return self._record("decide", JEV_MODEL, request, role, answer)
+        self._record_provenance(request, role)
+        return self._record("decide", self.gateway.jev_model, request, role, answer)
 
     def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
         answers = self.gateway.decide_batch(requests, role=role, run_id=run_id)
         for request, answer in zip(requests, answers, strict=True):
-            self._record("decide", JEV_MODEL, dict(request), role, answer)
+            self._record_provenance(request, role)
+            self._record("decide", self.gateway.jev_model, dict(request), role, answer)
         return answers
+
+    def _record_provenance(self, request: Mapping[str, Any], role: str) -> None:
+        entry = next((item for item in reversed(self.gateway.decision_log) if item["question"] == dict(request)), None)
+        if entry is None or not entry.get("answered_by"):
+            raise ValueError("Jev decision has no answering snapshot")
+        key = ReplayGateway.request_key("decide", self.gateway.jev_model, dict(request), role)
+        self.decision_provenance[key] = {"answered_by": entry["answered_by"], "usage": entry.get("usage", {})}
 
     def list_models(self, *, refresh: bool = False) -> Any:
         # The model catalog and ledger are not part of the Gateway interface.
@@ -105,6 +116,10 @@ class RecordingGateway:
     @property
     def decision_log(self) -> list[dict[str, Any]]:
         return self.gateway.decision_log
+
+    @property
+    def jev_model(self) -> str:
+        return self.gateway.jev_model
 
     @property
     def usage(self) -> Any:

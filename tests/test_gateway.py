@@ -115,7 +115,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
         [
             Response(200, {"usage": {"prompt_tokens": 2, "completion_tokens": 3}}),
             Response(200, {"usage": {"prompt_tokens": 1, "completion_tokens": 1}}),
-            Response(200, {"answers": {"decision": {"type": "noul", "noul": 0.9}}}),
+            Response(200, {"model": JEV_MODEL, "answers": {"decision": {"type": "noul", "noul": 0.9}}}),
         ]
     )
     catalog = StaticModelCatalog(
@@ -242,6 +242,7 @@ def test_usage_ledger_splits_roles():
 def test_jev_requests_use_decisions_api_and_return_typed_answer_payload():
     transport = QueueTransport([
         Response(200, {
+            "model": JEV_MODEL,
             "answers": {"meaning": {"type": "noul", "noul": 0.95}},
             "usage": {"input_tokens": 100, "output_tokens": 1, "cost": 0.0000042},
         }),
@@ -267,11 +268,13 @@ def test_jev_requests_use_decisions_api_and_return_typed_answer_payload():
         "questions": {"meaning": {"type": "noul", "instructions": "Does the rewrite preserve the request?"}},
     }
     assert gateway.usage_report()["total"] == pytest.approx(0.0000042)
+    assert gateway.decision_log[0]["answered_by"] == JEV_MODEL
+    assert gateway.decision_log[0]["usage"]["cost"] == pytest.approx(0.0000042)
 
 
 def test_decide_batch_sends_one_request_for_multiple_questions():
     transport = QueueTransport([
-        Response(200, {"answers": {
+        Response(200, {"model": JEV_MODEL, "answers": {
             "gap:goal": {"type": "noul", "noul": 0.91},
             "gap:context": {"type": "noul", "noul": 0.12},
         }}),
@@ -283,3 +286,28 @@ def test_decide_batch_sends_one_request_for_multiple_questions():
     ])
     assert [answer["noul"] for answer in answers] == [0.91, 0.12]
     assert len(transport.requests) == 1
+    assert all(entry["answered_by"] == JEV_MODEL for entry in gateway.decision_log)
+
+
+def test_jev_response_without_model_snapshot_is_rejected():
+    gateway = HttpGateway(QueueTransport([Response(200, {"answers": {"decision": {"type": "noul", "noul": 0.5}}})]), config=GatewayConfig(max_retries=0))
+    with pytest.raises(ProviderError, match="missing model snapshot"):
+        gateway.decide({"state": "prompt", "instructions": "judge"})
+
+
+def test_529_retry_honors_retry_after():
+    delays = []
+    transport = QueueTransport([{"status_code": 529, "headers": {"Retry-After": "2"}}, Response(200, {"ok": True})])
+    gateway = HttpGateway(transport, config=GatewayConfig(max_retries=1), sleep=delays.append)
+    assert gateway.chat("model", "prompt") == {"ok": True}
+    assert delays == [2.0]
+    assert len(transport.requests) == 2
+
+
+def test_configured_jev_pin_is_sent_to_decisions_api():
+    pin = "typesafe/jev-1.13-20261001"
+    transport = QueueTransport([Response(200, {"model": pin, "answers": {"decision": True}})])
+    gateway = HttpGateway(transport, config=GatewayConfig(jev_model=pin, max_retries=0))
+    assert gateway.decide({"state": "prompt", "instructions": "judge"}) is True
+    assert transport.requests[0]["json"]["model"] == pin
+    assert gateway.decision_log[0]["answered_by"] == pin

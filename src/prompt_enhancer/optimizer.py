@@ -171,10 +171,11 @@ class PromptOptimizer:
 
     def _default_gateway(self) -> Gateway:
         if not self.config.openrouter_api_key or not self.config.opencode_go_key:
-            return ScriptedGateway()
+            return ScriptedGateway(jev_model=self.config.judge_model)
         gateway_config = GatewayConfig.from_env()
         gateway_config.openrouter_api_key = self.config.openrouter_api_key
         gateway_config.go_api_key = self.config.opencode_go_key
+        gateway_config.jev_model = self.config.judge_model
         transport = HttpTransport()
         catalog = LiveModelCatalog(
             transport,
@@ -473,7 +474,7 @@ class PromptOptimizer:
         if record is not None:
             result["cost"] = _add_usage_delta(dict(record.get("cost") or {}), usage_before, self._usage_cost())
             evidence = self._training_evidence(result, record)
-            result["report"]["jev_answers"] = evidence["jev_answers"]
+            self._attach_jev_evidence(cast(OptimizeResult, result), evidence)
             self.store.save_run(
                 {
                     **record,
@@ -593,7 +594,7 @@ class PromptOptimizer:
         result = cast(OptimizeResult, repeated.as_payload())
         result["cost"] = cast(CostBreakdown, _add_usage_delta(prior_cost, {"total": 0.0}, self._usage_cost()))
         evidence = self._training_evidence(result, record)
-        result["report"]["jev_answers"] = evidence["jev_answers"]
+        self._attach_jev_evidence(result, evidence)
         self.store.save_run({**record, "result": result, "tier": "deep", "options": deep_options, "cost": result["cost"], **evidence})
         return result
 
@@ -640,7 +641,7 @@ class PromptOptimizer:
         created_at: str,
     ) -> None:
         evidence = self._training_evidence(result)
-        result["report"]["jev_answers"] = evidence["jev_answers"]
+        self._attach_jev_evidence(result, evidence)
         self.store.save_run(
             {
                 "run_id": result["run_id"],
@@ -667,6 +668,12 @@ class PromptOptimizer:
             evidence["original_weak_panel"] = original_score
             evidence["score_summaries"] = {"original": original_score}
         return evidence
+
+    @staticmethod
+    def _attach_jev_evidence(result: OptimizeResult, evidence: Mapping[str, Any]) -> None:
+        answers = evidence["jev_answers"]
+        result["report"]["jev_answers"] = answers
+        result["report"]["jev_snapshot"] = sorted({answer["answered_by"] for answer in answers if "answered_by" in answer})
 
 
 # How a clarification appears in the returned prompt when its key alone would

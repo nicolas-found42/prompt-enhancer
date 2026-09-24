@@ -37,7 +37,7 @@ class Settings:
             database_path=os.getenv("PROMPT_ENHANCER_DB", "prompt_enhancer.sqlite3"),
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
             opencode_go_key=os.getenv("OPENCODE_GO_KEY") or None,
-            judge_model=JEV_MODEL,
+            judge_model=os.getenv("PROMPT_ENHANCER_JEV_MODEL", JEV_MODEL),
             writer_model=os.getenv(
                 "PROMPT_ENHANCER_WRITER_MODEL", DEFAULT_GO_WRITER
             ),

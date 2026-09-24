@@ -102,7 +102,7 @@ def test_catalog_exposes_gateway_models_without_credentials() -> None:
     assert catalog.status_code == 200
     assert [item["id"] for item in catalog.json()["providers"]["go"]] == ["go-one"]
     assert [item["id"] for item in catalog.json()["providers"]["openrouter"]] == ["or-one"]
-    assert catalog.json()["judge"]["id"] == "typesafe/jev-1.13"
+    assert catalog.json()["judge"]["id"] == "typesafe/jev-1.13-20260917"
 
 
 def test_resume_and_deep_return_client_errors_for_invalid_run_state() -> None:
