@@ -31,7 +31,7 @@ def prepare(source: str, *, per_level: int | None = None) -> dict[str, object]:
         if topic_id and topic_id not in topics:
             topics[topic_id] = row
     by_level: dict[str, list[dict[str, str]]] = {level: [] for level in QUOTAS}
-    for topic_id, row in sorted(topics.items(), key=lambda item: int(item[0])):
+    for _topic_id, row in sorted(topics.items(), key=lambda item: int(item[0])):
         level = row.get("clarification_need", "")
         if level in by_level and row.get("initial_request", "").strip():
             by_level[level].append(row)

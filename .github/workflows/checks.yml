@@ -1,0 +1,33 @@
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v10.1.0
+        with:
+          version: "0.12.18"
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install Python
+        run: uv python install
+      - name: Install Python dependencies
+        run: uv sync --locked
+      - name: Install web dependencies
+        run: npm ci --prefix web
+      - name: Install Chromium
+        run: npm --prefix web exec -- playwright install --with-deps chromium
+      - name: Run all checks
+        run: uv run --locked pre-commit run --all-files
+      - name: Test optional CatBoost training path
+        run: uv run --locked --extra training pytest -q tests/test_failure_prediction.py

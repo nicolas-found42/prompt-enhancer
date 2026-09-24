@@ -47,7 +47,7 @@ def train_quality_model(
 ) -> dict[str, Any]:
     """Fit a continuous pass-rate model and write a held-out audit report."""
     try:
-        from catboost import CatBoostRegressor, Pool
+        from catboost import CatBoostRegressor, Pool  # ty: ignore[unresolved-import]
     except ImportError as exc:
         raise TrainingDataError(
             "CatBoost is required; install prompt-enhancer[training]"

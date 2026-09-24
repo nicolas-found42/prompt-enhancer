@@ -12,13 +12,13 @@ it again from this repository, run the backend and frontend in separate
 terminals:
 
 ```sh
-uv sync
+uv sync --locked
 uv run --env-file .env uvicorn prompt_enhancer.api:app --host 127.0.0.1 --port 8000
 ```
 
 ```sh
 cd web
-npm install
+npm ci
 npm run dev -- --host 127.0.0.1
 ```
 
@@ -44,29 +44,39 @@ cancel a run, and reattaches after a reload. The synchronous
 
 ## Check the implementation
 
+The project pins Python 3.12 in `.python-version` and recommends Node 24 in
+`web/.nvmrc`. Install both toolchains, then set up the locked dependencies and
+Git hook:
+
 ```sh
-uv sync --extra dev
+uv sync --locked
 npm --prefix web ci
 uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-The commit hook formats and lints staged Python and web files first. It then
-checks Python types and lint, builds the web app (including TypeScript checks),
-and runs both the Python and Playwright suites. Install Playwright's browser
+The commit hook verifies `uv.lock`, lints and formats staged Python and web
+files, then checks Python types and lint, builds the web app (including
+TypeScript and browser-test type checks), and runs pytest with an 80% coverage
+floor and the Playwright suite. Install Playwright's browser
 once with `npm --prefix web exec -- playwright install chromium` if it is missing.
 Run checks individually with:
 
 ```sh
-uv run ruff format --check src scripts tests
-uv run pytest -q
-uv run ruff check .
-uv run ty check src scripts
+uv lock --check
+uv run --locked ruff format --check src scripts tests
+uv run --locked ruff check .
+uv run --locked ty check src scripts
+uv run --locked pytest -q --cov=prompt_enhancer --cov-report=term
 npm --prefix web run lint
 npm --prefix web run typecheck
 npm --prefix web run build
 npm --prefix web run test:e2e
 ```
+
+The CatBoost model test requires the optional training dependencies; run
+`uv sync --locked --extra training` and `uv run --locked --extra training pytest -q`
+when working on that path. Pull requests run the same pre-commit checks in CI.
 
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and

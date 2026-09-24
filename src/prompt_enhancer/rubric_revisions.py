@@ -13,7 +13,7 @@ import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from datetime import UTC
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
@@ -22,24 +22,24 @@ from .catalog import DEFAULT_GO_WRITER
 from .gateway import Gateway, completion_text, writer_messages
 
 
-class RevisionKind(str, Enum):
+class RevisionKind(StrEnum):
     NEW = "new"
     REVISED = "revised"
     DROPPED = "dropped"
 
 
-class RecommendedDecision(str, Enum):
+class RecommendedDecision(StrEnum):
     ADOPT = "adopt"
     HOLD = "hold"
     REJECT = "reject"
 
 
-class MaintainerDecisionKind(str, Enum):
+class MaintainerDecisionKind(StrEnum):
     ADOPT = "adopt"
     REJECT = "reject"
 
 
-class RegressionRisk(str, Enum):
+class RegressionRisk(StrEnum):
     NONE = "none"
     ELEVATED = "elevated"
 

@@ -1,15 +1,22 @@
 repos:
   - repo: local
     hooks:
-      - id: python-format
-        name: Ruff format (staged Python)
-        entry: uv run ruff format
+      - id: uv-lock
+        name: uv lock is current
+        entry: uv lock --check
         language: system
-        types: [python]
+        pass_filenames: false
+        always_run: true
 
       - id: python-lint-staged
         name: Ruff lint (staged Python)
-        entry: uv run ruff check --fix
+        entry: uv run --locked ruff check --fix
+        language: system
+        types: [python]
+
+      - id: python-format
+        name: Ruff format (staged Python)
+        entry: uv run --locked ruff format
         language: system
         types: [python]
 
@@ -28,14 +35,14 @@ repos:
 
       - id: python-lint
         name: Ruff lint (whole repo)
-        entry: uv run ruff check .
+        entry: uv run --locked ruff check .
         language: system
         pass_filenames: false
         always_run: true
 
       - id: python-typecheck
         name: ty (Python source and scripts)
-        entry: uv run ty check src scripts
+        entry: uv run --locked ty check src scripts
         language: system
         pass_filenames: false
         always_run: true
@@ -48,8 +55,8 @@ repos:
         always_run: true
 
       - id: python-tests
-        name: pytest
-        entry: uv run pytest -q
+        name: pytest with coverage
+        entry: uv run --locked pytest -q --cov=prompt_enhancer --cov-report=term
         language: system
         pass_filenames: false
         always_run: true

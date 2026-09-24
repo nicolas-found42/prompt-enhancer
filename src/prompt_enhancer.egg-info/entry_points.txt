@@ -1,2 +1,0 @@
-[console_scripts]
-prompt-enhancer = prompt_enhancer.__main__:main

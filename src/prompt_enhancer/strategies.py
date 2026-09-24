@@ -472,7 +472,7 @@ def search_strategies(
                 "rank_score": _strategy_score(strategy, prompt, diagnosis, failures)
             },
         )
-        for index, (strategy, text) in enumerate(zip(eligible, generated))
+        for index, (strategy, text) in enumerate(zip(eligible, generated, strict=False))
     )
     return StrategySearchResult(
         candidates=candidates,
