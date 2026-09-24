@@ -68,13 +68,13 @@ class GradeReport:
         }
 
 
-def _noul_probability(answer: Any) -> float:
-    """A Jev yes/no answer as a probability; unusable answers score zero."""
+def _noul_probability(answer: Any) -> float | None:
+    """A Jev yes/no probability, or None for an unusable answer."""
     try:
         decision = parse_decision(answer)
     except JevResponseError:
-        return 0.0
-    return decision.probability if isinstance(decision, NoulDecision) else 0.0
+        return None
+    return decision.probability if isinstance(decision, NoulDecision) else None
 
 
 def metrics_from_scores(
@@ -150,17 +150,17 @@ def grade_panel_with_jev(
     judge_model: str,
     run_id: str,
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
-    """Batch every output/test decision and its reversed consistency check."""
+    """Batch one Noul decision or two order variants for each other test."""
     requests: list[dict[str, Any]] = []
+    response_indices: dict[tuple[int, int], int] = {}
     for output_index, run in enumerate(panel):
         for test_index, test in enumerate(tests):
             state = {"prompt": run.prompt, "output": run.output, "test": dict(test)}
             kind = str(test.get("kind", "noul"))
             options = tuple(str(item) for item in (test.get("options") if kind == "choice" else test.get("levels")) or ())
-            for second in (False, True):
+            response_indices[(output_index, test_index)] = len(requests)
+            for second in ((False,) if kind == "noul" else (False, True)):
                 question = "Is the answer to the success criterion in state.test yes?"
-                if kind == "noul" and second:
-                    question = "Is the answer to the success criterion in state.test no?"
                 requests.append({
                     "key": f"grade_{output_index}_{test_index}_{'second' if second else 'first'}",
                     "model": judge_model,
@@ -183,14 +183,15 @@ def grade_panel_with_jev(
     for output_index, run in enumerate(panel):
         test_scores = []
         for test_index in range(len(tests)):
-            pair_index = 2 * (output_index * len(tests) + test_index)
+            pair_index = response_indices[(output_index, test_index)]
             test = tests[test_index]
             kind = str(test.get("kind", "noul"))
             expected = str(test.get("expected", "yes"))
             if kind == "noul":
                 direct = _noul_probability(responses[pair_index])
-                reverse = _noul_probability(responses[pair_index + 1])
-                test_scores.append(min(reverse, 1.0 - direct) if expected.casefold() in {"no", "false"} else min(direct, 1.0 - reverse))
+                test_scores.append(
+                    0.0 if direct is None else 1.0 - direct if expected.casefold() in {"no", "false"} else direct
+                )
             else:
                 try:
                     first = parse_decision(responses[pair_index])

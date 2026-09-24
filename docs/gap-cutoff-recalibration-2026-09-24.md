@@ -137,3 +137,10 @@ uv run --env-file .env python -m prompt_enhancer.evaluation evaluation/planted-p
 
 `--measure` resumes and skips prompts already answered. The three live
 commands ran at 62d95c7; replay them with `--replay` at that commit.
+
+## Noul grading follow-up
+
+After removing the reversed Noul success-test request in issue #42, the
+gap-cutoff calculation above was rerun from the recorded `gap:*` decisions.
+Its output matched the saved calibration byte for byte. These cutoffs use
+diagnosis answers, so the per-output grading change does not alter them.

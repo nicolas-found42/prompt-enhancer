@@ -216,6 +216,41 @@ def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> N
     assert result["report"]["tests"][0]["kind"] == "noul"
 
 
+def test_optimize_grades_noul_from_direct_answer_only() -> None:
+    grading_requests = []
+
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            if "state.strategies" in messages[0]["content"]:
+                return json.dumps({strategy: "Answer clearly" for strategy in ("add_missing_context", "specify_output_format", "add_done_criteria")})
+            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Answer clearly"}'
+        return "A useful answer."
+
+    def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        if key.startswith("grade_"):
+            grading_requests.append(request)
+            return {"type": "noul", "probability_true": 0.3 if key.endswith("_second") else 0.9}
+        if request.get("type") == "choice":
+            choice = "general" if key == "task_type" else "add_missing_context" if key == "strategy_choice" else "none"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}}
+        probability = 1.0 if key.startswith(("gap:goal", "faithful:", "strategy_recheck:")) else 0.01
+        return {"type": "noul", "probability_true": probability}
+
+    store = RunStore(":memory:")
+    result = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide)).optimize(
+        "Answer my question.", {"tier": "fast", "clarification_allowed": False}
+    )
+
+    assert result["status"] == "completed", result["report"]
+    record = store.get_run(result["run_id"])
+    assert record is not None
+    assert record["original_weak_panel"]["mean_pass_rate"] == 1.0
+    assert all(score == 0.9 for scores in record["original_weak_panel"]["per_model_samples"].values() for score in scores)
+    assert all(not request["key"].endswith("_second") for request in grading_requests)
+    assert all(request["question"].endswith("yes?") for request in grading_requests)
+
+
 @pytest.mark.parametrize("second_is_good", [True, False])
 def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels(second_is_good: bool) -> None:
     levels = ["Neither", "Partial", "Good", "Excellent"]
