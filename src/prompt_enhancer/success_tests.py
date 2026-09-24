@@ -181,6 +181,9 @@ class SuccessTestCompiler:
             if kind == "choice" and len(options) >= 2 and "unknown" not in {option.lower() for option in options}:
                 options = (*options, "unknown")
             levels = cls._strings(item.get("levels", ()))
+            if kind == "score":
+                levels = tuple(re.sub(r"^\s*\d+\s*:\s*", "", level) for level in levels)
+                expected = re.sub(r"^\s*\d+\s*:\s*", "", expected)
             base_id = str(item.get("id") or f"test-{index:03d}").strip()
             test_id = base_id or f"test-{index:03d}"
             if test_id in seen:
