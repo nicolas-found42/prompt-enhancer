@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -182,16 +183,29 @@ def test_missing_key_and_malformed_answers_cannot_look_clean(repo):
 
 def test_unknown_choice_and_bad_distribution_are_rejected():
     raw = answers()
-    raw[0]["probabilities"]["invented"] = 0.1
-    with pytest.raises(ValueError):
+    raw[0]["probabilities"] = {
+        "supported": 0.9,
+        "contradicted": 0.0,
+        "insufficient_evidence": 0.0,
+        "invented": 0.1,
+    }
+    with pytest.raises(ValueError, match="exactly the requested"):
         classify(raw)
     raw = answers()
     raw[0]["probabilities"] = [1, 0, 0]
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="probabilities and confidence are required"):
         classify(raw)
     raw = answers()
     raw[0]["probabilities"]["supported"] = 0.2
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="sum to one"):
+        classify(raw)
+    raw = answers()
+    raw[0]["probabilities"] = {
+        "supported": 0.2,
+        "contradicted": 0.8,
+        "insufficient_evidence": 0.0,
+    }
+    with pytest.raises(ValueError, match="highest probability"):
         classify(raw)
 
 
@@ -243,6 +257,98 @@ def test_cli_defaults_to_offline_pilot(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(output.read_text())["status"] == "skipped"
+
+
+@pytest.fixture
+def stub_linter(tmp_path, monkeypatch):
+    trusted = tmp_path / "trusted"
+    cli = trusted / "tools/quality/node_modules/jev-lint/dist/cli.js"
+    cli.parent.mkdir(parents=True)
+    cli.touch()
+    shutil.copy(ROOT / ".jev-lint.yaml", trusted / ".jev-lint.yaml")
+    shutil.copytree(ROOT / ".jev-lint/rules", trusted / ".jev-lint/rules")
+    plan = {"dryRun": True, "tokens": 100}
+    calls = []
+    run = subprocess.run
+
+    def invoke(command, **kwargs):
+        if command[0] != "node":
+            return run(command, **kwargs)
+        calls.append(command)
+        payload = plan if "--dry-run" in command else {"stats": {"missing": 0}}
+        return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+    monkeypatch.setattr(subprocess, "run", invoke)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    return trusted, plan, calls
+
+
+@pytest.mark.parametrize("keep_source", [False, True])
+def test_linter_does_not_count_deleted_source_as_omitted(
+    repo, stub_linter, keep_source
+):
+    root, base, _, git = repo
+    trusted, _, calls = stub_linter
+    git("rm", "src/example.py")
+    if keep_source:
+        (root / "src").mkdir(exist_ok=True)
+        (root / "src/remaining.py").write_text("def remaining():\n    return 3\n")
+        git("add", "src/remaining.py")
+    git("commit", "-m", "delete source")
+    report = lint_snapshot(GitEvidence(root, base, "HEAD"), trusted, live=True)
+    assert report["status"] == "complete", report
+    assert report["omitted"] == []
+    assert len(calls) == (2 if keep_source else 0)
+
+
+@pytest.mark.parametrize(
+    "estimate",
+    [
+        {},
+        {"tokens": None},
+        {"tokens": "100"},
+        {"tokens": True},
+        {"tokens": -1},
+        {"tokens": float("nan")},
+        {"tokens": float("inf")},
+    ],
+)
+def test_linter_rejects_invalid_estimate_before_live_request(
+    repo, stub_linter, estimate
+):
+    root, base, head, _ = repo
+    trusted, plan, calls = stub_linter
+    plan.clear()
+    plan.update(dryRun=True, **estimate)
+    report = lint_snapshot(GitEvidence(root, base, head), trusted, live=True)
+    assert report["status"] == "failed", report
+    assert report["reason"] == "linter plan did not report a valid input token estimate"
+    assert len(calls) == 1
+    assert "--dry-run" in calls[0]
+
+
+@pytest.mark.parametrize(
+    ("tokens", "status", "requests"),
+    [
+        (0, "complete", 2),
+        (100, "complete", 2),
+        (100.0, "complete", 2),
+        (101, "partial", 1),
+    ],
+)
+def test_linter_enforces_valid_token_budget(
+    repo, stub_linter, tokens, status, requests
+):
+    root, base, head, _ = repo
+    trusted, plan, calls = stub_linter
+    plan["tokens"] = tokens
+    report = lint_snapshot(
+        GitEvidence(root, base, head), trusted, live=True, max_tokens=100
+    )
+    assert report["status"] == status, report
+    assert len(calls) == requests
+    if status == "partial":
+        assert report["reason"] == "planned input token budget exceeded"
 
 
 @pytest.mark.skipif(

@@ -123,8 +123,9 @@ base-commit specification. Candidate text never supplies or overrides trusted
 policy. Related evidence must be regular source files; symlinks, path traversal,
 missing files, mismatched quotes, and oversized evidence are rejected before
 inference. Python evidence keeps the complete enclosing function. Referenced
-helpers, fixtures, callers, and tests should be provided with `evidence_paths`;
-structurally valid evidence does not guarantee that all semantic context is present.
+helpers, callers, and tests should be provided with `evidence_paths`. Files under
+`fixtures/` directories are rejected as evidence. Structurally valid evidence does
+not guarantee that all semantic context is present.
 
 Each case asks whether the claim is supported, contradicted, or lacks evidence,
 and independently whether the claimed behavior was introduced or preexisting.

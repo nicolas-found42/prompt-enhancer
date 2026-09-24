@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -55,6 +56,8 @@ def lint_snapshot(
         for path in changed:
             if not is_source(path) or selected_paths and path not in selected_paths:
                 continue
+            if not git.git("ls-tree", "-z", git.head, "--", path):
+                continue  # Deleted files have no after-side content to lint.
             try:
                 source = git.source(git.head, path)
                 total_bytes += len(source.encode())
@@ -160,7 +163,19 @@ def lint_snapshot(
                     "status": "failed",
                     "reason": "linter planning failed",
                 }
-            if planned.get("tokens", 0) > max_tokens:
+            tokens = planned.get("tokens")
+            if (
+                not isinstance(tokens, (int, float))
+                or isinstance(tokens, bool)
+                or tokens < 0
+                or (isinstance(tokens, float) and not math.isfinite(tokens))
+            ):
+                return {
+                    **report,
+                    "status": "failed",
+                    "reason": "linter plan did not report a valid input token estimate",
+                }
+            if tokens > max_tokens:
                 return {
                     **report,
                     "status": "partial",

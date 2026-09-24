@@ -14,7 +14,7 @@ Gateway-reported usage: 8,664 input tokens, 1,210 output tokens, **$0.000363888*
 
 ## Repeat uncertain cases
 
-Two lower-confidence supported findings (`c03`, `c09`) were repeated once with identical questions and evidence. Both kept their supported label; the confidence changed. The [subset](../../tests/fixtures/quality_review/repeat.json) and [second recording](../../tests/fixtures/quality_review/jev-repeat-recording.json) preserve that observation.
+Two lower-confidence supported findings (`c03`, `c09`) were repeated once with identical questions and evidence. Both kept their supported label; the confidence changed. The `c09` introduced judgment moved from `introduced` (0.51) to `insufficient_evidence` (0.54), so its disposition changed from `review` to `needs_context`. The [subset](../../tests/fixtures/quality_review/repeat.json) and [second recording](../../tests/fixtures/quality_review/jev-repeat-recording.json) preserve that observation.
 
 | Case | First supported probability / confidence | Repeat supported probability / confidence |
 | --- | --- | --- |
