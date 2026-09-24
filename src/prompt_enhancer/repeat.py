@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, cast
 
+from .rounds import CandidateFailure, RoundOutcome
+
 
 class Tier(str, Enum):
     """Optimization effort tiers supported by the public workflow."""
@@ -43,120 +45,6 @@ _MAX_ROUNDS: Mapping[Tier, int] = {
     Tier.STANDARD: 2,
     Tier.DEEP: 3,
 }
-
-
-@dataclass(frozen=True)
-class CandidateFailure:
-    """Observable reasons a candidate lost in a completed round.
-
-    ``summary`` is the stable writer-facing seam used by the candidate generator.
-    The remaining fields preserve evidence for reports and run history.
-    """
-
-    candidate_id: str
-    strategy: str | None = None
-    reasons: tuple[str, ...] = ()
-    weak_pass_rates: Mapping[str, float] = field(default_factory=dict)
-    strong_pass_rate: float | None = None
-    mean_pass_rate: float | None = None
-    worst_pass_rate: float | None = None
-    sample_spread: float | None = None
-    candidate_prompt: str | None = None
-
-    @classmethod
-    def from_value(
-        cls, value: CandidateFailure | Mapping[str, Any] | str
-    ) -> CandidateFailure:
-        if isinstance(value, cls):
-            return value
-        if isinstance(value, str):
-            return cls(candidate_id="unknown", reasons=(value,))
-        mapping = cast(Mapping[str, Any], value)
-        candidate_id = str(
-            mapping.get("candidate_id") or mapping.get("id") or "unknown"
-        )
-        strategy_value = mapping.get("strategy")
-        strategy = str(strategy_value) if strategy_value is not None else None
-        raw_reasons = mapping.get("reasons") or mapping.get("failure_reasons") or ()
-        if isinstance(raw_reasons, str):
-            reasons = (raw_reasons,)
-        else:
-            reasons = tuple(str(reason) for reason in raw_reasons if reason)
-        prompt_value = mapping.get("prompt") or mapping.get("candidate_prompt")
-        candidate_prompt = str(prompt_value) if prompt_value is not None else None
-        rates_value = mapping.get("weak_pass_rates") or mapping.get("per_model") or {}
-        weak_pass_rates = {
-            str(model): float(rate)
-            for model, rate in rates_value.items()
-            if isinstance(rate, (int, float))
-        }
-        strong_value = mapping.get("strong_pass_rate")
-        mean_value = mapping.get("mean_pass_rate")
-        worst_value = mapping.get("worst_pass_rate")
-        spread_value = mapping.get("sample_spread")
-        failure = cls(
-            candidate_id=candidate_id,
-            strategy=strategy,
-            reasons=reasons,
-            weak_pass_rates=weak_pass_rates,
-            strong_pass_rate=float(strong_value)
-            if isinstance(strong_value, (int, float))
-            else None,
-            mean_pass_rate=float(mean_value)
-            if isinstance(mean_value, (int, float))
-            else None,
-            worst_pass_rate=float(worst_value)
-            if isinstance(worst_value, (int, float))
-            else None,
-            sample_spread=float(spread_value)
-            if isinstance(spread_value, (int, float))
-            else None,
-            candidate_prompt=candidate_prompt,
-        )
-        explicit_summary = mapping.get("summary")
-        if explicit_summary:
-            return cls(
-                candidate_id=failure.candidate_id,
-                strategy=failure.strategy,
-                reasons=(str(explicit_summary), *failure.reasons),
-                weak_pass_rates=failure.weak_pass_rates,
-                strong_pass_rate=failure.strong_pass_rate,
-                mean_pass_rate=failure.mean_pass_rate,
-                worst_pass_rate=failure.worst_pass_rate,
-                sample_spread=failure.sample_spread,
-                candidate_prompt=failure.candidate_prompt,
-            )
-        return failure
-
-    @property
-    def summary(self) -> str:
-        identity = self.candidate_id
-        if self.strategy:
-            identity = f"{identity} ({self.strategy})"
-        reasons = "; ".join(self.reasons) or "no qualifying improvement"
-        if self.weak_pass_rates:
-            rates = ", ".join(
-                f"{model}={rate:.3f}"
-                for model, rate in sorted(self.weak_pass_rates.items())
-            )
-            reasons = f"{reasons}; weak pass rates: {rates}"
-        if self.strong_pass_rate is not None:
-            reasons = f"{reasons}; strong pass rate={self.strong_pass_rate:.3f}"
-        return f"{identity}: {reasons}"
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "candidate_id": self.candidate_id,
-            "strategy": self.strategy,
-            "reasons": list(self.reasons),
-            "weak_pass_rates": dict(self.weak_pass_rates),
-            "strong_pass_rate": self.strong_pass_rate,
-            "mean_pass_rate": self.mean_pass_rate,
-            "worst_pass_rate": self.worst_pass_rate,
-            "sample_spread": self.sample_spread,
-            "candidate_prompt": self.candidate_prompt,
-            "summary": self.summary,
-        }
 
 
 @dataclass(frozen=True)
@@ -261,50 +149,22 @@ class RoundEvidence:
         round_number: int,
         tier_round: int,
         tier: Tier,
-        outcome: Mapping[str, Any],
+        outcome: RoundOutcome,
     ) -> RoundEvidence:
-        report = _mapping_or_empty(outcome.get("report"))
-        original_kept = _as_bool(
-            outcome.get("original_kept", report.get("original_kept", False))
-        )
-        status = str(
-            outcome.get("status")
-            or report.get("status")
-            or ("no_change" if original_kept else "improved")
-        )
-        failure_values = (
-            outcome.get("candidate_failures")
-            or outcome.get("prior_round_failures")
-            or report.get("candidate_failures")
-            or ()
-        )
-        failures = tuple(CandidateFailure.from_value(value) for value in failure_values)
         return cls(
             round_number=round_number,
             tier_round=tier_round,
             tier=tier,
             max_rounds=tier.max_rounds,
-            original_kept=original_kept,
-            status=status,
-            selected_candidate_id=_optional_string(
-                outcome.get("selected_candidate_id")
-                or report.get("selected_candidate_id")
-            ),
-            selected_strategy=_optional_string(
-                outcome.get("selected_strategy") or report.get("selected_strategy")
-            ),
-            candidate_failures=failures,
-            evidence=_public_mapping(
-                outcome.get("evidence") or report.get("evidence") or {}
-            ),
-            cost=_public_mapping(outcome.get("cost") or report.get("cost") or {}),
-            timing=_public_mapping(outcome.get("timing") or report.get("timing") or {}),
-            continuation_requested=_as_bool(
-                outcome.get(
-                    "continue_rounds",
-                    outcome.get("continuation_requested", original_kept),
-                )
-            ),
+            original_kept=outcome.original_kept,
+            # A round that returns an outcome has completed.
+            status="completed",
+            selected_candidate_id=outcome.selected_candidate_id,
+            candidate_failures=outcome.failures,
+            evidence=_public_mapping(outcome.evidence()),
+            cost=_public_mapping(outcome.cost),
+            timing=_public_mapping(outcome.timing),
+            continuation_requested=outcome.continue_rounds,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -394,13 +254,13 @@ class RepeatResult:
     final_prompt: str
     original_kept: bool
     history: tuple[RoundEvidence, ...]
-    outcome: Mapping[str, Any]
+    outcome: RoundOutcome
     offer_deep: EscalationOffer | None = None
     workflow: WorkflowContext | None = None
     escalation: EscalationState | None = None
 
     def as_payload(self) -> dict[str, Any]:
-        payload = dict(self.outcome)
+        payload = self.outcome.payload()
         payload["run_id"] = self.run_id
         payload["final_prompt"] = self.final_prompt
         payload["original_kept"] = self.original_kept
@@ -426,13 +286,7 @@ class RepeatResult:
 
 
 class RoundRunner(Protocol):
-    def __call__(self, request: RoundRequest) -> Mapping[str, Any]: ...
-
-
-class RoundSink(Protocol):
-    def __call__(
-        self, request: RoundRequest, outcome: Mapping[str, Any], evidence: RoundEvidence
-    ) -> None: ...
+    def __call__(self, request: RoundRequest) -> RoundOutcome: ...
 
 
 class RepeatCoordinator:
@@ -448,15 +302,9 @@ class RepeatCoordinator:
         questions: Sequence[str] = (),
         answers: Mapping[str, str] | None = None,
         assumptions: Sequence[str] = (),
-        initial_history: Sequence[RoundEvidence | Mapping[str, Any]] = (),
         initial_failures: Sequence[CandidateFailure | Mapping[str, Any] | str] = (),
-        persist_round: RoundSink | None = None,
     ) -> RepeatResult:
         selected_tier = Tier.parse(tier)
-        history = tuple(_round_evidence_from_value(value) for value in initial_history)
-        failures = tuple(
-            CandidateFailure.from_value(value) for value in initial_failures
-        )
         workflow = WorkflowContext(
             run_id=run_id,
             original_prompt=prompt,
@@ -465,53 +313,22 @@ class RepeatCoordinator:
             answers=dict(answers or {}),
             assumptions=tuple(str(assumption) for assumption in assumptions),
         )
-        outcome: Mapping[str, Any] = {}
-        next_round_number = history[-1].round_number + 1 if history else 1
-        tier_round = 1
-        while tier_round <= selected_tier.max_rounds:
-            request = RoundRequest(
-                run_id=run_id,
-                round_number=next_round_number,
-                tier_round=tier_round,
-                tier=selected_tier,
-                max_rounds=selected_tier.max_rounds,
-                workflow=workflow,
-                prior_round_failures=failures,
-                prior_failures=tuple(failure.summary for failure in failures),
-                history=history,
-            )
-            outcome = execute_round(request)
-            if not isinstance(outcome, Mapping):
-                raise TypeError("Round runner must return a mapping")
-            evidence = RoundEvidence.from_outcome(
-                round_number=request.round_number,
-                tier_round=request.tier_round,
-                tier=selected_tier,
-                outcome=outcome,
-            )
-            history = (*history, evidence)
-            if persist_round is not None:
-                persist_round(request, outcome, evidence)
-            if not evidence.continuation_requested or evidence.original_kept is False:
-                break
-            failures = evidence.candidate_failures
-            if not failures:
-                break
-            next_round_number += 1
-            tier_round += 1
-
-        final_prompt = str(
-            outcome.get("final_prompt") or outcome.get("selected_prompt") or prompt
+        history, outcome = _run_tier(
+            execute_round,
+            workflow,
+            selected_tier,
+            history=(),
+            failures=tuple(_supplied_failure(value) for value in initial_failures),
         )
         original_kept = history[-1].original_kept
-        # A round runner may decline the offer (``report.offer_deep`` false) when
-        # a Deep pass could not do anything the lower tier did not.
-        deep_declined = _mapping_or_empty(outcome.get("report")).get("offer_deep") is False
+        # A round may decline the offer (``report.offer_deep`` false) when a
+        # Deep pass could not do anything the lower tier did not.
+        deep_declined = outcome.report().get("offer_deep") is False
         offer = _deep_offer(run_id, selected_tier, history) if original_kept and not deep_declined else None
         return RepeatResult(
             run_id=run_id,
             tier=selected_tier,
-            final_prompt=final_prompt,
+            final_prompt=outcome.final_prompt or prompt,
             original_kept=original_kept,
             history=history,
             outcome=outcome,
@@ -519,58 +336,8 @@ class RepeatCoordinator:
             offer_deep=offer,
         )
 
-    def optimize(
-        self,
-        prompt: str,
-        options: Mapping[str, Any],
-        execute_round: RoundRunner,
-        persist_round: RoundSink | None = None,
-    ) -> RepeatResult:
-        """Public credential-free facade for the injected optimizer round loop."""
-        _reject_provider_secrets(options)
-        run_id = options.get("run_id")
-        if not run_id:
-            raise ValueError(
-                "options.run_id is required to retain repeat-round history"
-            )
-        report = _mapping_or_empty(options.get("report"))
-        return self.run(
-            run_id=str(run_id),
-            prompt=prompt,
-            tier=options.get("tier") or Tier.STANDARD,
-            execute_round=execute_round,
-            questions=options.get("questions") or (),
-            answers=options.get("answers") or {},
-            assumptions=options.get("assumptions") or (),
-            initial_history=options.get("history") or report.get("history") or (),
-            initial_failures=(
-                options.get("prior_round_failures")
-                or options.get("prior_failures")
-                or ()
-            ),
-            persist_round=persist_round,
-        )
-
-    def deep_pass(
-        self,
-        run: Mapping[str, Any],
-        execute_round: RoundRunner,
-        persist_round: RoundSink | None = None,
-    ) -> RepeatResult:
+    def deep_pass(self, run: Mapping[str, Any], execute_round: RoundRunner) -> RepeatResult:
         """Accept the offered Deep pass without changing the public run ID."""
-        return self.escalate(
-            run=run,
-            execute_round=execute_round,
-            persist_round=persist_round,
-        )
-
-    def escalate(
-        self,
-        *,
-        run: Mapping[str, Any],
-        execute_round: RoundRunner,
-        persist_round: RoundSink | None = None,
-    ) -> RepeatResult:
         if not isinstance(run, Mapping) or not run.get("run_id"):
             raise ValueError(
                 "A persisted run with a run_id is required for Deep escalation"
@@ -618,48 +385,14 @@ class RepeatCoordinator:
         )
         if offer is None:
             raise ValueError("Persisted run does not contain a valid Deep-pass offer")
-        history = _history_from_run(run)
+        prior_history = _history_from_run(run)
         workflow = WorkflowContext.from_run(run)
-        outcome: Mapping[str, Any] = {}
-        tier_round = 1
-        next_round_number = history[-1].round_number + 1 if history else 1
-        failures = history[-1].candidate_failures if history else ()
-        while tier_round <= Tier.DEEP.max_rounds:
-            request = RoundRequest(
-                run_id=workflow.run_id,
-                round_number=next_round_number,
-                tier_round=tier_round,
-                tier=Tier.DEEP,
-                max_rounds=Tier.DEEP.max_rounds,
-                workflow=workflow,
-                prior_round_failures=failures,
-                prior_failures=tuple(failure.summary for failure in failures),
-                history=history,
-            )
-            outcome = execute_round(request)
-            if not isinstance(outcome, Mapping):
-                raise TypeError("Round runner must return a mapping")
-            evidence = RoundEvidence.from_outcome(
-                round_number=request.round_number,
-                tier_round=request.tier_round,
-                tier=Tier.DEEP,
-                outcome=outcome,
-            )
-            history = (*history, evidence)
-            if persist_round is not None:
-                persist_round(request, outcome, evidence)
-            if not evidence.continuation_requested or evidence.original_kept is False:
-                break
-            failures = evidence.candidate_failures
-            if not failures:
-                break
-            next_round_number += 1
-            tier_round += 1
-
-        final_prompt = str(
-            outcome.get("final_prompt")
-            or outcome.get("selected_prompt")
-            or workflow.original_prompt
+        history, outcome = _run_tier(
+            execute_round,
+            workflow,
+            Tier.DEEP,
+            history=prior_history,
+            failures=prior_history[-1].candidate_failures if prior_history else (),
         )
         final_original_kept = history[-1].original_kept
         escalation = EscalationState(
@@ -675,13 +408,60 @@ class RepeatCoordinator:
         return RepeatResult(
             run_id=workflow.run_id,
             tier=Tier.DEEP,
-            final_prompt=final_prompt,
+            final_prompt=outcome.final_prompt or workflow.original_prompt,
             original_kept=final_original_kept,
             history=history,
             outcome=outcome,
             workflow=workflow,
             escalation=escalation,
         )
+
+
+def _run_tier(
+    execute_round: RoundRunner,
+    workflow: WorkflowContext,
+    tier: Tier,
+    *,
+    history: tuple[RoundEvidence, ...],
+    failures: tuple[CandidateFailure, ...],
+) -> tuple[tuple[RoundEvidence, ...], RoundOutcome]:
+    """Run up to the tier's round limit, feeding each round the last one's failures."""
+    next_round_number = history[-1].round_number + 1 if history else 1
+    tier_round = 1
+    while True:
+        request = RoundRequest(
+            run_id=workflow.run_id,
+            round_number=next_round_number,
+            tier_round=tier_round,
+            tier=tier,
+            max_rounds=tier.max_rounds,
+            workflow=workflow,
+            prior_round_failures=failures,
+            prior_failures=tuple(failure.summary for failure in failures),
+            history=history,
+        )
+        outcome = execute_round(request)
+        evidence = RoundEvidence.from_outcome(
+            round_number=request.round_number,
+            tier_round=request.tier_round,
+            tier=tier,
+            outcome=outcome,
+        )
+        history = (*history, evidence)
+        failures = evidence.candidate_failures
+        if tier_round >= tier.max_rounds or not evidence.continuation_requested or not evidence.original_kept or not failures:
+            return history, outcome
+        next_round_number += 1
+        tier_round += 1
+
+
+def _supplied_failure(value: CandidateFailure | Mapping[str, Any] | str) -> CandidateFailure:
+    """Read a failure passed in with the ``prior_round_failures`` option."""
+    if isinstance(value, CandidateFailure):
+        return value
+    if isinstance(value, str):
+        return CandidateFailure(candidate_id="unknown", reasons=(value,))
+    return CandidateFailure.from_dict(value)
 
 
 def _deep_offer(
@@ -751,7 +531,7 @@ def _round_evidence_from_value(
         selected_candidate_id=_optional_string(value.get("selected_candidate_id")),
         selected_strategy=_optional_string(value.get("selected_strategy")),
         candidate_failures=tuple(
-            CandidateFailure.from_value(item) for item in raw_failures
+            CandidateFailure.from_dict(item) for item in raw_failures
         ),
         evidence=_public_mapping(value.get("evidence") or {}),
         cost=_public_mapping(value.get("cost") or {}),

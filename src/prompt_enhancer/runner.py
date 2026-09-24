@@ -10,7 +10,7 @@ from typing import Any
 
 from .catalog import DEFAULT_DEEP_WEAK_PANEL
 from .gateway import Gateway
-from .strategies import TierBudget, budget_for_tier
+from .strategies import CandidateDraft, TierBudget, budget_for_tier
 
 DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_DEEP_WEAK_PANEL
 
@@ -70,32 +70,6 @@ class PanelRunResult:
         }
 
 
-def _field(value: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if isinstance(value, Mapping):
-            if name in value:
-                return value[name]
-        elif hasattr(value, name):
-            return getattr(value, name)
-    return default
-
-
-def _candidate_prompt(candidate: Any) -> tuple[str, str]:
-    if isinstance(candidate, str):
-        return "original", candidate
-    candidate_id = str(_field(candidate, "candidate_id", "id", default="original"))
-    prompt = _field(candidate, "prompt", "text", default="")
-    if prompt is None:
-        prompt = ""
-    return candidate_id, str(prompt)
-
-
-def _model_name(model: Any) -> str:
-    if isinstance(model, str):
-        return model
-    return str(_field(model, "model", "id", "name", default=model))
-
-
 def _stable_seed(run_seed: int, candidate_id: str, model: str, sample: int) -> int:
     material = f"{run_seed}\0{candidate_id}\0{model}\0{sample}".encode()
     # SHA-256 avoids Python's process-randomized hash and makes replay portable.
@@ -142,48 +116,37 @@ def _execute_one(
     return PanelResult(candidate_id, model, sample, seed, output, prompt)
 
 
-def run_candidate_panel(
-    candidate: Any,
-    weak_models: Sequence[Any],
+def _run_panel(
+    candidate_id: str,
+    prompt: str,
+    models: tuple[str, ...],
     gateway: Gateway,
     *,
-    samples: int = 1,
-    run_seed: int = 0,
-    max_workers: int | None = None,
-    run_id: str | None = None,
-) -> PanelRunResult:
-    """Run one candidate on every model and sample, concurrently."""
-
-    if samples < 1:
-        raise ValueError("samples must be at least 1")
-    candidate_id, prompt = _candidate_prompt(candidate)
-    models = tuple(_model_name(model) for model in weak_models)
-    if not models:
-        raise ValueError("weak_models must contain at least one model")
+    samples: int,
+    run_seed: int,
+    max_workers: int | None,
+    run_id: str | None,
+) -> list[PanelResult]:
+    """Run one prompt on every model and sample, concurrently, in a stable order."""
     requests = [
         (candidate_id, prompt, model, sample, run_seed, run_id)
         for model in models
         for sample in range(samples)
     ]
     workers = len(requests) if max_workers is None else min(len(requests), max_workers)
-    workers = max(workers, 1)
-    if workers == 1:
-        completed = [_execute_one(gateway, *request) for request in requests]
-    else:
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            completed = list(
-                executor.map(lambda request: _execute_one(gateway, *request), requests)
-            )
-    # executor.map preserves input order, and requests are deliberately ordered.
-    return PanelRunResult(tuple(completed), (candidate_id,), models, samples, run_seed)
+    if max(workers, 1) == 1:
+        return [_execute_one(gateway, *request) for request in requests]
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        # executor.map preserves input order, and requests are deliberately ordered.
+        return list(executor.map(lambda request: _execute_one(gateway, *request), requests))
 
 
 def run_candidates(
-    candidates: Sequence[Any],
-    weak_models: Sequence[Any] | None,
+    candidates: Sequence[CandidateDraft],
+    weak_models: Sequence[str] | None,
     gateway: Gateway,
     *,
-    original: Any = None,
+    original: str | None = None,
     samples: int | None = None,
     budget: TierBudget | str | None = None,
     run_seed: int = 0,
@@ -192,64 +155,47 @@ def run_candidates(
 ) -> PanelRunResult:
     """Run the original and all candidates on a tier-bounded weak panel.
 
-    The original is included automatically when ``original`` is provided.  A
-    tier budget truncates the configured model panel and supplies its sample
-    count; an explicit ``samples`` value can still be used by a test or an
-    override.
+    The original runs first, as ``original``, when it is provided. A tier
+    budget truncates the configured model panel and supplies its sample count;
+    an explicit ``samples`` value overrides the count.
     """
 
     selected_budget = budget_for_tier(budget) if budget is not None else None
     if selected_budget is not None:
-        models = list(weak_models or DEFAULT_WEAK_PANEL)[: selected_budget.models]
+        models = tuple(weak_models or DEFAULT_WEAK_PANEL)[: selected_budget.models]
         selected_samples = selected_budget.samples if samples is None else samples
     else:
-        models = list(weak_models or DEFAULT_WEAK_PANEL)
+        models = tuple(weak_models or DEFAULT_WEAK_PANEL)
         selected_samples = 1 if samples is None else samples
     if not models:
         raise ValueError("weak_models must contain at least one model")
+    if selected_samples < 1:
+        raise ValueError("samples must be at least 1")
 
-    items: list[tuple[Any, str]] = []
-    if original is not None:
-        items.append((original, "original"))
-    items.extend((candidate, "") for candidate in candidates)
+    items = ([("original", original)] if original is not None else []) + [
+        (candidate.candidate_id, candidate.text) for candidate in candidates
+    ]
     if not items:
         raise ValueError("at least one candidate or original is required")
 
-    all_results: list[PanelResult] = []
-    candidate_ids: list[str] = []
-    for candidate, forced_id in items:
-        candidate_id, prompt = _candidate_prompt(candidate)
-        if forced_id:
-            candidate_id = forced_id
-        candidate_ids.append(candidate_id)
-        result = run_candidate_panel(
-            {"id": candidate_id, "prompt": prompt},
-            models,
-            gateway,
-            samples=selected_samples,
-            run_seed=run_seed,
-            max_workers=max_workers,
-            run_id=run_id,
-        )
-        all_results.extend(result.results)
+    results: list[PanelResult] = []
+    for candidate_id, prompt in items:
+        results.extend(_run_panel(
+            candidate_id, prompt, models, gateway,
+            samples=selected_samples, run_seed=run_seed, max_workers=max_workers, run_id=run_id,
+        ))
     return PanelRunResult(
-        tuple(all_results),
-        tuple(candidate_ids),
-        tuple(_model_name(model) for model in models),
+        tuple(results),
+        tuple(candidate_id for candidate_id, _ in items),
+        models,
         selected_samples,
         run_seed,
     )
-
-
-# A discoverable alias for callers that refer to the operation as a panel run.
-run_panel = run_candidates
 
 
 __all__ = [
     "DEFAULT_WEAK_PANEL",
     "PanelResult",
     "PanelRunResult",
-    "run_candidate_panel",
     "run_candidates",
-    "run_panel",
 ]

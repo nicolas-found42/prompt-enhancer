@@ -1,21 +1,13 @@
 """Behavior tests for the strong-reference safety seam."""
 
-from dataclasses import dataclass
-
-from prompt_enhancer.strong_check import (
-    StrongCheckPolicy,
-    eligible_candidates,
-    retain_original,
-)
+from prompt_enhancer.grading import GradeReport
+from prompt_enhancer.selector import RankingCandidate
+from prompt_enhancer.strong_check import StrongCheckPolicy
 
 
-@dataclass
-class Candidate:
-    id: str
-    prompt: str
-    strategy: str
-    crutch: bool = False
-    weak_score: float = 0.0
+def Candidate(candidate_id: str, prompt: str, strategy: str, crutch: bool = False, weak_score: float = 0.0) -> RankingCandidate:
+    grade = GradeReport(candidate_id, {"weak": weak_score}, {"weak": (weak_score,)}, weak_score, weak_score, 0.0)
+    return RankingCandidate(candidate_id, prompt, strategy, "crutch" if crutch else "safe", grade)
 
 
 def test_candidate_that_does_not_regress_is_reported_as_eligible():
@@ -30,7 +22,7 @@ def test_candidate_that_does_not_regress_is_reported_as_eligible():
         "Explain this.", [candidate], ("test-a",), evaluate
     )
 
-    outcome = report.outcome_for(candidate.id)
+    outcome = report.outcome_for(candidate.candidate_id)
     assert outcome.passed is True
     assert outcome.eligible is True
     assert outcome.regression is False
@@ -52,8 +44,8 @@ def test_weak_gain_cannot_override_a_strong_regression():
         "Explain this.", [candidate], ("same-tests",), evaluate
     )
 
-    outcome = report.outcome_for(candidate.id)
-    assert candidate.weak_score > 0.80
+    outcome = report.outcome_for(candidate.candidate_id)
+    assert candidate.grade is not None and candidate.grade.worst > 0.80
     assert outcome.passed is False
     assert outcome.eligible is False
     assert "below original" in outcome.reason
@@ -69,18 +61,18 @@ def test_crutch_strategy_is_rejected_when_it_regresses():
     )
 
     def evaluate(prompt, tests):
-        return {"Explain this.": 0.90, candidate.prompt: 0.89}[prompt]
+        return {"Explain this.": 0.90, candidate.text: 0.89}[prompt]
 
     report = StrongCheckPolicy().check(
         "Explain this.", [candidate], ("same-tests",), evaluate
     )
 
-    outcome = report.outcome_for(candidate.id)
+    outcome = report.outcome_for(candidate.candidate_id)
     assert outcome.crutch is True
     assert outcome.passed is False
     assert outcome.eligible is False
     assert "strong_check_regression" in outcome.reason
-    assert eligible_candidates([candidate], report) == []
+    assert report.passed_candidates == ()
 
 
 def test_safe_fallback_keeps_original_and_exposes_a_reason():
@@ -103,6 +95,3 @@ def test_safe_fallback_keeps_original_and_exposes_a_reason():
     )
     assert [entry["reason"] for entry in report.to_dict()["candidates"]]
     assert all(entry["eligible"] is False for entry in report.to_dict()["candidates"])
-
-    annotated = retain_original(report, "original_retained: weak gains were unsafe")
-    assert annotated.fallback_reason == "original_retained: weak gains were unsafe"

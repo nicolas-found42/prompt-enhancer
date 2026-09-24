@@ -11,6 +11,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .grading import GradeReport
+from .strong_check import StrongCheckReport
+
 
 @dataclass(frozen=True)
 class RankingCandidate:
@@ -20,7 +23,7 @@ class RankingCandidate:
     text: str = ""
     strategy: str = ""
     strategy_kind: str = "safe"
-    grade: Any = None
+    grade: GradeReport | None = None
     eligible: bool = True
     rejection_reasons: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -122,217 +125,50 @@ class RankingResult:
         return self.to_dict()
 
 
-def _field(value: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if isinstance(value, Mapping):
-            if name in value:
-                return value[name]
-        elif hasattr(value, name):
-            return getattr(value, name)
-    return default
-
-
-def _serialize_grade(value: Any) -> Any:
-    if value is None:
-        return None
-    if hasattr(value, "to_dict"):
-        return value.to_dict()
-    if isinstance(value, Mapping):
-        return dict(value)
-    return {
-        "worst": _metric(value, "worst"),
-        "mean": _metric(value, "mean"),
-        "spread": _metric(value, "spread"),
-    }
-
-
-def _metric(grade: Any, name: str) -> float:
-    aliases = {
-        "worst": ("worst", "worst_model", "worst_model_pass_rate", "worst_rate"),
-        "mean": ("mean", "mean_pass_rate", "average", "average_pass_rate"),
-        "spread": ("spread", "sample_spread", "sample_variation", "variation"),
-    }[name]
-    value = _field(grade, *aliases, default=None)
-    if value is None and name == "worst":
-        rates = _field(grade, "per_model", "per_model_pass_rates", default={})
-        if isinstance(rates, Mapping) and rates:
-            numeric = [float(item) for item in rates.values()]
-            if numeric:
-                return min(numeric)
-    if value is None and name == "mean":
-        rates = _field(grade, "per_model", "per_model_pass_rates", default={})
-        if isinstance(rates, Mapping) and rates:
-            numeric = [float(item) for item in rates.values()]
-            if numeric:
-                return sum(numeric) / len(numeric)
-    if value is None:
-        return 0.0
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _length(candidate: Any) -> int:
-    value = _field(candidate, "length", "prompt_length", default=None)
-    if value is not None:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            pass
-    text = _field(candidate, "text", "prompt", default="")
-    return len(str(text))
-
-
-def _strategy_kind(candidate: Any) -> str:
-    value = _field(candidate, "strategy_kind", "kind", default=None)
-    if value is not None:
-        return str(value)
-    strategy = _field(candidate, "strategy", default="")
-    if isinstance(strategy, Mapping):
-        value = strategy.get("kind", strategy.get("type"))
-        if value is not None:
-            return str(value)
-    if str(strategy) in {
-        "split_into_steps",
-        "add_example",
-        "role_play",
-        "repeated_emphasis",
-    }:
-        return "crutch"
-    return "safe"
-
-
-def _candidate(value: Any, *, default_id: str = "candidate") -> RankingCandidate:
-    if isinstance(value, RankingCandidate):
-        return value
-    candidate_id = str(_field(value, "candidate_id", "id", default=default_id))
-    text = str(_field(value, "text", "prompt", default="") or "")
-    strategy = _field(value, "strategy", default="")
-    if isinstance(strategy, Mapping):
-        strategy_name = str(strategy.get("name", strategy.get("id", "")))
-    else:
-        strategy_name = str(strategy or "")
-    grade = _field(value, "grade", "metrics", "score", default=None)
-    eligible_value = _field(value, "eligible", "passed", default=True)
-    reasons_value = _field(value, "rejection_reasons", "reasons", default=())
-    if isinstance(reasons_value, str):
-        reasons = (reasons_value,)
-    else:
-        reasons = tuple(str(reason) for reason in (reasons_value or ()))
-    metadata = _field(value, "metadata", default={})
-    return RankingCandidate(
-        candidate_id=candidate_id,
-        text=text,
-        strategy=strategy_name,
-        strategy_kind=_strategy_kind(value),
-        grade=grade,
-        eligible=bool(eligible_value),
-        rejection_reasons=reasons,
-        metadata=dict(metadata) if isinstance(metadata, Mapping) else {},
-    )
+def _serialize_grade(grade: GradeReport | None) -> dict[str, Any] | None:
+    return grade.to_dict() if grade is not None else None
 
 
 def _strong_decision(
-    candidate: RankingCandidate, strong_check: Any
+    candidate: RankingCandidate, strong_check: StrongCheckReport | None
 ) -> tuple[bool | None, str | None]:
-    # A candidate-level strong outcome is enough when no report object exists.
+    """The strong check's verdict on a candidate: passed, failed, or not run."""
     if strong_check is None:
         return None, None
-    value = strong_check
-    if isinstance(strong_check, Mapping) and "outcomes" not in strong_check:
-        value = strong_check
-    else:
-        outcome_for = _field(strong_check, "outcome_for", default=None)
-        if callable(outcome_for):
-            try:
-                value = outcome_for(candidate.candidate_id)
-            except (AttributeError, KeyError, TypeError, ValueError):
-                value = None
-        elif isinstance(strong_check, Mapping):
-            outcomes = strong_check.get("outcomes", {})
-            if isinstance(outcomes, Mapping):
-                value = outcomes.get(candidate.candidate_id)
-        else:
-            value = _field(strong_check, "outcomes", default=None)
-            if isinstance(value, Mapping):
-                value = value.get(candidate.candidate_id)
-    if value is None:
-        # Upstream fidelity can exclude a candidate before any strong-model run.
-        if not candidate.eligible:
-            return None, None
-        passed_candidates = _field(strong_check, "passed_candidates", default=None)
-        if passed_candidates is not None:
-            if isinstance(passed_candidates, Mapping):
-                passed = candidate.candidate_id in passed_candidates
-            else:
-                passed = candidate.candidate_id in tuple(passed_candidates)
-            return passed, (None if passed else "strong check did not pass")
-        return None, None
-    passed = _field(value, "passed", "eligible", "success", default=None)
-    if passed is None:
-        return None, None
-    reason = _field(value, "reason", "rejection_reason", default=None)
-    if bool(passed):
+    try:
+        outcome = strong_check.outcome_for(candidate.candidate_id)
+    except KeyError:
+        # Upstream fidelity can exclude a candidate before any strong-model run;
+        # an eligible candidate the strong check never ran has not passed it.
+        return (None, None) if not candidate.eligible else (False, "strong check did not pass")
+    if outcome.passed:
         return True, None
-    return False, str(reason or "strong check failed")
+    return False, outcome.reason or "strong check failed"
 
 
 def _key(candidate: RankingCandidate) -> tuple[float, float, float, int]:
-    return (
-        -_metric(candidate.grade, "worst"),
-        -_metric(candidate.grade, "mean"),
-        _metric(candidate.grade, "spread"),
-        _length(candidate),
-    )
-
-
-def _original(value: Any, original_grade: Any = None) -> RankingCandidate:
-    if isinstance(value, RankingCandidate) and original_grade is None:
-        return value
-    if isinstance(value, str):
-        return RankingCandidate(
-            "original", value, "original", "baseline", original_grade
-        )
-    if isinstance(value, Mapping):
-        grade = original_grade or value.get("grade", value.get("metrics"))
-        return RankingCandidate(
-            str(value.get("candidate_id", value.get("id", "original"))),
-            str(value.get("text", value.get("prompt", "")) or ""),
-            "original",
-            "baseline",
-            grade,
-        )
-    grade = original_grade or _field(value, "grade", "metrics", default=None)
-    return RankingCandidate(
-        str(_field(value, "candidate_id", "id", default="original")),
-        str(_field(value, "text", "prompt", default="") or ""),
-        "original",
-        "baseline",
-        grade,
-    )
+    grade = candidate.grade
+    if grade is None:
+        return (-0.0, -0.0, 0.0, len(candidate.text))
+    return (-grade.worst, -grade.mean, grade.spread, len(candidate.text))
 
 
 def rank_candidates(
-    original: Any,
-    candidates: Sequence[Any],
+    original: RankingCandidate,
+    candidates: Sequence[RankingCandidate],
     *,
-    original_grade: Any = None,
-    strong_check: Any = None,
+    strong_check: StrongCheckReport | None = None,
 ) -> RankingResult:
     """Rank eligible candidates by worst, mean, spread, then prompt length.
 
     The original is retained unless the best eligible candidate is strictly
-    better on worst, mean, spread, or length. ``strong_check`` is an external report or
-    outcome map; this function only consumes its ``passed``/``eligible``
-    decision and never repeats the strong-model comparison.
+    better on worst, mean, spread, or length. ``strong_check`` is the strong
+    check's report; this function only consumes each candidate's verdict and
+    never repeats the strong-model comparison.
     """
 
-    baseline = _original(original, original_grade)
-    parsed = [
-        _candidate(value, default_id=f"candidate-{index + 1}")
-        for index, value in enumerate(candidates)
-    ]
+    baseline = original
+    parsed = list(candidates)
     eligible: list[RankingCandidate] = []
     reasons: dict[str, list[str]] = {}
     for candidate in parsed:

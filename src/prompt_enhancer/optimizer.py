@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
@@ -33,40 +33,37 @@ from .diagnosis import (
     DiagnosisReport,
     DiagnosisRubric,
     GapImpact,
-    model_diagnosis,
 )
 from .failures import describe_failure
-from .fidelity import check_candidate_fidelity
 from .gateway import (
     Gateway,
     GatewayConfig,
     HttpGateway,
     HttpTransport,
-    ProviderError,
     ScriptedGateway,
     completion_text,
     writer_messages,
 )
-from .grading import grade_panel_with_jev
 from .history import RunHistory
-from .jev import ChoiceDecision, NoulDecision, parse_decision
-from .models import CostBreakdown, OptimizeResult, new_run_id, normalize_tier, utc_now
-from .repeat import RepeatCoordinator, RoundRequest
+from .jev import NoulDecision, parse_decision
+from .models import (
+    CostBreakdown,
+    OptimizeResult,
+    new_run_id,
+    normalize_tier,
+    utc_now,
+)
+from .repeat import RepeatCoordinator, RoundRequest, RoundRunner
 from .rewrite import (
     CURRENT_WRITER_INSTRUCTION_VERSION,
     WRITER_INSTRUCTION_VERSIONS,
-    CandidateWriter,
 )
+from .rounds import RoundOutcome, RoundPlan, prompt_diff, run_round
 from .rubric_revisions import SQLiteRubricStore
-from .runner import PanelResult, run_candidates
-from .selector import rank_candidates
 from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
-from .strategies import STRATEGY_LIBRARY, RewriteStrategy, search_strategies
-from .strong_check import StrongCheckPolicy
 from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
-    SuccessTestCompiler,
 )
 
 
@@ -217,15 +214,6 @@ class PromptOptimizer:
             raise ValueError(f"weak panel for {tier} requires {count} distinct models")
         return replace(self.config, writer_model=writer, strong_check_model=strong, weak_models=tuple(selected_weak[:count]))
 
-    @staticmethod
-    def _model_roles(settings: Settings) -> dict[str, Any]:
-        return {
-            "judge": settings.judge_model,
-            "writer": settings.writer_model,
-            "strong": settings.strong_check_model,
-            "weak": list(settings.weak_models),
-        }
-
     def validate_request(self, prompt: str, options: Mapping[str, Any] | None = None) -> None:
         """Raise ValueError for a request that optimize() would refuse."""
         self._prepare(prompt, options)
@@ -273,7 +261,7 @@ class PromptOptimizer:
                 result = self._optimize_started(prompt, supplied_options, tier, run_settings, run_seed, run_id, started_at, started_perf)
         except Exception as exc:  # noqa: BLE001 - a failed run is still saved and explained
             result = self.failure_result(run_id, prompt, exc, started_at=started_at)
-            result["report"]["models"] = self._model_roles(run_settings)
+            result["report"]["models"] = run_settings.model_roles()
         result["timing"]["total_ms"] = max(0, round((perf_counter() - started_perf) * 1000))
         result["timing"]["started_at"] = started_at
         result["timing"]["finished_at"] = utc_now()
@@ -321,7 +309,7 @@ class PromptOptimizer:
                 metadata={"tier": tier, "options": dict(options), "diagnosis": diagnosis_payload},
             )
             result = self._needs_input_result(run_id, state, tier, started_at, started_perf)
-            result["report"]["models"] = self._model_roles(run_settings)
+            result["report"]["models"] = run_settings.model_roles()
             result["report"]["diagnosis"] = diagnosis_payload
             return result
         return self._run_rounds(
@@ -330,33 +318,23 @@ class PromptOptimizer:
             prior_failures=options.get("prior_round_failures", ()),
         )
 
-    def _round_executor(self, context: _RunContext) -> Any:
-        def execute(request: RoundRequest) -> Mapping[str, Any]:
+    def _round_executor(self, context: _RunContext) -> RoundRunner:
+        def execute(request: RoundRequest) -> RoundOutcome:
             self._round = {"round": request.round_number, "max_rounds": request.max_rounds}
-            result = self._run_optimization(context, request.tier.value, request.prior_failures)
-            report = result["report"]
-            failures = [
-                {
-                    "candidate_id": candidate["candidate_id"],
-                    "strategy": candidate.get("strategy"),
-                    "candidate_prompt": candidate.get("text"),
-                    "reasons": candidate.get("rejection_reasons", []),
-                    "weak_pass_rates": candidate.get("grade", {}).get("per_model", {}),
-                }
-                for candidate in report.get("candidates", [])
-                if not candidate.get("selected")
-            ]
-            return {
-                **result,
-                "candidate_failures": failures,
-                "selected_candidate_id": report.get("selection_evidence", {}).get("selected_candidate_id"),
-                "evidence": {
-                    key: report[key]
-                    for key in ("diagnosis", "tests", "candidates", "per_model", "strong_check", "selection_evidence", "strategies")
-                    if key in report
-                },
-                "continue_rounds": bool(failures) and result["original_kept"],
-            }
+            plan = RoundPlan(
+                prompt=context.prompt,
+                working_prompt=_prompt_with_assumptions(context.prompt, context.assumptions),
+                run_id=context.run_id,
+                tier=request.tier.value,
+                seed=context.seed,
+                diagnosis=context.diagnosis,
+                assumptions=context.assumptions,
+                settings=context.settings,
+                faithfulness_threshold=self.faithfulness_threshold,
+                writer_instruction_version=self.writer_instruction_version,
+                prior_failures=tuple(request.prior_failures),
+            )
+            return run_round(self.gateway, plan, on_stage=self._stage)
         return execute
 
     def _run_rounds(
@@ -374,191 +352,6 @@ class PromptOptimizer:
             initial_failures=prior_failures,
         )
         return cast(OptimizeResult, repeated.as_payload())
-
-    @staticmethod
-    def _unchanged_report(
-        *, status: str, summary: str, models: Mapping[str, Any],
-        diagnosis: Mapping[str, Any], tests: Any, assumptions: Any,
-        original: str, working: str, tier: str,
-    ) -> dict[str, Any]:
-        # Without a confirmed gap no strategy can run, so a Deep pass would only
-        # repeat the diagnosis; it is not offered.
-        has_gaps = bool(diagnosis.get("confirmed_gaps"))
-        return {
-            "status": status,
-            "models": dict(models),
-            "summary": summary,
-            "diagnosis": dict(diagnosis),
-            "tests": tests,
-            "candidates": [],
-            "per_model": {},
-            "assumptions": list(assumptions),
-            "diff": _diff(original, working),
-            "offer_deep": tier != "deep" and has_gaps,
-            "history": [],
-        }
-
-    def _run_optimization(
-        self,
-        context: _RunContext,
-        tier: str,
-        prior_failures: Any = (),
-    ) -> OptimizeResult:
-        prompt = context.prompt
-        run_id = context.run_id
-        diagnosis_payload = context.diagnosis
-        model_view = model_diagnosis(diagnosis_payload)
-        assumptions = context.assumptions
-        run_seed = context.seed
-        selected_settings = context.settings
-        models = self._model_roles(selected_settings)
-        working_prompt = _prompt_with_assumptions(prompt, assumptions)
-        self._stage("writing_tests")
-        try:
-            compiled = SuccessTestCompiler(
-                self.gateway,
-                writer_model=selected_settings.writer_model,
-                faithfulness_threshold=self.faithfulness_threshold,
-            ).compile(working_prompt)
-        except (ValueError, TypeError) as exc:
-            raise ProviderError("writer", selected_settings.writer_model, None, "invalid success-test response", role="writer", kind="invalid_response") from exc
-        test_payload = [asdict(test) for test in compiled.tests]
-
-        confirmed_gaps = diagnosis_payload.get("confirmed_gaps", [])
-        if not test_payload or not confirmed_gaps:
-            no_gaps = not confirmed_gaps
-            summary = (
-                "No confirmed gaps were found; the original request was returned unchanged."
-                if no_gaps and test_payload else
-                "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
-                if no_gaps else
-                "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
-            )
-            report = self._unchanged_report(
-                status="no_change" if no_gaps and test_payload else "unverified",
-                summary=summary, models=models, diagnosis=diagnosis_payload,
-                tests=test_payload, assumptions=assumptions, original=prompt,
-                working=working_prompt, tier=tier,
-            )
-            return self._result(run_id, working_prompt, working_prompt == prompt, report)
-
-        self._stage("choosing_strategy")
-        strategy_choice = self.gateway.decide(
-            {"model": selected_settings.judge_model, "key": "strategy_choice", "type": "choice", "query": "Which rewrite strategy best addresses the diagnosed weakness?", "criteria": {**{item.name: item.description for item in STRATEGY_LIBRARY}, "none": "No rewrite strategy is suitable."}, "state": {"prompt": working_prompt, "diagnosis": model_view, "prior_failures": list(prior_failures)}},
-            role="judge", run_id=run_id,
-        )
-        parsed_strategy = parse_decision(strategy_choice)
-        preferred_strategy = parsed_strategy.selected if isinstance(parsed_strategy, ChoiceDecision) else None
-
-        def recheck_strategy(strategy: RewriteStrategy) -> dict[str, bool]:
-            answer = self.gateway.decide(
-                {"model": selected_settings.judge_model, "key": f"strategy_recheck:{strategy.name}", "type": "noul", "query": "Is this strategy appropriate for the prompt and diagnosed weakness without inventing requirements?", "state": {"prompt": working_prompt, "diagnosis": model_view, "strategy": strategy.to_dict()}},
-                role="judge", run_id=run_id,
-            )
-            decision = parse_decision(answer)
-            return {"eligible": isinstance(decision, NoulDecision) and decision.probability >= 0.8}
-
-        self._stage("writing_candidates")
-        search = search_strategies(
-            working_prompt,
-            model_view,
-            tier,
-            writer=CandidateWriter(
-                self.gateway,
-                writer_model=selected_settings.writer_model,
-                instruction_version=self.writer_instruction_version,
-            ),
-            previous_failures=prior_failures,
-            recheck=recheck_strategy,
-            priority_strategy=preferred_strategy,
-        )
-        candidates = list(search.candidates)
-        if not candidates:
-            return self._result(
-                run_id,
-                working_prompt,
-                working_prompt == prompt,
-                self._unchanged_report(
-                    status="no_change", summary="No candidate strategy was selected.",
-                    models=models, diagnosis=diagnosis_payload, tests=test_payload,
-                    assumptions=assumptions, original=prompt, working=working_prompt,
-                    tier=tier,
-                ),
-            )
-
-        self._stage("running_weak_models")
-        panel = run_candidates(
-            candidates,
-            selected_settings.weak_models,
-            self.gateway,
-            original=working_prompt,
-            budget=tier,
-            run_seed=run_seed,
-            run_id=run_id,
-        )
-        self._stage("grading")
-        panel_grades, grading_answers = grade_panel_with_jev(
-            panel, test_payload, self.gateway,
-            judge_model=selected_settings.judge_model, run_id=run_id,
-        )
-        grades = [
-            (candidate, panel_grades[candidate.candidate_id])
-            for candidate in candidates
-        ]
-        original_grade = panel_grades["original"]
-        self._stage("checking_fidelity")
-        ranking_candidates = [
-            {
-                "candidate_id": candidate.candidate_id,
-                "text": candidate.text,
-                "prompt": candidate.text,
-                "strategy": candidate.strategy.name,
-                "strategy_kind": candidate.strategy.kind,
-                "grade": grade,
-                "fidelity": (fidelity := check_candidate_fidelity(
-                    self.gateway, working_prompt, candidate.text, model_view,
-                    candidate.strategy.name, run_id=run_id,
-                    judge_model=selected_settings.judge_model,
-                )).to_dict(),
-                "eligible": fidelity.passed,
-                "rejection_reasons": [] if fidelity.passed else ["candidate failed fidelity checks"],
-                "metadata": {"fidelity": fidelity.to_dict()},
-            }
-            for candidate, grade in grades
-        ]
-        self._stage("strong_check")
-        strong = StrongCheckPolicy(selected_settings.strong_check_model).check(
-            working_prompt,
-            [candidate for candidate in ranking_candidates if candidate["eligible"]],
-            test_payload,
-            lambda candidate_prompt, _tests: self._strong_score(candidate_prompt, _tests, run_id, selected_settings),
-        )
-        ranking = rank_candidates(
-            {"candidate_id": "original", "text": working_prompt, "grade": original_grade},
-            ranking_candidates,
-            original_grade=original_grade,
-            strong_check=strong,
-        )
-        final_prompt = ranking.final_prompt
-        original_kept = final_prompt == prompt
-        report = {
-            "status": "no_change" if original_kept else ("clarified" if ranking.original_kept else "improved"),
-            "models": models,
-            "summary": "No candidate beat the original." if original_kept else ("Clarifications were included; no candidate beat the clarified prompt." if ranking.original_kept else "Candidate selected after verification."),
-            "diagnosis": diagnosis_payload,
-            "tests": test_payload,
-            "jev_answers": grading_answers,
-            "candidates": [item.to_dict() for item in ranking.ranked],
-            "per_model": {"ranking": ranking.to_dict(), "panel": panel.to_dict()},
-            "assumptions": list(assumptions),
-            "diff": _diff(prompt, final_prompt),
-            "selection_evidence": ranking.to_dict(),
-            "strong_check": strong.to_dict(),
-            "strategies": search.to_dict(),
-            "offer_deep": tier != "deep" and original_kept,
-            "history": [],
-        }
-        return self._result(run_id, final_prompt, original_kept, report)
 
     def _diagnose(self, prompt: str) -> DiagnosisReport | None:
         rubric = None
@@ -599,23 +392,6 @@ class PromptOptimizer:
                 gaps.append(ConfirmedGap(item.question_id, item.text, default_impacts.get(item.question_id, GapImpact.MEDIUM), missing, decision.confidence, item.threshold))
         return replace(report, confirmed_gaps=tuple(gaps), rubric_version=rubric.version_id)
 
-    def _strong_score(self, prompt: str, tests: Any, run_id: str, settings: Settings) -> float:
-        if not tests:
-            raise ValueError("strong check requires success tests")
-        output = completion_text(self.gateway.chat(
-            settings.strong_check_model,
-            [{"role": "user", "content": prompt}],
-            role="strong_check",
-            run_id=run_id,
-        ))
-        grades, _ = grade_panel_with_jev(
-            [PanelResult("strong", settings.strong_check_model, 0, 0, output, prompt)],
-            tests,
-            self.gateway,
-            judge_model=settings.judge_model,
-            run_id=run_id,
-        )
-        return grades["strong"].sample_scores[0]
     def _assumption_meaning_check(
         self, original_prompt: str, updated_prompt: str, run_id: str
     ) -> dict[str, Any]:
@@ -762,7 +538,7 @@ class PromptOptimizer:
         report["assumptions"] = assumptions
         report["status"] = "edited"
         report["summary"] = "Assumption corrected; performance evidence is from the original optimization."
-        report["diff"] = _diff(str(record["prompt"]), updated_prompt)
+        report["diff"] = prompt_diff(str(record["prompt"]), updated_prompt)
         report["final_prompt"] = updated_prompt
         report["assumption_check"] = check
         report["assumption_edit"] = {"key": key, "previous": old_value, "corrected": value, "previous_final_prompt": final_prompt}
@@ -820,23 +596,6 @@ class PromptOptimizer:
         result["report"]["jev_answers"] = evidence["jev_answers"]
         self.store.save_run({**record, "result": result, "tier": "deep", "options": deep_options, "cost": result["cost"], **evidence})
         return result
-
-    def _result(
-        self,
-        run_id: str,
-        final_prompt: str,
-        original_kept: bool,
-        report: dict[str, Any],
-    ) -> OptimizeResult:
-        return OptimizeResult(
-            status="completed",
-            run_id=run_id,
-            final_prompt=final_prompt,
-            original_kept=original_kept,
-            report=report,
-            cost=self._usage_cost(),
-            timing={"total_ms": 0, "started_at": utc_now(), "finished_at": utc_now()},
-        )
 
     def _usage_cost(self) -> CostBreakdown:
         return cast(CostBreakdown, self.gateway.usage_report())
@@ -988,8 +747,3 @@ def _run_seed(prompt: str, supplied: Any) -> int:
             raise ValueError("seed must be an integer")
         return supplied
     return int.from_bytes(sha256(prompt.encode("utf-8")).digest()[:4], "big")
-
-
-def _diff(original: str, final: str) -> str:
-    import difflib
-    return "".join(difflib.unified_diff(original.splitlines(True), final.splitlines(True), fromfile="original", tofile="final"))

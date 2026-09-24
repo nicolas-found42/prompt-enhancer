@@ -1,59 +1,69 @@
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
+from prompt_enhancer.config import Settings
 from prompt_enhancer.repeat import RepeatCoordinator, Tier
+from prompt_enhancer.rounds import CandidateFailure, RoundOutcome, RoundPlan
+
+GAP = {"confirmed_gaps": [{"key": "goal"}], "problem_sentences": []}
 
 
-def _failed_round(
-    failure: str = "candidate-1 missed the required output format",
+def _outcome(
+    request,
     *,
-    continue_rounds: bool = True,
-) -> dict[str, Any]:
-    return {
-        "final_prompt": "original",
-        "original_kept": True,
-        "continue_rounds": continue_rounds,
-        "candidate_failures": [
-            {
-                "candidate_id": "candidate-1",
-                "strategy": "specify_output_format",
-                "reasons": [failure],
-                "weak_pass_rates": {"weak-a": 0.25},
-                "strong_pass_rate": 1.0,
-            }
-        ],
-        "report": {"status": "no_change"},
-        "cost": {"total": 0.001},
-        "timing": {"elapsed_ms": 12},
-    }
+    failures: tuple[CandidateFailure, ...] = (),
+    final_prompt: str = "original",
+    diagnosis: dict = GAP,
+) -> RoundOutcome:
+    plan = RoundPlan(
+        prompt="original",
+        working_prompt="original",
+        run_id=request.run_id,
+        tier=request.tier.value,
+        seed=0,
+        diagnosis=diagnosis,
+        assumptions=(),
+        settings=Settings(),
+        faithfulness_threshold=0.8,
+        writer_instruction_version=2,
+        prior_failures=request.prior_failures,
+    )
+    return RoundOutcome(
+        plan=plan,
+        status="no_change" if final_prompt == "original" else "improved",
+        summary="",
+        final_prompt=final_prompt,
+        original_kept=final_prompt == "original",
+        cost={"total": 0.001},
+        timing={"elapsed_ms": 12},
+        failures=failures,
+    )
 
 
-@pytest.mark.parametrize(
-    ("tier", "expected_rounds"),
-    [
-        (Tier.FAST, 1),
-        (Tier.STANDARD, 2),
-        (Tier.DEEP, 3),
-    ],
-)
-def test_each_tier_honors_its_max_round_limit(
-    tier: Tier,
-    expected_rounds: int,
-) -> None:
+def _failure(reason: str = "candidate-1 missed the required output format") -> CandidateFailure:
+    return CandidateFailure(
+        candidate_id="candidate-1",
+        strategy="specify_output_format",
+        reasons=(reason,),
+        weak_pass_rates={"weak-a": 0.25},
+        strong_pass_rate=1.0,
+    )
+
+
+def _run(tier: Tier, execute_round, run_id: str = "run"):
+    return RepeatCoordinator().run(run_id=run_id, prompt="original", tier=tier, execute_round=execute_round)
+
+
+@pytest.mark.parametrize(("tier", "expected_rounds"), [(Tier.FAST, 1), (Tier.STANDARD, 2), (Tier.DEEP, 3)])
+def test_each_tier_honors_its_max_round_limit(tier: Tier, expected_rounds: int) -> None:
     requests = []
 
     def execute_round(request):
         requests.append(request)
-        return _failed_round()
+        return _outcome(request, failures=(_failure(),))
 
-    result = RepeatCoordinator().optimize(
-        "Return the release status.",
-        {"run_id": "run-limits", "tier": tier},
-        execute_round,
-    )
+    result = _run(tier, execute_round)
 
     assert tier.max_rounds == expected_rounds
     assert len(requests) == expected_rounds
@@ -68,14 +78,10 @@ def test_later_round_receives_previous_candidate_failures() -> None:
     def execute_round(request):
         requests.append(request)
         if request.round_number == 1:
-            return _failed_round("candidate-2 lost on the smallest weak model")
-        return _failed_round(continue_rounds=False)
+            return _outcome(request, failures=(_failure("candidate-2 lost on the smallest weak model"),))
+        return _outcome(request)
 
-    result = RepeatCoordinator().optimize(
-        "Explain the incident.",
-        {"run_id": "run-failures", "tier": Tier.STANDARD},
-        execute_round,
-    )
+    result = _run(Tier.STANDARD, execute_round)
 
     assert requests[0].prior_failures == ()
     assert requests[1].prior_round_failures[0].candidate_id == "candidate-1"
@@ -86,14 +92,20 @@ def test_later_round_receives_previous_candidate_failures() -> None:
     assert result.history[0].timing == {"elapsed_ms": 12}
 
 
-def test_lower_tier_no_change_result_offers_a_more_expensive_deep_pass() -> None:
-    result = RepeatCoordinator().optimize(
-        "Summarize the weekly report.",
-        {"run_id": "run-offer", "tier": Tier.FAST},
-        lambda request: _failed_round(continue_rounds=False),
-    )
+def test_a_round_without_failures_ends_the_tier_early() -> None:
+    requests = []
 
-    payload = result.as_payload()
+    def execute_round(request):
+        requests.append(request)
+        return _outcome(request)
+
+    _run(Tier.DEEP, execute_round)
+
+    assert len(requests) == 1
+
+
+def test_lower_tier_no_change_result_offers_a_more_expensive_deep_pass() -> None:
+    payload = _run(Tier.FAST, lambda request: _outcome(request), run_id="run-offer").as_payload()
     offer = payload["report"]["offer_deep"]
 
     assert payload["final_prompt"] == "original"
@@ -108,70 +120,44 @@ def test_lower_tier_no_change_result_offers_a_more_expensive_deep_pass() -> None
     assert payload["report"]["history"][0]["round_number"] == 1
 
 
-def test_round_that_declines_deep_is_not_offered_it() -> None:
-    def no_gap_round(_request: Any) -> dict[str, Any]:
-        outcome = _failed_round(continue_rounds=False)
-        return {**outcome, "report": {"status": "no_change", "offer_deep": False}}
-
-    result = RepeatCoordinator().optimize(
-        "Summarize the weekly report.",
-        {"run_id": "run-no-gaps", "tier": Tier.FAST},
-        no_gap_round,
-    )
+def test_round_without_confirmed_gaps_is_not_offered_deep() -> None:
+    no_gaps = {"confirmed_gaps": [], "problem_sentences": []}
+    result = _run(Tier.FAST, lambda request: _outcome(request, diagnosis=no_gaps))
 
     assert result.as_payload()["report"]["offer_deep"] is None
 
 
 def test_improved_result_does_not_offer_deep() -> None:
-    result = RepeatCoordinator().optimize(
-        "Summarize the report.",
-        {"run_id": "run-improved", "tier": Tier.FAST},
-        lambda request: {
-            "final_prompt": "Summarize the report in three bullets.",
-            "original_kept": False,
-            "continue_rounds": False,
-            "candidate_failures": [],
-            "report": {"status": "improved"},
-        },
-    )
+    result = _run(Tier.FAST, lambda request: _outcome(request, final_prompt="Summarize in three bullets."))
 
     assert result.as_payload()["report"]["offer_deep"] is None
 
 
 def test_deep_pass_keeps_run_id_and_appends_tiered_round_history() -> None:
     coordinator = RepeatCoordinator()
-    lower_result = coordinator.optimize(
-        "Repair the failing test.",
-        {
-            "run_id": "run-same",
-            "tier": Tier.STANDARD,
-            "questions": ["Which suite?"],
-            "answers": {"q1": "unit"},
-            "assumptions": ["Use the default formatter"],
-        },
-        lambda request: _failed_round(),
+    lower = coordinator.run(
+        run_id="run-same",
+        prompt="Repair the failing test.",
+        tier=Tier.STANDARD,
+        execute_round=lambda request: _outcome(request, failures=(_failure(),)),
+        questions=["Which suite?"],
+        answers={"q1": "unit"},
+        assumptions=["Use the default formatter"],
     )
-    persisted_run = {
-        **lower_result.as_payload(),
-        "original_prompt": "Repair the failing test.",
-    }
+    persisted_run = {**lower.as_payload(), "original_prompt": "Repair the failing test."}
     deep_requests = []
 
     def deep_round(request):
         deep_requests.append(request)
-        return _failed_round(f"deep candidate {request.tier_round} still failed")
+        return _outcome(request, failures=(_failure(f"deep candidate {request.tier_round} still failed"),))
 
-    deep_result = coordinator.deep_pass(persisted_run, deep_round)
-    payload = deep_result.as_payload()
+    payload = coordinator.deep_pass(persisted_run, deep_round).as_payload()
 
     assert payload["run_id"] == "run-same"
     assert payload["tier"] == "deep"
     assert len(deep_requests) == 3
     assert all(request.workflow.run_id == "run-same" for request in deep_requests)
-    assert all(
-        request.workflow.original_prompt == "Repair the failing test."
-        for request in deep_requests
-    )
+    assert all(request.workflow.original_prompt == "Repair the failing test." for request in deep_requests)
     assert deep_requests[0].workflow.answers == {"q1": "unit"}
     assert [
         (entry["tier"], entry["tier_round"], entry["round_number"])
@@ -190,13 +176,20 @@ def test_deep_pass_keeps_run_id_and_appends_tiered_round_history() -> None:
     assert payload["report"]["escalation"]["target_tier"] == "deep"
 
 
-def test_facade_rejects_provider_credentials_before_running() -> None:
-    def should_not_run(_request):
-        raise AssertionError("credential-bearing options must be rejected before a round")
+def test_deep_pass_from_a_stored_run_tells_the_writer_each_failure_once() -> None:
+    coordinator = RepeatCoordinator()
+    lower = coordinator.run(
+        run_id="run-stored",
+        prompt="original",
+        tier=Tier.FAST,
+        execute_round=lambda request: _outcome(request, failures=(_failure(),)),
+    )
+    deep_requests = []
 
-    with pytest.raises(ValueError, match="Provider credentials"):
-        RepeatCoordinator().optimize(
-            "Write a release note.",
-            {"run_id": "run-secret", "tier": Tier.FAST, "openrouter_api_key": "do-not-accept"},
-            should_not_run,
-        )
+    def deep_round(request):
+        deep_requests.append(request)
+        return _outcome(request)
+
+    coordinator.deep_pass(lower.as_payload(), deep_round)
+
+    assert deep_requests[0].prior_failures == (_failure().summary,)
