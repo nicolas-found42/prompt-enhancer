@@ -83,11 +83,7 @@ def _no_candidate_beats_gateway() -> ScriptedGateway:
     base = _pipeline_gateway().decision_handler
 
     def decide(request, **kwargs):
-        answer = base(request, **kwargs)
-        # Grading asks each yes/no test twice, the second time reversed.
-        if str(request.get("key", "")).endswith("_second"):
-            return {**answer, "probability_true": 1.0 - answer["probability_true"]}
-        return answer
+        return base(request, **kwargs)
 
     def only_original_passes(_model, messages, *, role, **_kwargs):
         if role == "writer":
