@@ -157,7 +157,7 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 
 | Role | Default model | Route |
 |---|---|---|
-| Judge (fixed) | `typesafe/jev-1.13` | OpenRouter Decisions API |
+| Judge (pinned default) | `typesafe/jev-1.13-20260917` | OpenRouter Decisions API |
 | Writer | `space-bunny-free` | OpenCode Go |
 | Strong check | `glm-5.3-flash` | OpenCode Go |
 | Weak panel | `meta-llama/llama-3.1-8b-instruct`, `mistralai/mistral-nemo`, `meta-llama/llama-3.2-3b-instruct` | OpenRouter |

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-JEV_MODEL = "typesafe/jev-1.13"
+JEV_MODEL = "typesafe/jev-1.13-20260917"
 DEFAULT_GO_WRITER = "space-bunny-free"
 DEFAULT_GO_STRONG = "glm-5.3-flash"
 DEFAULT_WEAK_PANEL = (

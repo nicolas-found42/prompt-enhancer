@@ -77,6 +77,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", type=Path, help="write JSON here instead of stdout")
     parser.add_argument("--record", type=Path, help="capture live responses for strict replay; use with --live")
+    parser.add_argument("--allow-snapshot-mismatch", action="store_true", help="replay decisions recorded with a different Jev snapshot")
     parser.add_argument("--pretty", action="store_true", help="indent JSON output")
     parser.add_argument(
         "--engine-factory",
@@ -147,6 +148,8 @@ def main(
             raise EvaluationError("--record requires --live")
         if args.record and args.engine_factory:
             raise EvaluationError("--record cannot be combined with --engine-factory")
+        if args.allow_snapshot_mismatch and not args.replay:
+            raise EvaluationError("--allow-snapshot-mismatch requires --replay")
         recording = None
         if args.engine_factory:
             harness = EvaluationHarness(
@@ -168,7 +171,7 @@ def main(
             harness = EvaluationHarness(engine)
         else:
             # With no custom factory, the harness lazily creates ReplayGateway.
-            harness = EvaluationHarness()
+            harness = EvaluationHarness(allow_snapshot_mismatch=args.allow_snapshot_mismatch)
         report = harness.run(dataset, options=options, replay_path=args.replay)
         if args.live and recording is not None:
             recording.attach_case_metrics(report)

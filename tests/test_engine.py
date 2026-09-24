@@ -18,7 +18,7 @@ def test_model_settings_do_not_expose_server_credentials(monkeypatch) -> None:
 def test_environment_cannot_change_fixed_jev_model(monkeypatch) -> None:
     monkeypatch.setenv("PROMPT_ENHANCER_JUDGE_MODEL", "another-judge")
 
-    assert Settings.from_env().judge_model == "typesafe/jev-1.13"
+    assert Settings.from_env().judge_model == "typesafe/jev-1.13-20260917"
 
 
 def _no_test_gateway(*, gaps: tuple[str, ...] = ()) -> ScriptedGateway:
@@ -423,7 +423,7 @@ def test_run_model_overrides_are_reported_without_changing_defaults() -> None:
     )
 
     assert result["report"]["models"] == {
-        "judge": "typesafe/jev-1.13",
+        "judge": "typesafe/jev-1.13-20260917",
         "writer": "one-run-writer",
         "strong": "one-run-strong",
         "weak": ["weak-a", "weak-b"],

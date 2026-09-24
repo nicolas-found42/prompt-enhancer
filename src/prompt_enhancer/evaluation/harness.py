@@ -260,9 +260,11 @@ class _ReplayBundle:
     path: Path
     digest: str
     gateway_recordings: Mapping[str, Any] | str | Path
-    case_latency_ms: Mapping[str, float]
-    case_costs: Mapping[str, tuple[float, Mapping[str, float]]]
-    rubric_thresholds: Mapping[str, float] | None
+    jev_model: str | None = None
+    decision_provenance: Mapping[str, Any] = field(default_factory=dict)
+    case_latency_ms: Mapping[str, float] = field(default_factory=dict)
+    case_costs: Mapping[str, tuple[float, Mapping[str, float]]] = field(default_factory=dict)
+    rubric_thresholds: Mapping[str, float] | None = None
     writer_instruction_version: int = HISTORICAL_WRITER_INSTRUCTION_VERSION
     faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
     checklist_keys: tuple[str, ...] | None = None
@@ -334,6 +336,7 @@ class EvaluationHarness:
         engine: Engine | None = None,
         *,
         engine_factory: EngineFactory | None = None,
+        allow_snapshot_mismatch: bool = False,
     ) -> None:
         if engine is not None and engine_factory is not None:
             raise EvaluationError("provide either engine or engine_factory, not both")
@@ -341,6 +344,7 @@ class EvaluationHarness:
             raise EvaluationError("engine must provide optimize(prompt, options)")
         self._engine = engine
         self._engine_factory = engine_factory
+        self._allow_snapshot_mismatch = allow_snapshot_mismatch
 
     def run(
         self,
@@ -368,7 +372,7 @@ class EvaluationHarness:
         if factory is not None:
             engine = factory(replay.path if replay is not None else None)
         elif replay is not None:
-            engine = default_engine_factory(replay.path)
+            engine = default_engine_factory(replay.path, allow_snapshot_mismatch=self._allow_snapshot_mismatch)
         else:
             raise EvaluationError(
                 "a live engine must be injected explicitly; replay or inject a gateway"
@@ -447,11 +451,12 @@ class EvaluationHarness:
         return observation
 
 
-def default_engine_factory(replay_path: Path | None = None) -> Engine:
+def default_engine_factory(replay_path: Path | None = None, *, allow_snapshot_mismatch: bool = False) -> Engine:
     """Build the product optimizer with a strict replay gateway when requested."""
 
     from dataclasses import replace
 
+    from ..config import Settings
     from ..diagnosis import (
         DEFAULT_RUBRIC,
         HISTORICAL_CHECKLIST_EXCLUSIONS,
@@ -479,8 +484,17 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
     rubric = with_impacts(
         rubric, bundle.checklist_impacts if bundle.checklist_impacts is not None else HISTORICAL_CHECKLIST_IMPACTS
     )
+    configured_pin = Settings.from_env().judge_model
+    recorded_pin = bundle.jev_model or configured_pin
+    try:
+        replay_gateway = ReplayGateway(recordings, decision_provenance=bundle.decision_provenance,
+                                       jev_model=recorded_pin, expected_snapshot=configured_pin,
+                                       allow_snapshot_mismatch=allow_snapshot_mismatch)
+    except ValueError as exc:
+        raise EvaluationError(str(exc)) from exc
     return PromptOptimizer(
-        gateway=ReplayGateway(recordings),
+        gateway=replay_gateway,
+        config=replace(Settings.from_env(), judge_model=recorded_pin),
         diagnosis_rubric=rubric,
         writer_instruction_version=bundle.writer_instruction_version,
         faithfulness_threshold=bundle.faithfulness_threshold,
@@ -497,6 +511,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
 
     if isinstance(raw, Mapping) and "responses" in raw:
         recordings: Mapping[str, Any] | str | Path = raw["responses"]
+        provenance = raw.get("decision_provenance", {})
+        recorded_jev_model = raw.get("jev_model")
         if not isinstance(recordings, (Mapping, list)):
             raise EvaluationError("replay responses must be an object or list")
         raw_latencies = raw.get("case_latency_ms", {})
@@ -508,6 +524,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_impacts = raw.get("checklist_impacts")
     else:
         recordings = replay_path
+        provenance = {}
+        recorded_jev_model = None
         raw_latencies = {}
         raw_costs = {}
         raw_thresholds = None
@@ -520,6 +538,13 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         or any(not isinstance(key, str) or value not in {impact.value for impact in GapImpact} for key, value in raw_impacts.items())
     ):
         raise EvaluationError("replay checklist_impacts must map question ids to known impacts")
+    if not isinstance(provenance, Mapping) or any(
+        not isinstance(item, Mapping) or not isinstance(item.get("answered_by"), str) or not item["answered_by"]
+        for item in provenance.values()
+    ):
+        raise EvaluationError("replay decision_provenance requires an answering snapshot for each decision")
+    if recorded_jev_model is not None and (not isinstance(recorded_jev_model, str) or not recorded_jev_model):
+        raise EvaluationError("replay jev_model must be a model ID")
     if raw_checklist is not None and (not isinstance(raw_checklist, list) or any(not isinstance(key, str) or not key for key in raw_checklist)):
         raise EvaluationError("replay checklist_keys must be a list of question ids")
     if isinstance(writer_version, bool) or writer_version not in WRITER_INSTRUCTION_VERSIONS:
@@ -560,6 +585,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         path=replay_path,
         digest=digest,
         gateway_recordings=recordings,
+        jev_model=recorded_jev_model,
+        decision_provenance=provenance,
         case_latency_ms=latencies,
         case_costs=costs,
         rubric_thresholds=thresholds,

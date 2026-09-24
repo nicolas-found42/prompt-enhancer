@@ -24,7 +24,9 @@ npm run dev -- --host 127.0.0.1
 
 The private `.env` file should contain `OPENCODE_GO_KEY` and
 `OPENROUTER_API_KEY`. It is ignored by Git. The configured default writer is
-Space Bunny Free on OpenCode Go; Jev 1.13 is the fixed judge. The app's
+Space Bunny Free on OpenCode Go; Jev defaults to the pinned
+`typesafe/jev-1.13-20260917` snapshot. Set `PROMPT_ENHANCER_JEV_MODEL` to use
+a different Jev snapshot for new runs. The app's
 **Model choices** section lets you change eligible writer, strong-check, and
 weak-panel models per run.
 

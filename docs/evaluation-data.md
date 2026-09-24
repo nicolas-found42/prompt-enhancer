@@ -24,7 +24,12 @@ model responses; it never makes provider calls.
 The current model split is OpenCode Go for `space-bunny-free` (writer),
 `glm-5.3-flash` (strong check), `mimo-v2.6-flash`, and
 `muse-spark-1.3-contributor` (the two additional Deep weak models). OpenRouter
-supplies `typesafe/jev-1.13` and the three default Llama/Mistral weak models.
+supplies the pinned `typesafe/jev-1.13-20260917` snapshot and the three default
+Llama/Mistral weak models. New recordings store the snapshot returned by Jev
+for each decision. Replay checks it against `PROMPT_ENHANCER_JEV_MODEL` (or the
+default pin); use `--allow-snapshot-mismatch` only when comparing across snapshots.
+Historical recordings without snapshot metadata remain replayable, with unknown
+answer provenance.
 The Muse default reflects the user's explicit selection; [OpenCode Go's model
 notes](https://opencode.ai/docs/go/) state that Contributor prompts and
 completions may be used to train Meta models.

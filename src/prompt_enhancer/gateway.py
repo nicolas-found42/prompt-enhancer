@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 import urllib.error
@@ -18,6 +19,8 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .catalog import (
@@ -31,10 +34,12 @@ from .catalog import (
 from .jev import batch_decision_payload, decision_payload
 from .usage import UsageLedger
 
+LEGACY_JEV_ALIAS = "typesafe/jev-1.13"
+
 DEFAULT_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
 DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_USER_AGENT = "prompt-enhancer/0.1"
-RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+RETRYABLE_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 ACCESS_DENIED_STATUS = {401, 402, 403}
 PROVIDER_STATUS_TTL = 600.0
 
@@ -70,6 +75,9 @@ class Gateway(Protocol):
 
     @property
     def decision_log(self) -> list[dict[str, Any]]: ...
+
+    @property
+    def jev_model(self) -> str: ...
 
 
 def writer_messages(instructions: str, state: Any = None) -> list[dict[str, str]]:
@@ -119,6 +127,7 @@ class GatewayConfig:
     go_models_url: str | None = None
     openrouter_models_url: str | None = None
     decisions_path: str = "/alpha/decisions"
+    jev_model: str = JEV_MODEL
     timeout: float = 120.0
     max_retries: int = 2
     backoff: float = 0.0
@@ -140,6 +149,7 @@ class GatewayConfig:
             openrouter_models_url=env.get("OPENROUTER_MODELS_URL", f"{openrouter_base}/models"),
             timeout=float(env.get("PROMPT_ENHANCER_TIMEOUT", "120")),
             max_retries=int(env.get("PROMPT_ENHANCER_MAX_RETRIES", "2")),
+            jev_model=env.get("PROMPT_ENHANCER_JEV_MODEL", JEV_MODEL),
             backoff=float(env.get("PROMPT_ENHANCER_RETRY_BACKOFF", "0")),
             user_agent=env.get("PROMPT_ENHANCER_USER_AGENT", DEFAULT_USER_AGENT),
         )
@@ -252,6 +262,20 @@ def _response_status(response: Any) -> int | None:
         return None
 
 
+def _retry_after_seconds(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        try:
+            deadline = parsedate_to_datetime(str(value))
+            seconds = (deadline - datetime.now(UTC)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return max(0.0, seconds) if math.isfinite(seconds) else None
+
+
 def _decision_answers(response: Any, keys: Sequence[str]) -> list[Any]:
     answers = response.get("answers") if isinstance(response, Mapping) else None
     if not isinstance(answers, Mapping) or any(key not in answers for key in keys):
@@ -308,6 +332,10 @@ class HttpGateway:
     @property
     def session_id(self) -> str:
         return self._session
+
+    @property
+    def jev_model(self) -> str:
+        return self.config.jev_model
 
     def new_run(self, run_id: str | None = None) -> str:
         """Set a stable Go session value and return it."""
@@ -395,7 +423,13 @@ class HttpGateway:
                 last_status = status
                 if status is not None and status >= 400:
                     if status in RETRYABLE_STATUS and attempt + 1 < attempts:
-                        self._backoff(attempt)
+                        headers = response.get("headers", {}) if isinstance(response, Mapping) else getattr(response, "headers", {})
+                        retry_after = next((value for key, value in headers.items() if key.lower() == "retry-after"), None) if isinstance(headers, Mapping) else None
+                        delay = _retry_after_seconds(retry_after)
+                        if delay is not None:
+                            self._sleep(delay)
+                        else:
+                            self._backoff(attempt)
                         continue
                     if status in ACCESS_DENIED_STATUS:
                         self._note_provider(decision.provider, "unavailable", status, decision.model)
@@ -534,23 +568,23 @@ class HttpGateway:
 
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
         request = dict(payload)
-        key, envelope = decision_payload(request, model=JEV_MODEL)
+        key, envelope = decision_payload(request, model=self.config.jev_model)
         decision = self._decisions_route(run_id)
-        self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "provider": "openrouter", "run_id": run_id})
+        self.calls.append({"operation": "decide", "role": role, "model": self.config.jev_model, "provider": "openrouter", "run_id": run_id})
         response = self._request(
             decision,
             envelope,
             role=role,
         )
         answer = _decision_answers(response, [key])[0]
-        self.decision_log.append({"question": request, "answer": answer})
+        self.decision_log.append(self._decision_entry(request, answer, response))
         return answer
 
     def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
         if not requests:
             return []
-        keys, envelope = batch_decision_payload(requests, model=JEV_MODEL)
-        self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "provider": "openrouter", "run_id": run_id})
+        keys, envelope = batch_decision_payload(requests, model=self.config.jev_model)
+        self.calls.append({"operation": "decide", "role": role, "model": self.config.jev_model, "provider": "openrouter", "run_id": run_id})
         response = self._request(
             self._decisions_route(run_id),
             envelope,
@@ -558,15 +592,22 @@ class HttpGateway:
         )
         answers = _decision_answers(response, keys)
         self.decision_log.extend(
-            {"question": request, "answer": answer}
+            self._decision_entry(request, answer, response)
             for request, answer in zip(requests, answers, strict=True)
         )
         return answers
 
     def _decisions_route(self, run_id: str | None) -> RouteDecision:
-        route = self.route_model(JEV_MODEL, run_id=run_id)
+        route = self.route_model(self.config.jev_model, run_id=run_id)
         base = self.config.openrouter_base_url.rstrip("/").removesuffix("/v1")
         return RouteDecision(route.provider, route.model, f"{base}{self.config.decisions_path}", route.headers)
+
+    def _decision_entry(self, request: Mapping[str, Any], answer: Any, response: Any) -> dict[str, Any]:
+        model = response.get("model") if isinstance(response, Mapping) else None
+        if not isinstance(model, str) or not model:
+            raise ProviderError("openrouter", self.config.jev_model, None, "decision response is missing model snapshot", role="judge", kind="invalid_response")
+        return {"question": dict(request), "answer": answer, "answered_by": model,
+                "usage": response.get("usage") if isinstance(response.get("usage"), Mapping) else {}}
 
     def usage_report(self) -> dict[str, Any]:
         return self.usage.to_dict()
@@ -583,6 +624,7 @@ class ScriptedGateway:
         self,
         responses: Sequence[Any] = (),
         *,
+        jev_model: str = JEV_MODEL,
         chat: Callable[..., Any] | None = None,
         decision: Callable[..., Any] | None = None,
         catalog: Any | None = None,
@@ -590,6 +632,7 @@ class ScriptedGateway:
     ) -> None:
         """Answer from ``chat``/``decision`` handlers, else pop ``responses`` in order."""
         self.responses = list(responses)
+        self.jev_model = jev_model
         self.chat_handler = chat
         self.decision_handler = decision
         self.catalog = catalog or StaticModelCatalog((), ())
@@ -616,9 +659,9 @@ class ScriptedGateway:
         return self._next(self.chat_handler, model, messages, role=role, run_id=run_id, **params)
 
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
-        self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "run_id": run_id})
+        self.calls.append({"operation": "decide", "role": role, "model": self.jev_model, "run_id": run_id})
         answer = self._next(self.decision_handler, dict(payload), role=role, run_id=run_id)
-        self.decision_log.append({"question": dict(payload), "answer": answer})
+        self.decision_log.append({"question": dict(payload), "answer": answer, "answered_by": self.jev_model, "usage": {}})
         return answer
 
     def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
@@ -641,9 +684,17 @@ class ReplayGateway(ScriptedGateway):
     fallback, so a recording can never answer a different request.
     """
 
-    def __init__(self, recordings: Mapping[str, Any], **kwargs: Any) -> None:
+    def __init__(self, recordings: Mapping[str, Any], *, decision_provenance: Mapping[str, Any] | None = None,
+                 expected_snapshot: str | None = None, allow_snapshot_mismatch: bool = False, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.recordings = dict(recordings)
+        self.decision_provenance = dict(decision_provenance or {})
+        if not allow_snapshot_mismatch:
+            snapshots = {item.get("answered_by") for item in self.decision_provenance.values() if isinstance(item, Mapping)}
+            expected = expected_snapshot or self.jev_model
+            mismatches = snapshots - {expected}
+            if mismatches:
+                raise ValueError(f"recorded Jev snapshot {sorted(mismatches)!r} differs from configured pin {expected!r}; use --allow-snapshot-mismatch to override")
         self.replayed_keys: list[str] = []
 
     @staticmethod
@@ -653,6 +704,10 @@ class ReplayGateway(ScriptedGateway):
 
     def _lookup(self, operation: str, model: str, payload: Any, role: str) -> Any:
         key = self.request_key(operation, model, payload, role)
+        if key not in self.recordings and operation == "decide" and not self.decision_provenance:
+            legacy_key = self.request_key(operation, LEGACY_JEV_ALIAS, payload, role)
+            if legacy_key in self.recordings:
+                key = legacy_key
         self.replayed_keys.append(key)
         if key not in self.recordings:
             raise ProviderError("replay", model, None, "no recorded response")
@@ -667,9 +722,15 @@ class ReplayGateway(ScriptedGateway):
         request = dict(payload)
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
-        self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "run_id": run_id})
-        answer = self._lookup("decide", JEV_MODEL, request, role)
-        self.decision_log.append({"question": request, "answer": answer})
+        self.calls.append({"operation": "decide", "role": role, "model": self.jev_model, "run_id": run_id})
+        key = self.request_key("decide", self.jev_model, request, role)
+        answer = self._lookup("decide", self.jev_model, request, role)
+        provenance = self.decision_provenance.get(key, {})
+        if self.decision_provenance and not provenance:
+            raise ProviderError("replay", self.jev_model, None, "recorded Jev decision has no snapshot provenance")
+        self.decision_log.append({"question": request, "answer": answer,
+                                  "answered_by": provenance.get("answered_by", "unknown"),
+                                  "usage": provenance.get("usage", {})})
         return answer
 
 if TYPE_CHECKING:

@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pytest
 
+from prompt_enhancer.catalog import JEV_MODEL
+from prompt_enhancer.config import Settings
 from prompt_enhancer.evaluation import Dataset, EvaluationHarness
 from prompt_enhancer.evaluation.__main__ import main as evaluation_main
 from prompt_enhancer.evaluation.harness import default_engine_factory
@@ -66,13 +68,33 @@ def test_recorded_live_gateway_replays_the_same_public_run(tmp_path: Path) -> No
     path = tmp_path / "recorded.json"
     gateway = RecordingGateway(ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide), path)
     prompt = "Summarize the supplied article in three bullets."
-    original = PromptOptimizer(gateway=gateway, store=RunStore(":memory:")).optimize(prompt)
+    store = RunStore(":memory:")
+    original = PromptOptimizer(gateway=gateway, store=store).optimize(prompt)
     responses = json.loads(path.read_text())["responses"]
+    provenance = json.loads(path.read_text())["decision_provenance"]
+    assert provenance
+    assert {entry["answered_by"] for entry in provenance.values()} == {JEV_MODEL}
     replayed = PromptOptimizer(gateway=ReplayGateway(responses), store=RunStore(":memory:")).optimize(prompt)
 
     assert responses
     assert replayed["status"] == original["status"]
     assert replayed["final_prompt"] == original["final_prompt"]
+    assert original["report"]["jev_snapshot"] == [JEV_MODEL]
+    assert all(answer["answered_by"] == JEV_MODEL for answer in original["report"]["jev_answers"])
+    assert all(answer["answered_by"] == JEV_MODEL for answer in store.get_run(original["run_id"])["jev_answers"])
+
+
+def test_replay_rejects_mismatched_jev_snapshot_unless_overridden(tmp_path: Path) -> None:
+    path = tmp_path / "recorded.json"
+    pin = "typesafe/jev-1.13-20990101"
+    original = _record_candidate_run(path, 2, pin=pin)
+    with pytest.raises(Exception, match="differs from configured pin"):
+        default_engine_factory(path)
+    engine = default_engine_factory(path, allow_snapshot_mismatch=True)
+    engine.store = RunStore(":memory:")
+    replayed = engine.optimize("Original request", {"tier": "fast", "clarification_allowed": False})
+    assert replayed["final_prompt"] == original["final_prompt"]
+    assert replayed["report"]["jev_snapshot"] == [pin]
 
 
 def test_replay_cli_reports_failed_cases_with_nonzero_exit(tmp_path: Path, capsys) -> None:
@@ -267,12 +289,15 @@ def _candidate_gateway() -> ScriptedGateway:
     return ScriptedGateway(chat=chat, decision=decide)
 
 
-def _record_candidate_run(path: Path, version: int) -> dict:
-    gateway = RecordingGateway(_candidate_gateway(), path)
+def _record_candidate_run(path: Path, version: int, *, pin: str = JEV_MODEL) -> dict:
+    scripted = _candidate_gateway()
+    scripted.jev_model = pin
+    gateway = RecordingGateway(scripted, path)
     gateway.writer_instruction_version = version
     gateway.faithfulness_threshold = 0.9 if version == 1 else 0.8
     optimizer = PromptOptimizer(
         gateway=gateway, store=RunStore(":memory:"),
+        config=Settings(judge_model=pin),
         writer_instruction_version=version, faithfulness_threshold=gateway.faithfulness_threshold,
     )
     return optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})
