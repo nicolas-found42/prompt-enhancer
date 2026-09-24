@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from prompt_enhancer.config import Settings
-from prompt_enhancer.repeat import RepeatCoordinator, Tier
+from prompt_enhancer.models import Tier
+from prompt_enhancer.repeat import RepeatCoordinator
 from prompt_enhancer.rounds import CandidateFailure, RoundOutcome, RoundPlan
 
 GAP = {"confirmed_gaps": [{"key": "goal"}], "problem_sentences": []}
@@ -20,7 +21,7 @@ def _outcome(
         prompt="original",
         working_prompt="original",
         run_id=request.run_id,
-        tier=request.tier.value,
+        tier=request.tier,
         seed=0,
         diagnosis=diagnosis,
         assumptions=(),

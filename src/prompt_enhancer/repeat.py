@@ -9,42 +9,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Protocol, cast
 
+from .models import Tier
 from .rounds import CandidateFailure, RoundOutcome
-
-
-class Tier(str, Enum):
-    """Optimization effort tiers supported by the public workflow."""
-
-    FAST = "fast"
-    STANDARD = "standard"
-    DEEP = "deep"
-
-    @classmethod
-    def parse(cls, value: Tier | str) -> Tier:
-        if isinstance(value, cls):
-            return value
-        normalized = value.strip().lower()
-        try:
-            return cls(normalized)
-        except ValueError as error:
-            choices = ", ".join(tier.value for tier in cls)
-            raise ValueError(
-                f"Unknown optimization tier {value!r}; expected one of: {choices}"
-            ) from error
-
-    @property
-    def max_rounds(self) -> int:
-        return _MAX_ROUNDS[self]
-
-
-_MAX_ROUNDS: Mapping[Tier, int] = {
-    Tier.FAST: 1,
-    Tier.STANDARD: 2,
-    Tier.DEEP: 3,
-}
 
 
 @dataclass(frozen=True)
@@ -160,6 +128,7 @@ class RoundEvidence:
             # A round that returns an outcome has completed.
             status="completed",
             selected_candidate_id=outcome.selected_candidate_id,
+            selected_strategy=outcome.selected_strategy,
             candidate_failures=outcome.failures,
             evidence=_public_mapping(outcome.evidence()),
             cost=_public_mapping(outcome.cost),
@@ -471,8 +440,9 @@ def _deep_offer(
 ) -> EscalationOffer | None:
     if tier is Tier.DEEP or not history or not history[-1].original_kept:
         return None
-    source_evaluations = _tier_weak_evaluations(tier)
-    target_evaluations = _tier_weak_evaluations(Tier.DEEP)
+    source_evaluations = tier.weak_model_evaluations
+    target_evaluations = Tier.DEEP.weak_model_evaluations
+    deep = Tier.DEEP.budget
     return EscalationOffer(
         run_id=run_id,
         from_tier=tier,
@@ -481,8 +451,9 @@ def _deep_offer(
         source_max_rounds=tier.max_rounds,
         target_max_rounds=Tier.DEEP.max_rounds,
         expected_effort=(
-            "Up to 3 Deep rounds with 6 candidates, 5 weak models, and 3 samples "
-            "per model instead of the lower-tier budget."
+            f"Up to {deep.max_rounds} Deep rounds with {deep.candidates} candidates, "
+            f"{deep.models} weak models, and {deep.samples} samples per model "
+            "instead of the lower-tier budget."
         ),
         expected_cost_change=(
             "Higher expected model cost than this run's lower tier; the exact amount "
@@ -491,15 +462,6 @@ def _deep_offer(
         expected_weak_model_evaluations=target_evaluations,
         expected_evaluation_multiplier=target_evaluations / source_evaluations,
     )
-
-
-def _tier_weak_evaluations(tier: Tier) -> int:
-    candidates, models, samples = {
-        Tier.FAST: (3, 2, 1),
-        Tier.STANDARD: (4, 3, 2),
-        Tier.DEEP: (6, 5, 3),
-    }[tier]
-    return candidates * models * samples * tier.max_rounds
 
 
 def _history_from_run(run: Mapping[str, Any]) -> tuple[RoundEvidence, ...]:

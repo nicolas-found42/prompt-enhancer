@@ -10,7 +10,8 @@ from typing import Any
 
 from .catalog import DEFAULT_DEEP_WEAK_PANEL
 from .gateway import Gateway
-from .strategies import CandidateDraft, TierBudget, budget_for_tier
+from .models import Tier
+from .strategies import CandidateDraft
 
 DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_DEEP_WEAK_PANEL
 
@@ -148,7 +149,7 @@ def run_candidates(
     *,
     original: str | None = None,
     samples: int | None = None,
-    budget: TierBudget | str | None = None,
+    budget: Tier | str | None = None,
     run_seed: int = 0,
     max_workers: int | None = None,
     run_id: str | None = None,
@@ -160,7 +161,7 @@ def run_candidates(
     an explicit ``samples`` value overrides the count.
     """
 
-    selected_budget = budget_for_tier(budget) if budget is not None else None
+    selected_budget = Tier.parse(budget).budget if budget is not None else None
     if selected_budget is not None:
         models = tuple(weak_models or DEFAULT_WEAK_PANEL)[: selected_budget.models]
         selected_samples = selected_budget.samples if samples is None else samples
