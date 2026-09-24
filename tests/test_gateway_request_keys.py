@@ -113,6 +113,12 @@ def _kept_over_two_rounds(optimizer: PromptOptimizer) -> list[Any]:
     return [optimizer.optimize("Original request", {"tier": "standard", "clarification_allowed": False})]
 
 
+def _deep_pass_after_kept(optimizer: PromptOptimizer) -> list[Any]:
+    # The Deep pass rebuilds its first round's failures from the stored run.
+    kept = optimizer.optimize("Original request", {"tier": "standard", "clarification_allowed": False})
+    return [kept, optimizer.start_deep_pass(kept["run_id"])]
+
+
 def _no_strategy(optimizer: PromptOptimizer) -> list[Any]:
     return [optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})]
 
@@ -139,6 +145,7 @@ SCENARIOS: dict[str, tuple[Callable[[], ScriptedGateway], Callable[[PromptOptimi
     "deep_pass": (_deep_gateway, _deep_pass),
     "clarify_resume_edit": (_clarification_gateway, _clarify_resume_edit),
     "kept_over_two_rounds": (_no_candidate_beats_gateway, _kept_over_two_rounds),
+    "deep_pass_after_kept": (_no_candidate_beats_gateway, _deep_pass_after_kept),
     "no_strategy": (_no_strategy_gateway, _no_strategy),
 }
 

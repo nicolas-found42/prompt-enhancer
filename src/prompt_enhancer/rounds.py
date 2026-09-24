@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .config import Settings
@@ -34,6 +34,81 @@ from .strong_check import StrongCheckPolicy, StrongCheckReport
 from .success_tests import SuccessTestCompiler
 
 StageCallback = Callable[[str], None]
+
+
+@dataclass(frozen=True)
+class CandidateFailure:
+    """Why a candidate lost a round.
+
+    ``summary`` is what the next round's strategy choice and writer see; the
+    other fields are evidence for the run report and history.
+    """
+
+    candidate_id: str
+    strategy: str | None = None
+    reasons: tuple[str, ...] = ()
+    weak_pass_rates: Mapping[str, float] = field(default_factory=dict)
+    strong_pass_rate: float | None = None
+    mean_pass_rate: float | None = None
+    worst_pass_rate: float | None = None
+    sample_spread: float | None = None
+    candidate_prompt: str | None = None
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> CandidateFailure:
+        """Read the ``to_dict()`` shape; ``summary`` is derived, so it is ignored."""
+
+        def number(name: str) -> float | None:
+            item = value.get(name)
+            return float(item) if isinstance(item, (int, float)) else None
+
+        strategy = value.get("strategy")
+        prompt = value.get("candidate_prompt")
+        return cls(
+            candidate_id=str(value.get("candidate_id") or "unknown"),
+            strategy=str(strategy) if strategy is not None else None,
+            reasons=tuple(str(reason) for reason in value.get("reasons") or () if reason),
+            weak_pass_rates={
+                str(model): float(rate)
+                for model, rate in (value.get("weak_pass_rates") or {}).items()
+                if isinstance(rate, (int, float))
+            },
+            strong_pass_rate=number("strong_pass_rate"),
+            mean_pass_rate=number("mean_pass_rate"),
+            worst_pass_rate=number("worst_pass_rate"),
+            sample_spread=number("sample_spread"),
+            candidate_prompt=str(prompt) if prompt is not None else None,
+        )
+
+    @property
+    def summary(self) -> str:
+        identity = self.candidate_id
+        if self.strategy:
+            identity = f"{identity} ({self.strategy})"
+        reasons = "; ".join(self.reasons) or "no qualifying improvement"
+        if self.weak_pass_rates:
+            rates = ", ".join(
+                f"{model}={rate:.3f}"
+                for model, rate in sorted(self.weak_pass_rates.items())
+            )
+            reasons = f"{reasons}; weak pass rates: {rates}"
+        if self.strong_pass_rate is not None:
+            reasons = f"{reasons}; strong pass rate={self.strong_pass_rate:.3f}"
+        return f"{identity}: {reasons}"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "strategy": self.strategy,
+            "reasons": list(self.reasons),
+            "weak_pass_rates": dict(self.weak_pass_rates),
+            "strong_pass_rate": self.strong_pass_rate,
+            "mean_pass_rate": self.mean_pass_rate,
+            "worst_pass_rate": self.worst_pass_rate,
+            "sample_spread": self.sample_spread,
+            "candidate_prompt": self.candidate_prompt,
+            "summary": self.summary,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +149,13 @@ class RoundOutcome:
     strong_check: StrongCheckReport | None = None
     grading_answers: tuple[dict[str, Any], ...] = ()
     candidates: tuple[dict[str, Any], ...] = ()
+    failures: tuple[CandidateFailure, ...] = ()
+    """The candidates that lost this round; the next round is told why."""
+
+    @property
+    def continue_rounds(self) -> bool:
+        """Another round can try to beat the prompt using these failures."""
+        return bool(self.failures) and self.original_kept
 
     @property
     def selected_candidate_id(self) -> str | None:
@@ -121,17 +203,6 @@ class RoundOutcome:
     def payload(self) -> dict[str, Any]:
         """The public result of this round, with the repeat loop's evidence."""
         report = self.report()
-        failures = [
-            {
-                "candidate_id": candidate["candidate_id"],
-                "strategy": candidate.get("strategy"),
-                "candidate_prompt": candidate.get("text"),
-                "reasons": candidate.get("rejection_reasons", []),
-                "weak_pass_rates": candidate.get("grade", {}).get("per_model", {}),
-            }
-            for candidate in report.get("candidates", [])
-            if not candidate.get("selected")
-        ]
         return {
             "status": "completed",
             "run_id": self.plan.run_id,
@@ -140,14 +211,28 @@ class RoundOutcome:
             "report": report,
             "cost": self.cost,
             "timing": self.timing,
-            "candidate_failures": failures,
-            "selected_candidate_id": report.get("selection_evidence", {}).get("selected_candidate_id"),
-            "evidence": {
-                key: report[key]
-                for key in ("diagnosis", "tests", "candidates", "per_model", "strong_check", "selection_evidence", "strategies")
-                if key in report
-            },
-            "continue_rounds": bool(failures) and self.original_kept,
+            "candidate_failures": [
+                {
+                    "candidate_id": failure.candidate_id,
+                    "strategy": failure.strategy,
+                    "candidate_prompt": failure.candidate_prompt,
+                    "reasons": list(failure.reasons),
+                    "weak_pass_rates": dict(failure.weak_pass_rates),
+                }
+                for failure in self.failures
+            ],
+            "selected_candidate_id": self.selected_candidate_id,
+            "evidence": self.evidence(report),
+            "continue_rounds": self.continue_rounds,
+        }
+
+    def evidence(self, report: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """The parts of the report kept in the run's round history."""
+        report = self.report() if report is None else report
+        return {
+            key: report[key]
+            for key in ("diagnosis", "tests", "candidates", "per_model", "strong_check", "selection_evidence", "strategies")
+            if key in report
         }
 
 
@@ -284,6 +369,17 @@ def run_round(gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | No
         strong_check=strong,
         grading_answers=tuple(grading_answers),
         candidates=tuple(item.to_dict() for item in ranking.ranked),
+        failures=tuple(
+            CandidateFailure(
+                candidate_id=item.candidate.candidate_id,
+                strategy=item.candidate.strategy,
+                reasons=tuple(str(reason) for reason in item.rejection_reasons if reason),
+                weak_pass_rates={str(model): float(rate) for model, rate in item.candidate.grade.per_model.items()},
+                candidate_prompt=item.candidate.text,
+            )
+            for item in ranking.ranked
+            if not item.selected
+        ),
         **_spent(gateway),
     )
 
@@ -318,4 +414,4 @@ def _strong_score(gateway: Gateway, prompt: str, tests: Any, plan: RoundPlan) ->
     return grades["strong"].sample_scores[0]
 
 
-__all__ = ["RoundOutcome", "RoundPlan", "prompt_diff", "run_round"]
+__all__ = ["CandidateFailure", "RoundOutcome", "RoundPlan", "prompt_diff", "run_round"]

@@ -53,12 +53,12 @@ from .models import (
     normalize_tier,
     utc_now,
 )
-from .repeat import RepeatCoordinator, RoundRequest
+from .repeat import RepeatCoordinator, RoundRequest, RoundRunner
 from .rewrite import (
     CURRENT_WRITER_INSTRUCTION_VERSION,
     WRITER_INSTRUCTION_VERSIONS,
 )
-from .rounds import RoundPlan, prompt_diff, run_round
+from .rounds import RoundOutcome, RoundPlan, prompt_diff, run_round
 from .rubric_revisions import SQLiteRubricStore
 from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
@@ -318,8 +318,8 @@ class PromptOptimizer:
             prior_failures=options.get("prior_round_failures", ()),
         )
 
-    def _round_executor(self, context: _RunContext) -> Any:
-        def execute(request: RoundRequest) -> Mapping[str, Any]:
+    def _round_executor(self, context: _RunContext) -> RoundRunner:
+        def execute(request: RoundRequest) -> RoundOutcome:
             self._round = {"round": request.round_number, "max_rounds": request.max_rounds}
             plan = RoundPlan(
                 prompt=context.prompt,
@@ -334,7 +334,7 @@ class PromptOptimizer:
                 writer_instruction_version=self.writer_instruction_version,
                 prior_failures=tuple(request.prior_failures),
             )
-            return run_round(self.gateway, plan, on_stage=self._stage).payload()
+            return run_round(self.gateway, plan, on_stage=self._stage)
         return execute
 
     def _run_rounds(
