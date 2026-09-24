@@ -14,8 +14,9 @@ content checks rather than model inference.
    base or the user-specified ref. For a new change, record the starting commit's
    full SHA. Keep that base through fixes and pushes so a moved `origin/main`
    cannot silently make the review empty.
-2. **Run the required deterministic checks.** Follow the repository's existing
-   checks and commit hooks. For changes to the semantic review runner, rules, or
+2. **Run the required deterministic checks.** Follow the
+   [validation workflow](agents/validation.md) for local hooks and additional CI
+   checks. For changes to the semantic review runner, rules, or
    recordings, also run the offline quality-review tests described below.
 3. **Review the committed snapshot.** Once the task has an authorized commit,
    run `lint` without `--live` against the recorded base and reviewed head. Run
