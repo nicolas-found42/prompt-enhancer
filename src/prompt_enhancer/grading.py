@@ -8,7 +8,13 @@ from statistics import fmean
 from typing import Any
 
 from .gateway import Gateway
-from .jev import ChoiceDecision, JevResponseError, NoulDecision, ScoreDecision, parse_decision
+from .jev import (
+    ChoiceDecision,
+    JevResponseError,
+    NoulDecision,
+    ScoreDecision,
+    parse_decision,
+)
 
 
 @dataclass(frozen=True)

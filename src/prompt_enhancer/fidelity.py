@@ -3,11 +3,38 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from .gateway import Gateway, ProviderError
 from .jev import JevResponseError, NoulDecision, parse_decision
-from .rewrite import FidelityResult
+
+
+@dataclass(frozen=True)
+class FidelityResult:
+    """Outcome of the three non-negotiable fidelity checks."""
+
+    meaning_preserved: bool
+    no_invention: bool
+    edits_confined: bool
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def passed(self) -> bool:
+        return self.meaning_preserved and self.no_invention and self.edits_confined
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "meaning_preserved": self.meaning_preserved,
+            "no_invention": self.no_invention,
+            "edits_confined": self.edits_confined,
+            "meaning": self.meaning_preserved,
+            "invention": self.no_invention,
+            "confined": self.edits_confined,
+            "passed": self.passed,
+            "evidence": dict(self.evidence),
+        }
+
 
 _CHECKS = {
     "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",

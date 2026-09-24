@@ -3,38 +3,20 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
 from .catalog import DEFAULT_DEEP_WEAK_PANEL
+from .gateway import Gateway
 from .strategies import TierBudget, budget_for_tier
 
 DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_DEEP_WEAK_PANEL
 
 
-@dataclass(frozen=True)
-class PanelRequest:
-    """One model/sample execution request handed to a completion seam."""
-
-    candidate_id: str
-    prompt: str
-    model: str
-    sample: int
-    seed: int
-    temperature: float = 0.7
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "candidate_id": self.candidate_id,
-            "prompt": self.prompt,
-            "model": self.model,
-            "sample": self.sample,
-            "seed": self.seed,
-            "temperature": self.temperature,
-        }
+# Weak models sample at this temperature; replay keys include it.
+WEAK_TEMPERATURE = 0.7
 
 
 @dataclass(frozen=True)
@@ -139,47 +121,8 @@ def _output_text(value: Any) -> str:
     return str(value)
 
 
-def _invoke_execute(execute: Any, request: PanelRequest, run_id: str | None) -> Any:
-    """Call a callable or a model gateway without making a live API default."""
-
-    if hasattr(execute, "chat"):
-        return execute.chat(
-            request.model,
-            [{"role": "user", "content": request.prompt}],
-            role="weak",
-            run_id=run_id,
-            seed=request.seed,
-            temperature=request.temperature,
-        )
-    if not callable(execute):
-        raise TypeError("execute must be callable or expose complete/chat")
-
-    # The public callback receives PanelRequest.  The small compatibility path
-    # for model,prompt,seed keeps simple test doubles pleasant to write.
-    try:
-        signature = inspect.signature(execute)
-    except (TypeError, ValueError):
-        return execute(request)
-    positional = [
-        parameter
-        for parameter in signature.parameters.values()
-        if parameter.kind
-        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
-    ]
-    has_varargs = any(
-        parameter.kind == inspect.Parameter.VAR_POSITIONAL
-        for parameter in signature.parameters.values()
-    )
-    if len(positional) >= 3 or has_varargs:
-        try:
-            return execute(request.model, request.prompt, request.seed, request.sample)
-        except TypeError:
-            return execute(request.model, request.prompt, request.seed)
-    return execute(request)
-
-
 def _execute_one(
-    execute: Any,
+    gateway: Gateway,
     candidate_id: str,
     prompt: str,
     model: str,
@@ -188,15 +131,21 @@ def _execute_one(
     run_id: str | None,
 ) -> PanelResult:
     seed = _stable_seed(run_seed, candidate_id, model, sample)
-    request = PanelRequest(candidate_id, prompt, model, sample, seed)
-    output = _output_text(_invoke_execute(execute, request, run_id))
+    output = _output_text(gateway.chat(
+        model,
+        [{"role": "user", "content": prompt}],
+        role="weak",
+        run_id=run_id,
+        seed=seed,
+        temperature=WEAK_TEMPERATURE,
+    ))
     return PanelResult(candidate_id, model, sample, seed, output, prompt)
 
 
 def run_candidate_panel(
     candidate: Any,
     weak_models: Sequence[Any],
-    execute: Any,
+    gateway: Gateway,
     *,
     samples: int = 1,
     run_seed: int = 0,
@@ -219,11 +168,11 @@ def run_candidate_panel(
     workers = len(requests) if max_workers is None else min(len(requests), max_workers)
     workers = max(workers, 1)
     if workers == 1:
-        completed = [_execute_one(execute, *request) for request in requests]
+        completed = [_execute_one(gateway, *request) for request in requests]
     else:
         with ThreadPoolExecutor(max_workers=workers) as executor:
             completed = list(
-                executor.map(lambda request: _execute_one(execute, *request), requests)
+                executor.map(lambda request: _execute_one(gateway, *request), requests)
             )
     # executor.map preserves input order, and requests are deliberately ordered.
     return PanelRunResult(tuple(completed), (candidate_id,), models, samples, run_seed)
@@ -232,7 +181,7 @@ def run_candidate_panel(
 def run_candidates(
     candidates: Sequence[Any],
     weak_models: Sequence[Any] | None,
-    execute: Any,
+    gateway: Gateway,
     *,
     original: Any = None,
     samples: int | None = None,
@@ -276,7 +225,7 @@ def run_candidates(
         result = run_candidate_panel(
             {"id": candidate_id, "prompt": prompt},
             models,
-            execute,
+            gateway,
             samples=selected_samples,
             run_seed=run_seed,
             max_workers=max_workers,
@@ -298,7 +247,6 @@ run_panel = run_candidates
 
 __all__ = [
     "DEFAULT_WEAK_PANEL",
-    "PanelRequest",
     "PanelResult",
     "PanelRunResult",
     "run_candidate_panel",

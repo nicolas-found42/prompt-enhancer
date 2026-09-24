@@ -1,5 +1,6 @@
 """Public behavior tests for strategy search, weak-panel evaluation, and ranking."""
 
+from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.grading import grade_candidate
 from prompt_enhancer.runner import PanelResult, run_candidate_panel, run_candidates
 from prompt_enhancer.selector import rank_candidates
@@ -62,14 +63,16 @@ def test_candidate_writer_receives_confirmed_diagnosis():
 def test_runner_is_parallel_order_stable_and_reproducible():
     seen = []
 
-    def execute(request):
-        seen.append(request.to_dict())
-        return f"{request.model}:{request.sample}:{request.seed}"
+    def chat(model, _messages, *, seed, **_kwargs):
+        seen.append((model, seed))
+        return f"{model}:{seed}"
+
+    gateway = ScriptedGateway(chat=chat)
 
     first = run_candidates(
         [{"id": "rewrite", "prompt": "Rewrite this"}],
         ["weak-a", "weak-b"],
-        execute,
+        gateway,
         original="Original",
         samples=2,
         run_seed=17,
@@ -78,7 +81,7 @@ def test_runner_is_parallel_order_stable_and_reproducible():
     second = run_candidates(
         [{"id": "rewrite", "prompt": "Rewrite this"}],
         ["weak-a", "weak-b"],
-        execute,
+        gateway,
         original="Original",
         samples=2,
         run_seed=17,
@@ -95,14 +98,12 @@ def test_runner_is_parallel_order_stable_and_reproducible():
 
 
 def test_runner_reads_normalized_responses_text_before_raw_output():
-    class Gateway:
-        def chat(self, model, messages, **kwargs):
-            return {
-                "output": [{"type": "reasoning", "summary": []}],
-                "choices": [{"message": {"content": "OK"}}],
-            }
+    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: {
+        "output": [{"type": "reasoning", "summary": []}],
+        "choices": [{"message": {"content": "OK"}}],
+    })
 
-    result = run_candidate_panel("Return OK", ["muse-spark-1.3-contributor"], Gateway())
+    result = run_candidate_panel("Return OK", ["muse-spark-1.3-contributor"], gateway)
 
     assert result.results[0].output == "OK"
 

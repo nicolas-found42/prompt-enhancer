@@ -480,7 +480,7 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
         rubric, bundle.checklist_impacts if bundle.checklist_impacts is not None else HISTORICAL_CHECKLIST_IMPACTS
     )
     return PromptOptimizer(
-        gateway=ReplayGateway(recordings, strict=True),
+        gateway=ReplayGateway(recordings),
         diagnosis_rubric=rubric,
         writer_instruction_version=bundle.writer_instruction_version,
         faithfulness_threshold=bundle.faithfulness_threshold,

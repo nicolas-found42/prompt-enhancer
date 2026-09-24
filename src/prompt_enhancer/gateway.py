@@ -1,9 +1,10 @@
-"""Provider-routing model gateway with deterministic local seams.
+"""The Gateway: the single way the engine reaches any model.
 
-All outbound traffic goes through a small transport protocol.  Production can
-use :class:`HttpTransport`; tests and local mode use a recording transport,
-:class:`ScriptedGateway`, or :class:`ReplayGateway`.  API keys are read from
-server-side configuration and are never placed in a response or exception.
+:class:`Gateway` is the interface. :class:`HttpGateway` routes live traffic to
+OpenCode Go and OpenRouter; :class:`ScriptedGateway` answers tests;
+:class:`ReplayGateway` replays recordings made by ``RecordingGateway``. API
+keys are read from server-side configuration and are never placed in a
+response or exception.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 from .catalog import (
     DEFAULT_GO_STRONG,
@@ -580,14 +581,15 @@ class ScriptedGateway:
 
     def __init__(
         self,
-        responses: Any = None,
+        responses: Sequence[Any] = (),
         *,
         chat: Callable[..., Any] | None = None,
         decision: Callable[..., Any] | None = None,
         catalog: Any | None = None,
         usage: UsageLedger | None = None,
     ) -> None:
-        self.responses = list(responses) if isinstance(responses, (list, tuple)) else responses
+        """Answer from ``chat``/``decision`` handlers, else pop ``responses`` in order."""
+        self.responses = list(responses)
         self.chat_handler = chat
         self.decision_handler = decision
         self.catalog = catalog or StaticModelCatalog((), ())
@@ -605,19 +607,9 @@ class ScriptedGateway:
     def _next(self, handler: Callable[..., Any] | None, *args: Any, **kwargs: Any) -> Any:
         if handler is not None:
             return handler(*args, **kwargs)
-        if callable(self.responses):
-            return self.responses(*args, **kwargs)
-        if isinstance(self.responses, (list, tuple)):
-            if not self.responses:
-                raise ProviderError("scripted", "response", None, "no scripted response remains")
-            return self.responses.pop(0)
-        if isinstance(self.responses, Mapping):
-            for key, value in self.responses.items():
-                if key in kwargs or key in args:
-                    return value
-            if len(self.responses) == 1:
-                return next(iter(self.responses.values()))
-        raise ProviderError("scripted", "response", None, "no scripted response")
+        if not self.responses:
+            raise ProviderError("scripted", "response", None, "no scripted response remains")
+        return self.responses.pop(0)
 
     def chat(self, model: str, messages: Any, *, role: str = "writer", run_id: str | None = None, **params: Any) -> Any:
         self.calls.append({"operation": "chat", "role": role, "model": model, "run_id": run_id})
@@ -643,17 +635,15 @@ class ScriptedGateway:
 
 
 class ReplayGateway(ScriptedGateway):
-    """Replay recorded responses by a deterministic request key.
+    """Replay recorded answers, found by a hash of the exact request.
 
-    ``responses`` may map tuples, call-shaped keys, or canonical request hashes
-    to JSON responses.  The matcher first checks explicit keys and then falls
-    back to a stable SHA-256 key, making recorded suites deterministic without
-    network access.
+    A request that was not recorded raises ``ProviderError``; there is no
+    fallback, so a recording can never answer a different request.
     """
 
-    def __init__(self, responses: Mapping[Any, Any] | Iterable[Any], *, strict: bool = False, **kwargs: Any) -> None:
-        super().__init__(responses, **kwargs)
-        self.strict = strict
+    def __init__(self, recordings: Mapping[str, Any], **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.recordings = dict(recordings)
         self.replayed_keys: list[str] = []
 
     @staticmethod
@@ -661,48 +651,30 @@ class ReplayGateway(ScriptedGateway):
         raw = json_module_dumps({"operation": operation, "model": model, "payload": payload, "role": role})
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
-    def _lookup(self, responses: Mapping[Any, Any], operation: str, model: str, payload: Any, role: str) -> Any:
+    def _lookup(self, operation: str, model: str, payload: Any, role: str) -> Any:
         key = self.request_key(operation, model, payload, role)
         self.replayed_keys.append(key)
-        if key in responses:
-            return responses[key]
-        if self.strict:
+        if key not in self.recordings:
             raise ProviderError("replay", model, None, "no recorded response")
-        for key in ((operation, model, role), (model, role), (operation, model), model):
-            if key in responses:
-                return responses[key]
-        alias = f"{'decision' if operation == 'decide' else 'complete'}:{model if operation == 'decide' else role}"
-        if alias in responses:
-            value = responses[alias]
-            if operation == "decide" and isinstance(value, Mapping):
-                kind = str(payload.get("type", "noul")) if isinstance(payload, Mapping) else "noul"
-                value = value.get(kind, value)
-            return value
-        if not self.strict and len(responses) == 1:
-            return next(iter(responses.values()))
-        raise ProviderError("replay", model, None, "no recorded response")
+        return self.recordings[key]
 
     def chat(self, model: str, messages: Any, *, role: str = "writer", run_id: str | None = None, **params: Any) -> Any:
         payload = {"model": model, "messages": list(messages) if not isinstance(messages, str) else messages, **params}
         self.calls.append({"operation": "chat", "role": role, "model": model, "run_id": run_id})
-        if self.chat_handler is not None or callable(self.responses):
-            return self._next(self.chat_handler, model, messages, role=role, run_id=run_id, **params)
-        return self._lookup(
-            cast(Mapping[Any, Any], self.responses), "chat", model, payload, role
-        )
+        return self._lookup("chat", model, payload, role)
 
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
         request = dict(payload)
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
         self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "run_id": run_id})
-        answer = (
-            self._next(self.decision_handler, request, role=role, run_id=run_id)
-            if self.decision_handler is not None or callable(self.responses)
-            else self._lookup(cast(Mapping[Any, Any], self.responses), "decide", JEV_MODEL, request, role)
-        )
+        answer = self._lookup("decide", JEV_MODEL, request, role)
         self.decision_log.append({"question": request, "answer": answer})
         return answer
+
+if TYPE_CHECKING:
+    # Every adapter must satisfy the Gateway interface exactly; ty enforces it.
+    _ADAPTERS: tuple[type[Gateway], ...] = (HttpGateway, ScriptedGateway, ReplayGateway)
 
 
 __all__ = [
@@ -711,8 +683,8 @@ __all__ = [
     "Gateway",
     "GatewayConfig",
     "GatewayTransport",
-    "HttpTransport",
     "HttpGateway",
+    "HttpTransport",
     "ProviderError",
     "ReplayGateway",
     "RouteDecision",

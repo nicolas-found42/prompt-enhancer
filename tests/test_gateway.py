@@ -192,26 +192,28 @@ def test_settings_overrides_are_per_run_and_persist(tmp_path):
     assert store.load().defaults.writer == "writer-v2"
 
 
-def test_scripted_and_replay_gateways_are_deterministic():
+def test_scripted_gateway_answers_in_order_then_reports_exhaustion():
     scripted = ScriptedGateway([{"text": "one"}])
-    assert scripted.chat("m", [{"role": "user", "content": "hello"}], role="writer") == {"text": "one"}
-    replay = ReplayGateway({("chat", "m", "writer"): {"text": "replayed"}})
-    assert replay.chat("m", [{"role": "user", "content": "hello"}], role="writer") == {"text": "replayed"}
-    assert replay.calls[0]["operation"] == "chat"
+    messages = [{"role": "user", "content": "hello"}]
+
+    assert scripted.chat("m", messages, role="writer") == {"text": "one"}
+    with pytest.raises(ProviderError, match="no scripted response remains"):
+        scripted.chat("m", messages, role="writer")
 
 
 def test_strict_replay_requires_the_recorded_request() -> None:
     payload = {"model": "writer", "messages": [{"role": "user", "content": "First prompt"}]}
     key = ReplayGateway.request_key("chat", "writer", payload, "writer")
-    replay = ReplayGateway({key: {"text": "First result"}}, strict=True)
+    replay = ReplayGateway({key: {"text": "First result"}})
 
     assert replay.chat("writer", payload["messages"], role="writer") == {"text": "First result"}
+    assert replay.calls[0]["operation"] == "chat"
     with pytest.raises(ProviderError, match="no recorded response"):
         replay.chat("writer", [{"role": "user", "content": "Another prompt"}], role="writer")
 
-    alias = ReplayGateway({"complete:writer": {"text": "generic"}}, strict=True)
+    single = ReplayGateway({"some-other-key": {"text": "generic"}})
     with pytest.raises(ProviderError, match="no recorded response"):
-        alias.chat("writer", payload["messages"], role="writer")
+        single.chat("writer", payload["messages"], role="writer")
 
 
 def test_usage_ledger_splits_roles():

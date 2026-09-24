@@ -144,7 +144,7 @@ class SuccessTestCompiler:
     def _parse_tests(cls, response: Any) -> tuple[SuccessTest, ...]:
         content = completion_text(response)
         if not content:
-            raise ValueError("writer response must contain JSON text")
+            raise TypeError("writer response must contain JSON text")
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
         try:
             payload = json.loads(content)
@@ -161,15 +161,15 @@ class SuccessTestCompiler:
         elif isinstance(payload, list):
             raw_tests = payload
         else:
-            raise ValueError("writer response must contain a tests array")
+            raise TypeError("writer response must contain a tests array")
         if not isinstance(raw_tests, Sequence) or isinstance(raw_tests, (str, bytes)):
-            raise ValueError("writer response must contain a tests array")
+            raise TypeError("writer response must contain a tests array")
 
         result: list[SuccessTest] = []
         seen: set[str] = set()
         for index, item in enumerate(raw_tests, start=1):
             if not isinstance(item, Mapping):
-                raise ValueError("each success test must be an object")
+                raise TypeError("each success test must be an object")
             question = str(item.get("question", "")).strip()
             if not question:
                 raise ValueError("each success test must have a question")

@@ -1,7 +1,7 @@
 """Public local optimization engine.
 
-The facade is deliberately dependency-injected. Production can provide a
-HttpGateway; tests and local demos can provide ScriptedGateway or ReplayGateway.
+The facade is deliberately dependency-injected with a Gateway: production uses
+HttpGateway; tests and local demos use ScriptedGateway or ReplayGateway.
 The public result always includes the original prompt, evidence, cost, timing,
 and a durable run identifier.
 """
@@ -40,8 +40,8 @@ from .fidelity import check_candidate_fidelity
 from .gateway import (
     Gateway,
     GatewayConfig,
-    HttpTransport,
     HttpGateway,
+    HttpTransport,
     ProviderError,
     ScriptedGateway,
     completion_text,
@@ -420,7 +420,7 @@ class PromptOptimizer:
                 writer_model=selected_settings.writer_model,
                 faithfulness_threshold=self.faithfulness_threshold,
             ).compile(working_prompt)
-        except ValueError as exc:
+        except (ValueError, TypeError) as exc:
             raise ProviderError("writer", selected_settings.writer_model, None, "invalid success-test response", role="writer", kind="invalid_response") from exc
         test_payload = [asdict(test) for test in compiled.tests]
 

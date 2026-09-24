@@ -68,7 +68,7 @@ def test_recorded_live_gateway_replays_the_same_public_run(tmp_path: Path) -> No
     prompt = "Summarize the supplied article in three bullets."
     original = PromptOptimizer(gateway=gateway, store=RunStore(":memory:")).optimize(prompt)
     responses = json.loads(path.read_text())["responses"]
-    replayed = PromptOptimizer(gateway=ReplayGateway(responses, strict=True), store=RunStore(":memory:")).optimize(prompt)
+    replayed = PromptOptimizer(gateway=ReplayGateway(responses), store=RunStore(":memory:")).optimize(prompt)
 
     assert responses
     assert replayed["status"] == original["status"]

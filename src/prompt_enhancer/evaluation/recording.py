@@ -6,7 +6,7 @@ import json
 import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..catalog import JEV_MODEL
 from ..diagnosis import DEFAULT_RUBRIC, checklist_impacts, checklist_keys
@@ -96,7 +96,8 @@ class RecordingGateway:
         return answers
 
     def list_models(self, *, refresh: bool = False) -> Any:
-        return getattr(self.gateway, "list_models")(refresh=refresh)
+        # The model catalog and ledger are not part of the Gateway interface.
+        return cast(Any, self.gateway).list_models(refresh=refresh)
 
     def usage_report(self) -> dict[str, Any]:
         return self.gateway.usage_report()
@@ -107,4 +108,8 @@ class RecordingGateway:
 
     @property
     def usage(self) -> Any:
-        return getattr(self.gateway, "usage")
+        return cast(Any, self.gateway).usage
+
+
+if TYPE_CHECKING:
+    _ADAPTER: type[Gateway] = RecordingGateway
