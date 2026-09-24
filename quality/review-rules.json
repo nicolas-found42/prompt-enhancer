@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "rules": {
+    "gateway-raw-answers": {
+      "text": "Gateway methods must return raw model answers. Callers own semantic parsing and failure policy. Unwrapping a transport envelope or logging usage is allowed; converting a raw answer to a typed domain judgment inside the Gateway is not.",
+      "contracts": ["docs/adr/0001-gateway-returns-raw-answers.md"]
+    },
+    "finding-support": {
+      "text": "A review finding must identify a concrete behavioral problem established by the cited code and relevant evidence. Missing evidence is not proof of a bug. Preferences and speculative downstream behavior are insufficient.",
+      "contracts": []
+    },
+    "error-contract": {
+      "text": "Error behavior must agree with the supplied explicit contract. Diagnosis may fail open, fidelity fails closed, grading scores only the affected item zero, and clarification may fall back to asking the user. Different failure policies are intentional.",
+      "contracts": ["docs/adr/0001-gateway-returns-raw-answers.md"]
+    }
+  }
+}

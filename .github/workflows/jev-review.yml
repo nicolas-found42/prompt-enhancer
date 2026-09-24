@@ -1,0 +1,88 @@
+name: Jev advisory review
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      head:
+        description: Full commit SHA to review (empty uses this workflow commit)
+        type: string
+        required: false
+      live:
+        description: Call Jev using OPENROUTER_API_KEY within the configured budgets
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # The reviewed commit is data. Install and run code from the trusted base.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check availability
+        id: available
+        run: |
+          if test -f scripts/review_quality.py; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'Jev review skipped: the trusted base does not yet contain the runner.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        if: steps.available.outputs.ready == 'true'
+        with:
+          version: "0.12.18"
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.available.outputs.ready == 'true'
+        with:
+          node-version: "24"
+      - name: Install trusted tooling
+        if: steps.available.outputs.ready == 'true'
+        run: |
+          uv sync --locked
+          npm ci --prefix tools/quality --ignore-scripts
+      - name: Resolve reviewed commit
+        if: steps.available.outputs.ready == 'true'
+        env:
+          REVIEW_HEAD: ${{ github.event.pull_request.head.sha || inputs.head || github.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        run: |
+          if [[ ! "$REVIEW_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+            echo 'Expected a full commit SHA' >&2
+            exit 1
+          fi
+          git fetch --no-tags origin "$REVIEW_HEAD"
+          echo "REVIEW_HEAD=$REVIEW_HEAD" >> "$GITHUB_ENV"
+          echo "REVIEW_BASE=$(git rev-parse --verify --end-of-options "$BASE_REF^{commit}")" >> "$GITHUB_ENV"
+      - name: Produce advisory reports
+        if: steps.available.outputs.ready == 'true'
+        env:
+          # PR events, including forks, never receive this secret.
+          OPENROUTER_API_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.live && secrets.OPENROUTER_API_KEY || '' }}
+          LIVE: ${{ github.event_name == 'workflow_dispatch' && inputs.live }}
+        run: |
+          args=()
+          if [[ "$LIVE" == 'true' ]]; then args+=(--live); fi
+          mkdir -p .local/quality-review
+          status=0
+          uv run --locked python scripts/review_quality.py run --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --output .local/quality-review/review.json "${args[@]}" || status=$?
+          uv run --locked python scripts/review_quality.py lint --base "$REVIEW_BASE" --head "$REVIEW_HEAD" --output .local/quality-review/lint.json "${args[@]}" || status=$?
+          echo "Advisory runner exit: $status. See artifacts for complete, partial, skipped, or failed status." >> "$GITHUB_STEP_SUMMARY"
+          if test -f .local/quality-review/review.md; then
+            cat .local/quality-review/review.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.available.outputs.ready == 'true'
+        with:
+          name: jev-advisory-review
+          path: .local/quality-review/
+          retention-days: 7
+          include-hidden-files: true

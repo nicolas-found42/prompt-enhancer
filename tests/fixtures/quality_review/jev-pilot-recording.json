@@ -1,0 +1,748 @@
+{
+  "schema_version": 1,
+  "question_version": "1",
+  "requested_model": "typesafe/jev-1.13",
+  "plan_digest": "f40de1557272762f6427b4c4c07adb299a3269289f28c2c70b5ad557aee0a446",
+  "head_sha": "synthetic",
+  "status": "complete",
+  "mode": "live",
+  "results": [
+    {
+      "id": "c01",
+      "finding": {
+        "id": "c01",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 3,
+        "quote": "def lookup(values, key):\n    \"\"\"Returns None for an absent key.\"\"\"\n    return values[key]",
+        "claim": "The docstring promises None for a missing key but this function raises.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "5f512cff30dbed8b7e160f368ec111a418bbe1ff489203667ae617fac154d06f",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "contradicted": 0.01,
+            "insufficient_evidence": 0.05,
+            "supported": 0.94
+          },
+          "confidence": 0.91
+        },
+        {
+          "type": "choice",
+          "choice": "introduced",
+          "probabilities": {
+            "introduced": 0.83,
+            "preexisting": 0,
+            "insufficient_evidence": 0.17
+          },
+          "confidence": 0.73
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 2.87995800000499,
+      "disposition": "review",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "contradicted": 0.01,
+          "insufficient_evidence": 0.05,
+          "supported": 0.94
+        },
+        "confidence": 0.91
+      },
+      "introduced": {
+        "choice": "introduced",
+        "probabilities": {
+          "introduced": 0.83,
+          "preexisting": 0.0,
+          "insufficient_evidence": 0.17
+        },
+        "confidence": 0.73
+      }
+    },
+    {
+      "id": "c02",
+      "finding": {
+        "id": "c02",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 3,
+        "quote": "def lookup(values, key):\n    \"\"\"Returns None for an absent key.\"\"\"\n    return values.get(key)",
+        "claim": "The docstring promises None for a missing key but this function raises.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "24b20a86ef68eb4660e1231ae3df67e7359c7c5a9aa6ca3e94aba2a88e6acd95",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "contradicted",
+          "probabilities": {
+            "supported": 0,
+            "contradicted": 1,
+            "insufficient_evidence": 0
+          },
+          "confidence": 0.99
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "preexisting": 0.02,
+            "insufficient_evidence": 0.73,
+            "introduced": 0.25
+          },
+          "confidence": 0.59
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.2266975420061499,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "contradicted",
+        "probabilities": {
+          "supported": 0.0,
+          "contradicted": 1.0,
+          "insufficient_evidence": 0.0
+        },
+        "confidence": 0.99
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "preexisting": 0.02,
+          "insufficient_evidence": 0.73,
+          "introduced": 0.25
+        },
+        "confidence": 0.59
+      }
+    },
+    {
+      "id": "c03",
+      "finding": {
+        "id": "c03",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def get_first(values):\n    return values.pop(0)",
+        "claim": "The name promises a read, but this function mutates the supplied list.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "d7914b3833286463ae372c1ae3afc101d2f2efa25fd1f7c45d7e843a5f0a4d44",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "supported": 0.77,
+            "contradicted": 0.01,
+            "insufficient_evidence": 0.22
+          },
+          "confidence": 0.66
+        },
+        {
+          "type": "choice",
+          "choice": "introduced",
+          "probabilities": {
+            "preexisting": 0,
+            "introduced": 0.91,
+            "insufficient_evidence": 0.09
+          },
+          "confidence": 0.86
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.5668038750009146,
+      "disposition": "review",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "supported": 0.77,
+          "contradicted": 0.01,
+          "insufficient_evidence": 0.22
+        },
+        "confidence": 0.66
+      },
+      "introduced": {
+        "choice": "introduced",
+        "probabilities": {
+          "preexisting": 0.0,
+          "introduced": 0.91,
+          "insufficient_evidence": 0.09
+        },
+        "confidence": 0.86
+      }
+    },
+    {
+      "id": "c04",
+      "finding": {
+        "id": "c04",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def get_first(values):\n    return values[0]",
+        "claim": "The name promises a read, but this function mutates the supplied list.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "185bbadbaff76306ec09a73a7a40ad2d304431c02a238f08c8e225902352aa98",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "contradicted",
+          "probabilities": {
+            "insufficient_evidence": 0.09,
+            "contradicted": 0.91,
+            "supported": 0
+          },
+          "confidence": 0.87
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "insufficient_evidence": 0.7,
+            "preexisting": 0.01,
+            "introduced": 0.29
+          },
+          "confidence": 0.55
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.22766208299435675,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "contradicted",
+        "probabilities": {
+          "insufficient_evidence": 0.09,
+          "contradicted": 0.91,
+          "supported": 0.0
+        },
+        "confidence": 0.87
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "insufficient_evidence": 0.7000000000000001,
+          "preexisting": 0.010000000000000002,
+          "introduced": 0.29000000000000004
+        },
+        "confidence": 0.55
+      }
+    },
+    {
+      "id": "c05",
+      "finding": {
+        "id": "c05",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 3,
+        "quote": "def test_sorts_ascending():\n    result = sorted([3, 1, 2])\n    assert len(result) == 3",
+        "claim": "The test claims to check ordering but its assertion only checks length.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "c4b988f89c764597f0d03289dd3cce5862763b3773a63038cadab41cdd4e8ae2",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "supported": 0.93,
+            "insufficient_evidence": 0.06,
+            "contradicted": 0.01
+          },
+          "confidence": 0.9
+        },
+        {
+          "type": "choice",
+          "choice": "introduced",
+          "probabilities": {
+            "insufficient_evidence": 0.06,
+            "preexisting": 0,
+            "introduced": 0.94
+          },
+          "confidence": 0.91
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.603161666993401,
+      "disposition": "review",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "supported": 0.93,
+          "insufficient_evidence": 0.06,
+          "contradicted": 0.01
+        },
+        "confidence": 0.9
+      },
+      "introduced": {
+        "choice": "introduced",
+        "probabilities": {
+          "insufficient_evidence": 0.06,
+          "preexisting": 0.0,
+          "introduced": 0.94
+        },
+        "confidence": 0.91
+      }
+    },
+    {
+      "id": "c06",
+      "finding": {
+        "id": "c06",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 3,
+        "quote": "def test_sorts_ascending():\n    result = sorted([3, 1, 2])\n    assert result == [1, 2, 3]",
+        "claim": "The test claims to check ordering but its assertion only checks length.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "b272975468b46758fbb0fea58c4d4edb2e781f198993654136642b2c2188146f",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "contradicted",
+          "probabilities": {
+            "contradicted": 1,
+            "insufficient_evidence": 0,
+            "supported": 0
+          },
+          "confidence": 1
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "preexisting": 0.01,
+            "insufficient_evidence": 0.53,
+            "introduced": 0.46
+          },
+          "confidence": 0.29
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.6369412079948233,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "contradicted",
+        "probabilities": {
+          "contradicted": 1.0,
+          "insufficient_evidence": 0.0,
+          "supported": 0.0
+        },
+        "confidence": 1.0
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "preexisting": 0.01,
+          "insufficient_evidence": 0.53,
+          "introduced": 0.46
+        },
+        "confidence": 0.29
+      }
+    },
+    {
+      "id": "c07",
+      "finding": {
+        "id": "c07",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def decide(self, payload):\n    return parse_decision(self.transport(payload))",
+        "claim": "The Gateway parses the decision instead of returning a raw answer.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "a557869ceedbec79cba67125bbdf26f65b6d84aec71513daa0b59304014e8d0d",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "contradicted": 0.05,
+            "supported": 0.95,
+            "insufficient_evidence": 0
+          },
+          "confidence": 0.92
+        },
+        {
+          "type": "choice",
+          "choice": "introduced",
+          "probabilities": {
+            "insufficient_evidence": 0.29,
+            "preexisting": 0,
+            "introduced": 0.71
+          },
+          "confidence": 0.56
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.5923526249971474,
+      "disposition": "review",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "contradicted": 0.05,
+          "supported": 0.95,
+          "insufficient_evidence": 0.0
+        },
+        "confidence": 0.92
+      },
+      "introduced": {
+        "choice": "introduced",
+        "probabilities": {
+          "insufficient_evidence": 0.29,
+          "preexisting": 0.0,
+          "introduced": 0.71
+        },
+        "confidence": 0.56
+      }
+    },
+    {
+      "id": "c08",
+      "finding": {
+        "id": "c08",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def decide(self, payload):\n    return self.transport(payload)",
+        "claim": "The Gateway parses the decision instead of returning a raw answer.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "2549530eb743d4f9dd2bd2ac2dcd0cd21de4438c19ea1a6b297673d3fec93e8f",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "contradicted",
+          "probabilities": {
+            "contradicted": 0.98,
+            "supported": 0.01,
+            "insufficient_evidence": 0.01
+          },
+          "confidence": 0.96
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "preexisting": 0.03,
+            "introduced": 0.41,
+            "insufficient_evidence": 0.56
+          },
+          "confidence": 0.34
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 1.2293696659908164,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "contradicted",
+        "probabilities": {
+          "contradicted": 0.98,
+          "supported": 0.01,
+          "insufficient_evidence": 0.01
+        },
+        "confidence": 0.96
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "preexisting": 0.03,
+          "introduced": 0.41,
+          "insufficient_evidence": 0.56
+        },
+        "confidence": 0.34
+      }
+    },
+    {
+      "id": "c09",
+      "finding": {
+        "id": "c09",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 6,
+        "quote": "def save(store, item):\n    try:\n        store.write(item)\n    except OSError:\n        return {\"ok\": True}\n    return {\"ok\": True}",
+        "claim": "This change silently converts a failed operation to a successful result.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "c26f7f7036c07aa6256add43c99f6128d5dba9c8a4e8852810e4c06307a3a822",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "supported": 0.66,
+            "contradicted": 0.01,
+            "insufficient_evidence": 0.33
+          },
+          "confidence": 0.5
+        },
+        {
+          "type": "choice",
+          "choice": "introduced",
+          "probabilities": {
+            "preexisting": 0,
+            "insufficient_evidence": 0.49,
+            "introduced": 0.51
+          },
+          "confidence": 0.26
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 1.2197870829986641,
+      "disposition": "review",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "supported": 0.66,
+          "contradicted": 0.01,
+          "insufficient_evidence": 0.33
+        },
+        "confidence": 0.5
+      },
+      "introduced": {
+        "choice": "introduced",
+        "probabilities": {
+          "preexisting": 0.0,
+          "insufficient_evidence": 0.49,
+          "introduced": 0.51
+        },
+        "confidence": 0.26
+      }
+    },
+    {
+      "id": "c10",
+      "finding": {
+        "id": "c10",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 3,
+        "quote": "def save(store, item):\n    store.write(item)\n    return {\"ok\": True}",
+        "claim": "This change silently converts a failed operation to a successful result.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "f9094facab8f7fd33305454c5a17aac88445662cd9f73d42383de763f58d8138",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "contradicted": 0.02,
+            "supported": 0.01,
+            "insufficient_evidence": 0.97
+          },
+          "confidence": 0.96
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "insufficient_evidence": 0.79,
+            "preexisting": 0,
+            "introduced": 0.21
+          },
+          "confidence": 0.68
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.310650125000393,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "contradicted": 0.02,
+          "supported": 0.01,
+          "insufficient_evidence": 0.97
+        },
+        "confidence": 0.96
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "insufficient_evidence": 0.79,
+          "preexisting": 0.0,
+          "introduced": 0.21
+        },
+        "confidence": 0.68
+      }
+    },
+    {
+      "id": "c11",
+      "finding": {
+        "id": "c11",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def fetch():\n    return external_helper()",
+        "claim": "The hidden helper retries exactly five times.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "1da2639b6a40cc0e3e72790ff4cad238b17d0cbed19eb0227af058b93c83df87",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "insufficient_evidence": 1,
+            "supported": 0,
+            "contradicted": 0
+          },
+          "confidence": 1
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "preexisting": 0.03,
+            "insufficient_evidence": 0.85,
+            "introduced": 0.12
+          },
+          "confidence": 0.78
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 1.3895343330077594,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "insufficient_evidence": 1.0,
+          "supported": 0.0,
+          "contradicted": 0.0
+        },
+        "confidence": 1.0
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "preexisting": 0.03,
+          "insufficient_evidence": 0.85,
+          "introduced": 0.12
+        },
+        "confidence": 0.78
+      }
+    },
+    {
+      "id": "c12",
+      "finding": {
+        "id": "c12",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def save(value):\n    return external_cache.put(value)",
+        "claim": "The external cache encrypts all data before storing it.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "8db4c5f54e1e70cdf95c03f39b392c4d509548b7431070c1c3a1cb93ba2115fa",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "supported": 0,
+            "insufficient_evidence": 1,
+            "contradicted": 0
+          },
+          "confidence": 1
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "preexisting": 0.05,
+            "insufficient_evidence": 0.88,
+            "introduced": 0.07
+          },
+          "confidence": 0.83
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.3104568749986356,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "supported": 0.0,
+          "insufficient_evidence": 1.0,
+          "contradicted": 0.0
+        },
+        "confidence": 1.0
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "preexisting": 0.05,
+          "insufficient_evidence": 0.88,
+          "introduced": 0.07
+        },
+        "confidence": 0.83
+      }
+    }
+  ],
+  "omitted": [],
+  "usage": {
+    "total": 0.0003638880000000001,
+    "total_cost": 0.0003638880000000001,
+    "cost_by_role": {
+      "quality-review": 0.0003638880000000001
+    },
+    "tokens": {
+      "input_tokens": 8664,
+      "output_tokens": 1210,
+      "total_tokens": 9874
+    },
+    "calls": 12,
+    "by_role": {
+      "quality-review": [
+        {
+          "role": "quality-review",
+          "provider": "openrouter",
+          "model": "typesafe/jev-1.13",
+          "input_tokens": 8664,
+          "output_tokens": 1210,
+          "total_tokens": 9874,
+          "cost": 0.0003638880000000001,
+          "calls": 12
+        }
+      ]
+    }
+  },
+  "recorded_usage": null
+}

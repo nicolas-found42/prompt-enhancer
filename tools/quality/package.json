@@ -1,0 +1,7 @@
+{
+  "name": "prompt-enhancer-quality-tools",
+  "private": true,
+  "version": "0.1.0",
+  "engines": {"node": ">=24"},
+  "devDependencies": {"jev-lint": "0.7.0"}
+}
