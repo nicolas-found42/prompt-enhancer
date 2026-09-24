@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from prompt_enhancer.evaluation import Dataset, EvaluationHarness
 from prompt_enhancer.evaluation.__main__ import main as evaluation_main
 from prompt_enhancer.evaluation.harness import default_engine_factory
@@ -310,3 +312,26 @@ def test_versioned_recording_selects_current_writer_request(tmp_path: Path) -> N
     bundle["writer_instruction_version"] = 1
     path.write_text(json.dumps(bundle))
     assert _replay(path)["status"] == "failed"
+
+
+def _context_impact(path: Path) -> str:
+    rubric = default_engine_factory(path).diagnosis_rubric
+    return next(item.impact.value for task in rubric.task_types for item in task.checklist if item.key == "context")
+
+
+def test_recordings_keep_the_checklist_impacts_they_were_made_with(tmp_path: Path) -> None:
+    path = tmp_path / "current.json"
+    _record_candidate_run(path, 2)
+    bundle = json.loads(path.read_text())
+    assert bundle["checklist_impacts"]["context"] == "high"
+    assert _context_impact(path) == "high"
+
+    del bundle["checklist_impacts"]
+    path.write_text(json.dumps(bundle))
+    # Bundles from before impacts were recorded replay with context at medium.
+    assert _context_impact(path) == "medium"
+
+    bundle["checklist_impacts"] = {"context": "urgent"}
+    path.write_text(json.dumps(bundle))
+    with pytest.raises(Exception, match="checklist_impacts"):
+        default_engine_factory(path)

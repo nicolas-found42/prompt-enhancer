@@ -153,7 +153,7 @@ def main(
                 engine_factory=_factory(args.engine_factory)
             )
         elif args.live:
-            from ..diagnosis import checklist_keys
+            from ..diagnosis import checklist_impacts, checklist_keys
             from ..optimizer import PromptOptimizer
 
             engine = PromptOptimizer()
@@ -163,6 +163,7 @@ def main(
                 recording.writer_instruction_version = engine.writer_instruction_version
                 recording.faithfulness_threshold = engine.faithfulness_threshold
                 recording.checklist_keys = list(checklist_keys(engine.diagnosis_rubric))
+                recording.checklist_impacts = checklist_impacts(engine.diagnosis_rubric)
                 engine.gateway = recording
             harness = EvaluationHarness(engine)
         else:

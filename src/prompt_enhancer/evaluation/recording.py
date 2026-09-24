@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..catalog import JEV_MODEL
-from ..diagnosis import DEFAULT_RUBRIC, checklist_keys
+from ..diagnosis import DEFAULT_RUBRIC, checklist_impacts, checklist_keys
 from ..gateway import ReplayGateway, _completion_chat_request
 
 
@@ -25,6 +25,7 @@ class RecordingGateway:
         self.faithfulness_threshold: float | None = None
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
+        self.checklist_impacts: dict[str, str] | None = checklist_impacts(DEFAULT_RUBRIC)
         # The weak-model panel calls the gateway from worker threads.
         self._lock = threading.RLock()
 
@@ -57,6 +58,8 @@ class RecordingGateway:
             bundle["faithfulness_threshold"] = self.faithfulness_threshold
         if self.checklist_keys is not None:
             bundle["checklist_keys"] = self.checklist_keys
+        if self.checklist_impacts is not None:
+            bundle["checklist_impacts"] = self.checklist_impacts
         temporary.write_text(json.dumps(bundle, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         temporary.replace(self.path)
 

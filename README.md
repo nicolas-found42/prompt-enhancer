@@ -52,5 +52,7 @@ cd web && npm run build && npx playwright test
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
 [delegated-review follow-up](docs/delegated-evaluation-2026-09-23.md) state
-the measured results, exact denominators, and remaining evidence limits.
+the measured results, exact denominators, and remaining evidence limits. The
+[gap cutoff recalibration](docs/gap-cutoff-recalibration-2026-09-24.md) records
+why the tool now asks more readily and what the version 2 writer measured.
 Source prompts and provider recordings stay in ignored `.local/evaluation/`.

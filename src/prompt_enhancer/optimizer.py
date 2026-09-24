@@ -34,6 +34,7 @@ from .diagnosis import (
     DiagnosisReport,
     DiagnosisRubric,
     GapImpact,
+    model_diagnosis,
 )
 from .failures import describe_failure
 from .fidelity import check_candidate_fidelity
@@ -407,6 +408,7 @@ class PromptOptimizer:
         prompt = context.prompt
         run_id = context.run_id
         diagnosis_payload = context.diagnosis
+        model_view = model_diagnosis(diagnosis_payload)
         assumptions = context.assumptions
         run_seed = context.seed
         selected_settings = context.settings
@@ -443,7 +445,7 @@ class PromptOptimizer:
 
         self._stage("choosing_strategy")
         strategy_choice = self.gateway.decide(
-            {"model": selected_settings.judge_model, "key": "strategy_choice", "type": "choice", "query": "Which rewrite strategy best addresses the diagnosed weakness?", "criteria": {**{item.name: item.description for item in STRATEGY_LIBRARY}, "none": "No rewrite strategy is suitable."}, "state": {"prompt": working_prompt, "diagnosis": diagnosis_payload, "prior_failures": list(prior_failures)}},
+            {"model": selected_settings.judge_model, "key": "strategy_choice", "type": "choice", "query": "Which rewrite strategy best addresses the diagnosed weakness?", "criteria": {**{item.name: item.description for item in STRATEGY_LIBRARY}, "none": "No rewrite strategy is suitable."}, "state": {"prompt": working_prompt, "diagnosis": model_view, "prior_failures": list(prior_failures)}},
             role="judge", run_id=run_id,
         )
         parsed_strategy = parse_decision(strategy_choice)
@@ -451,7 +453,7 @@ class PromptOptimizer:
 
         def recheck_strategy(strategy: RewriteStrategy) -> dict[str, bool]:
             answer = self.gateway.decide(
-                {"model": selected_settings.judge_model, "key": f"strategy_recheck:{strategy.name}", "type": "noul", "query": "Is this strategy appropriate for the prompt and diagnosed weakness without inventing requirements?", "state": {"prompt": working_prompt, "diagnosis": diagnosis_payload, "strategy": strategy.to_dict()}},
+                {"model": selected_settings.judge_model, "key": f"strategy_recheck:{strategy.name}", "type": "noul", "query": "Is this strategy appropriate for the prompt and diagnosed weakness without inventing requirements?", "state": {"prompt": working_prompt, "diagnosis": model_view, "strategy": strategy.to_dict()}},
                 role="judge", run_id=run_id,
             )
             decision = parse_decision(answer)
@@ -460,7 +462,7 @@ class PromptOptimizer:
         self._stage("writing_candidates")
         search = search_strategies(
             working_prompt,
-            diagnosis_payload,
+            model_view,
             tier,
             writer=CandidateWriter(
                 cast(RewriteGateway, self.gateway),
@@ -515,7 +517,7 @@ class PromptOptimizer:
                 "strategy_kind": candidate.strategy.kind,
                 "grade": grade,
                 "fidelity": (fidelity := check_candidate_fidelity(
-                    self.gateway, working_prompt, candidate.text, diagnosis_payload,
+                    self.gateway, working_prompt, candidate.text, model_view,
                     candidate.strategy.name, run_id=run_id,
                     judge_model=selected_settings.judge_model,
                 )).to_dict(),
@@ -728,7 +730,7 @@ class PromptOptimizer:
         old_value = str(previous.get("value", ""))
         final_prompt = str(result.get("final_prompt") or record.get("prompt") or "")
         usage_before = self._usage_cost()
-        updated_prompt = _apply_assumption(final_prompt, key, old_value, value)
+        updated_prompt = _apply_assumption(final_prompt, key, old_value, value, previous.get("source"))
         if updated_prompt is None:
             try:
                 response = self.gateway.complete(
@@ -915,14 +917,19 @@ class PromptOptimizer:
 # How a clarification appears in the returned prompt when its key alone would
 # read as an internal marker.
 _CLARIFICATION_LINE_LABELS = {"outside_reference": "Details"}
+# Labels for the user's own answers only. Inferred lines keep their key, which
+# recorded replays contain; answers never occur in recordings.
+_ANSWER_LINE_LABELS = {"context": "Context"}
 
 
-def _clarification_label(key: str) -> str:
+def _clarification_label(key: str, source: object = None) -> str:
+    if source == "answer" and key in _ANSWER_LINE_LABELS:
+        return _ANSWER_LINE_LABELS[key]
     return _CLARIFICATION_LINE_LABELS.get(key, key)
 
 
-def _apply_assumption(prompt: str, key: str, old_value: str, value: str) -> str | None:
-    label = _clarification_label(key)
+def _apply_assumption(prompt: str, key: str, old_value: str, value: str, source: object = None) -> str | None:
+    label = _clarification_label(key, source)
     line = f"{label}: {value}"
     lines = prompt.splitlines()
     for index, existing in enumerate(lines):
@@ -942,7 +949,7 @@ def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
         key = str(item.get("key", "")).strip()
         value = str(item.get("value", "")).strip()
         if key and value:
-            lines.append(f"{_clarification_label(key)}: {value}")
+            lines.append(f"{_clarification_label(key, item.get('source'))}: {value}")
     if not lines:
         return prompt
     return prompt.rstrip() + "\n\nClarifications:\n" + "\n".join(lines)

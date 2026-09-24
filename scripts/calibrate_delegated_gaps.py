@@ -64,7 +64,29 @@ def measure(dataset_path: Path, decisions_path: Path) -> None:
         print(f"Jev gap decisions {len(done)}/{len(cases)}", flush=True)
 
 
-def calibrate(dataset_path: Path, decisions_path: Path) -> dict[str, Any]:
+SELECTIONS = {
+    "f0_5": "Maximum training F0.5 on 0.80–0.95 grid; higher cutoff breaks positive-score ties; no selected cutoff when all scores are zero",
+    "precision_floor": "Lowest cutoff on 0.60–0.95 grid whose training precision is at least {min_precision} with one or more true positives; none otherwise",
+}
+
+
+def _select(train: list[tuple[float, bool]], selection: str, min_precision: float) -> float | None:
+    if selection == "precision_floor":
+        grid = [value / 100 for value in range(60, 96)]
+        eligible = [
+            cutoff for cutoff in grid
+            if (metrics := binary_metrics(train, cutoff))["tp"] >= 1 and metrics["precision"] >= min_precision
+        ]
+        return min(eligible) if eligible else None
+    grid = [value / 100 for value in range(80, 96)]
+    candidates = [(cutoff, binary_metrics(train, cutoff)) for cutoff in grid]
+    best_f = max(metrics["f0_5"] for _, metrics in candidates)
+    return max(cutoff for cutoff, metrics in candidates if metrics["f0_5"] == best_f) if best_f > 0 else None
+
+
+def calibrate(
+    dataset_path: Path, decisions_path: Path, *, selection: str = "f0_5", min_precision: float = 0.5
+) -> dict[str, Any]:
     dataset = json.loads(dataset_path.read_text(encoding="utf-8"))
     if dataset.get("metadata", {}).get("reviewer_kind") != "user_delegated_model" or any(
         case.get("label_provenance") != "user_delegated_model" for case in dataset["cases"]
@@ -85,22 +107,16 @@ def calibrate(dataset_path: Path, decisions_path: Path) -> dict[str, Any]:
         split = "holdout" if in_holdout_group(case["source_group"]) else "train"
         for gap in TASK_GAPS[case["task_stratum"]]:
             by_gap[gap][split].append((row["probabilities"][gap], gap in case["expected_gaps"]))
-    grid = [value / 100 for value in range(80, 96)]
     result = {"dataset_name": dataset["name"], "label_provenance": "user_delegated_model",
               "decision_model": JEV_MODEL, "split": "SHA-256 source_group modulo 5; related participant prompts stay together",
-              "selection": "Maximum training F0.5 on 0.80–0.95 grid; higher cutoff breaks positive-score ties; no selected cutoff when all scores are zero",
+              "selection": SELECTIONS[selection].format(min_precision=min_precision),
               "questions": {}}
     for gap in GAPS:
         train, holdout = by_gap[gap]["train"], by_gap[gap]["holdout"]
         if not train or not holdout:
             continue
         baseline = DEFAULT_RUBRIC.gap_threshold_for(gap)
-        candidates = [(cutoff, binary_metrics(train, cutoff)) for cutoff in grid]
-        best_f = max(metrics["f0_5"] for _, metrics in candidates)
-        selected = (
-            max(cutoff for cutoff, metrics in candidates if metrics["f0_5"] == best_f)
-            if best_f > 0 else None
-        )
+        selected = _select(train, selection, min_precision)
         result["questions"][gap] = {
             "question": default_gap_question(gap), "train_count": len(train), "holdout_count": len(holdout),
             "train_positive": sum(label for _, label in train), "holdout_positive": sum(label for _, label in holdout),
@@ -119,10 +135,12 @@ def main() -> None:
     parser.add_argument("--decisions", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--measure", action="store_true")
+    parser.add_argument("--selection", choices=sorted(SELECTIONS), default="f0_5")
+    parser.add_argument("--min-precision", type=float, default=0.5)
     args = parser.parse_args()
     if args.measure:
         measure(args.dataset, args.decisions)
-    save_json(args.output, calibrate(args.dataset, args.decisions))
+    save_json(args.output, calibrate(args.dataset, args.decisions, selection=args.selection, min_precision=args.min_precision))
 
 
 if __name__ == "__main__":
