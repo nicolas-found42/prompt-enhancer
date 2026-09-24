@@ -1,6 +1,36 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 type Json = Record<string, unknown>;
+
+test("the prompt workbench has no automated accessibility violations", async ({
+  page,
+}) => {
+  await mockRun(page, {
+    ...completedBase,
+    status: "needs_input",
+    run_id: "accessibility-run",
+    report: {},
+    questions: [
+      {
+        id: "goal",
+        prompt: "What should the assistant do?",
+        options: [{ value: "summarize", label: "Summarize" }],
+      },
+    ],
+  });
+  await page.goto("/");
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+
+  await page.getByLabel("Your prompt").fill("Help me with this.");
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  await expect(
+    page.getByRole("heading", { name: "A few details will improve the result" })
+  ).toBeVisible();
+  const clarification = await new AxeBuilder({ page }).analyze();
+  expect(clarification.violations).toEqual([]);
+});
 
 function job(
   runId: string,

@@ -1,6 +1,29 @@
 repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-case-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+
   - repo: local
     hooks:
+      - id: actionlint
+        name: actionlint (workflow files)
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+
+      - id: gitleaks-staged
+        name: Gitleaks (staged secrets)
+        entry: gitleaks git --pre-commit --redact --staged --verbose
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: uv-lock
         name: uv lock is current
         entry: uv lock --check
@@ -47,9 +70,23 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: python-dependencies
+        name: deptry (packaged Python source)
+        entry: uv run --locked deptry src
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: web-typecheck-build
         name: TypeScript and Vite build
         entry: npm --prefix web run build
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: web-unit-tests
+        name: Vitest unit and component tests
+        entry: npm --prefix web run test:unit
         language: system
         pass_filenames: false
         always_run: true

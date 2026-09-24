@@ -46,7 +46,8 @@ cancel a run, and reattaches after a reload. The synchronous
 
 The project pins Python 3.12 in `.python-version` and recommends Node 24 in
 `web/.nvmrc`. Install both toolchains, then set up the locked dependencies and
-Git hook:
+Git hook. The hook also uses `actionlint` and `gitleaks` from your PATH
+(`brew install actionlint gitleaks` on macOS):
 
 ```sh
 uv sync --locked
@@ -55,10 +56,11 @@ uv run pre-commit install
 uv run pre-commit run --all-files
 ```
 
-The commit hook verifies `uv.lock`, lints and formats staged Python and web
-files, then checks Python types and lint, builds the web app (including
-TypeScript and browser-test type checks), and runs pytest with an 80% coverage
-floor and the Playwright suite. Install Playwright's browser
+The commit hook checks file hygiene, GitHub Actions syntax, staged secrets,
+and `uv.lock`; lints and formats staged Python and web files; then checks
+Python types and dependencies, builds the web app, and runs pytest with an
+80% coverage floor, Vitest unit tests, and the Playwright suite (including
+automated accessibility checks). Install Playwright's browser
 once with `npm --prefix web exec -- playwright install chromium` if it is missing.
 Run checks individually with:
 
@@ -67,16 +69,27 @@ uv lock --check
 uv run --locked ruff format --check src scripts tests
 uv run --locked ruff check .
 uv run --locked ty check src scripts
+uv run --locked deptry src
 uv run --locked pytest -q --cov=prompt_enhancer --cov-report=term
 npm --prefix web run lint
 npm --prefix web run typecheck
 npm --prefix web run build
+npm --prefix web run test:unit
 npm --prefix web run test:e2e
+actionlint .github/workflows/*.yml
+gitleaks git . --redact --no-banner
 ```
 
 The CatBoost model test requires the optional training dependencies; run
 `uv sync --locked --extra training` and `uv run --locked --extra training pytest -q`
 when working on that path. Pull requests run the same pre-commit checks in CI.
+CI also audits the locked Python and npm dependencies, checks workflow
+security with zizmor, and scans Git history with Gitleaks. CodeQL analyzes
+Python and TypeScript on pull requests and weekly; Dependabot proposes weekly
+uv, npm, pre-commit, and Actions updates. GitHub secret scanning and push
+protection are enabled for this repository. Accessibility automation covers
+common detectable issues; keyboard and task-flow review still requires a
+person.
 
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
