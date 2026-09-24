@@ -51,6 +51,27 @@ function originalPassRates(result: OptimizeResult): number[] {
   return Object.values(perModel).filter((value): value is number => typeof value === "number");
 }
 
+const possibleGapText: Record<string, string> = {
+  outside_reference: "It may depend on details only you know",
+};
+
+/** Near-miss gaps: not strong enough to act on, but worth telling the user about. */
+export function possibleGapHints(result: OptimizeResult): string[] {
+  return items(record(result.report.diagnosis).possible_gaps).map((gap) => {
+    const key = String(gap.key ?? "");
+    const lead = possibleGapText[key] ?? `It may be missing ${String(gap.label ?? key)}`;
+    const sentence = typeof gap.sentence === "string" && gap.sentence ? gap.sentence : null;
+    return sentence
+      ? `${lead}, such as what “${sentence}” refers to. If so, add those details before you use it.`
+      : `${lead}. If so, add those details before you use it.`;
+  });
+}
+
+/** Money for a sub-cent world: "under $0.01" rather than "$0.00". */
+export function roughCost(value: number): string {
+  return value < 0.01 ? "under $0.01" : `roughly $${value.toFixed(2)}`;
+}
+
 export function failureOf(result: OptimizeResult): Failure {
   const failure = record(result.report.failure);
   if (typeof failure.headline === "string") return failure as unknown as Failure;
@@ -78,8 +99,19 @@ export function outcomeOf(result: OptimizeResult): Outcome {
   const gaps = confirmedGaps(result);
   const rates = originalPassRates(result);
   const weakest = rates.length > 0 ? Math.min(...rates) : null;
-  if (gaps.length === 0 && (weakest === null || weakest >= 0.8)) {
-    return { headline: "Your prompt already works well", reason: "Nothing important was missing, so it is returned unchanged." };
+  // No pass rates means the prompt was never run on a test model, so there is
+  // no evidence that it works, only that nothing was clearly missing.
+  if (gaps.length === 0 && weakest === null) {
+    return {
+      headline: "We didn't find anything to fix",
+      reason: "Nothing was clearly missing, so no rewrite was tried. Your prompt wasn't tested on other models.",
+    };
+  }
+  if (gaps.length === 0 && weakest !== null && weakest >= 0.8) {
+    return {
+      headline: "Your prompt already works well",
+      reason: `It passed at least ${Math.round(weakest * 100)}% of checks on every test model, so it is returned unchanged.`,
+    };
   }
   const reasons: string[] = [];
   if (gaps.length > 0) {
@@ -91,24 +123,33 @@ export function outcomeOf(result: OptimizeResult): Outcome {
   return { headline: "We couldn't safely improve this", reason: reasons.join(" ") };
 }
 
+// Runs are bimodal: under a minute when nothing needs fixing, several minutes
+// when rewrites are written and tested.
 export const fallbackEstimates: Record<Tier, string> = {
-  fast: "About 1–4 min · ~$0.001–$0.01 · up to 1 round",
-  standard: "About 2–10 min · ~$0.005–$0.03 · up to 2 rounds",
-  deep: "About 10–30 min · ~$0.03–$0.15 · up to 3 rounds",
+  fast: "Under a minute if nothing needs fixing, up to 4 min with rewrites · ~$0.001–$0.01",
+  standard: "Under a minute if nothing needs fixing, up to 10 min with rewrites · ~$0.005–$0.03",
+  deep: "Under a minute if nothing needs fixing, up to 30 min with rewrites · ~$0.03–$0.15",
 };
 
-function minutes(value: number): string {
-  return value < 1 ? "<1" : String(Math.round(value));
+export const tierDescriptions: Record<Tier, string> = {
+  fast: "Fast: one round of rewrites, tried on 2 test models.",
+  standard: "Standard: up to 2 rounds of rewrites, tried on 3 test models.",
+  deep: "Deep: up to 3 rounds with more rewrites, tried on 5 test models.",
+};
+
+function durationRange(low: number, high: number): string {
+  const top = Math.max(high, low);
+  if (top < 1) return "Usually under a minute";
+  if (low < 1) return `Usually under a minute, up to ${Math.round(top)} min`;
+  const [lowText, highText] = [Math.round(low), Math.round(top)];
+  return lowText === highText ? `About ${lowText} min` : `Usually ${lowText}–${highText} min`;
 }
 
 export function estimateText(tier: Tier, estimate?: TierEstimate): string {
   if (!estimate || estimate.runs < 3) return `${fallbackEstimates[tier]} (rough estimate)`;
   const [low, high] = estimate.minutes;
   const [lowCost, highCost] = estimate.cost;
-  const lowText = minutes(low);
-  const highText = minutes(Math.max(high, low));
-  const range = lowText === highText ? `About ${lowText} min` : `Usually ${lowText}–${highText} min`;
-  return `${range} · ~$${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)} (from your last ${estimate.runs} ${tier} runs)`;
+  return `${durationRange(low, high)} · ~$${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)} (from your last ${estimate.runs} ${tier} runs)`;
 }
 
 export function elapsedText(ms: number): string {

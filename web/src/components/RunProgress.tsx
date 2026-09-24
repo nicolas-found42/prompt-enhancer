@@ -26,6 +26,7 @@ export default function RunProgress({ job, estimate, onCancel }: Props) {
         <div>
           <p className="eyebrow">WORKING</p>
           <h2 id="progress-heading">{kindTitles[job.kind]}</h2>
+          {job.prompt && <p className="progress-prompt">{job.prompt}</p>}
           <p className="progress-meta">
             <span className="elapsed">{elapsedText(job.elapsed_ms)} elapsed</span>{round} · {estimate}
           </p>

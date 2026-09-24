@@ -69,6 +69,21 @@ class ConfirmedGap:
 
 
 @dataclass(frozen=True, slots=True)
+class PossibleGap:
+    """A checklist item Jev leaned towards but not past its confirmation cutoff.
+
+    It never drives clarification or rewriting; it only lets the result tell the
+    user what may still be missing instead of claiming nothing is.
+    """
+
+    key: str
+    label: str
+    missing_probability: float
+    threshold: float
+    sentence: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ProblemSentence:
     sentence: Sentence
     kind: ProblemKind
@@ -89,6 +104,7 @@ class DiagnosisReport:
     confirmed_gaps: tuple[ConfirmedGap, ...]
     problem_sentences: tuple[ProblemSentence, ...]
     rubric_version: str | None = None
+    possible_gaps: tuple[PossibleGap, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -104,6 +120,7 @@ class DiagnosisReport:
             }
             for problem in self.problem_sentences
         ]
+        result["possible_gaps"] = [asdict(gap) for gap in self.possible_gaps]
         return result
 
 
@@ -117,6 +134,9 @@ class DiagnosisRubric:
     problem_threshold: float = 0.9
     pointer_threshold: float = 0.8
     uncertainty_margin: float = 0.1
+    # Lower bounds for reporting a near-miss gap as a hint. Only the listed
+    # checklist keys are hinted; confirmation still uses the gap thresholds.
+    hint_thresholds: Mapping[str, float] = field(default_factory=dict)
 
     def gap_threshold_for(self, question_id: str) -> float:
         return self.gap_thresholds.get(question_id, self.gap_threshold)
@@ -168,6 +188,7 @@ DEFAULT_RUBRIC = DiagnosisRubric(
         TaskType("chat", "Chat", _CHAT_CHECKLIST),
     ),
     gap_thresholds={"context": 0.87},
+    hint_thresholds={"outside_reference": 0.75},
 )
 
 
@@ -338,14 +359,17 @@ class Diagnoser:
                     task_confidence = min(task_result.confidence, leaf_results[0].confidence)
 
         task = next((item for item in rubric.task_types if item.key == selected), rubric.task_types[0])
-        gaps, sentences = self._diagnose_gaps(prompt, state, task, rubric)
-        problems = self._diagnose_sentences(prompt, state, sentences, rubric)
+        gaps, near_misses, sentences = self._diagnose_gaps(prompt, state, task, rubric)
+        problems, pointed = self._diagnose_sentences(prompt, state, sentences, rubric)
+        # Quote the sentence Jev pointed at, preferring an unresolved reference.
+        suspect = pointed.get(ProblemKind.UNRESOLVED_REFERENCE) or pointed.get(ProblemKind.VAGUENESS)
         return DiagnosisReport(
             task_type=task.key,
             task_type_label=task.label,
             task_type_confidence=task_confidence,
             confirmed_gaps=gaps,
             problem_sentences=problems,
+            possible_gaps=tuple(replace(gap, sentence=suspect.text if suspect else None) for gap in near_misses),
         )
 
     def _diagnose_gaps(
@@ -354,7 +378,7 @@ class Diagnoser:
         state: Mapping[str, Any],
         task: TaskType,
         rubric: DiagnosisRubric,
-    ) -> tuple[tuple[ConfirmedGap, ...], tuple[Sentence, ...]]:
+    ) -> tuple[tuple[ConfirmedGap, ...], tuple[PossibleGap, ...], tuple[Sentence, ...]]:
         del prompt  # The caller's exact text is already isolated in state.
         requests = [
             _request(
@@ -367,6 +391,7 @@ class Diagnoser:
         ]
         responses = self._decide(requests)
         gaps: list[ConfirmedGap] = []
+        near_misses: list[PossibleGap] = []
         for item, response in zip(task.checklist, responses, strict=False):
             if not isinstance(response, NoulDecision):
                 continue
@@ -387,7 +412,16 @@ class Diagnoser:
                         threshold=threshold,
                     )
                 )
-        return tuple(gaps), split_sentences(str(state["prompt"]))
+            elif rubric.hint_thresholds.get(item.key, 1.0) <= response.probability < threshold:
+                near_misses.append(
+                    PossibleGap(
+                        key=item.key,
+                        label=item.label,
+                        missing_probability=response.probability,
+                        threshold=threshold,
+                    )
+                )
+        return tuple(gaps), tuple(near_misses), split_sentences(str(state["prompt"]))
 
     def _diagnose_sentences(
         self,
@@ -395,10 +429,10 @@ class Diagnoser:
         state: Mapping[str, Any],
         sentences: tuple[Sentence, ...],
         rubric: DiagnosisRubric,
-    ) -> tuple[ProblemSentence, ...]:
+    ) -> tuple[tuple[ProblemSentence, ...], dict[ProblemKind, Sentence]]:
         del prompt
         if not sentences:
-            return ()
+            return (), {}
         sentence_state = {
             **state,
             "sentences": [{"id": item.id, "text": item.text} for item in sentences],
@@ -427,8 +461,9 @@ class Diagnoser:
             sentence = next((item for item in sentences if item.id == pointer.selected), None)
             if sentence is not None:
                 selected.append((kind, sentence))
+        pointed = {kind: sentence for kind, sentence in reversed(selected)}
         if not selected:
-            return ()
+            return (), pointed
 
         checks = [
             _request(
@@ -459,7 +494,7 @@ class Diagnoser:
                         threshold=rubric.problem_threshold,
                     )
                 )
-        return tuple(problems)
+        return tuple(problems), pointed
 
 
 def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
@@ -491,12 +526,23 @@ def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
         )
         for item in value.get("problem_sentences", ())
     )
+    possible = tuple(
+        PossibleGap(
+            key=str(item["key"]),
+            label=str(item["label"]),
+            missing_probability=float(item["missing_probability"]),
+            threshold=float(item["threshold"]),
+            sentence=None if item.get("sentence") is None else str(item["sentence"]),
+        )
+        for item in value.get("possible_gaps", ())
+    )
     return DiagnosisReport(
         task_type=str(value["task_type"]),
         task_type_label=str(value["task_type_label"]),
         task_type_confidence=float(value["task_type_confidence"]),
         confirmed_gaps=gaps,
         problem_sentences=problems,
+        possible_gaps=possible,
     )
 
 

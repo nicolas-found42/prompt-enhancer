@@ -19,12 +19,13 @@ def test_environment_cannot_change_fixed_jev_model(monkeypatch) -> None:
     assert Settings.from_env().judge_model == "typesafe/jev-1.13"
 
 
-def _no_test_gateway() -> ScriptedGateway:
+def _no_test_gateway(*, gaps: tuple[str, ...] = ()) -> ScriptedGateway:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
             choice = "general" if request.get("key") == "task_type" else "none"
             return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
-        return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
+        probability = 0.99 if request.get("key") in {f"gap:{gap}" for gap in gaps} else 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     return ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
 
@@ -66,6 +67,36 @@ def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_thresho
     diagnosis = result.get("diagnosis") or result["report"]["diagnosis"]
     assert [gap["key"] for gap in diagnosis["confirmed_gaps"]] == ["context"]
     assert diagnosis["confirmed_gaps"][0]["threshold"] == 0.87
+
+
+@pytest.mark.parametrize(("probability", "hinted"), [(0.86, True), (0.7, False)])
+def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(probability: float, hinted: bool) -> None:
+    prompt = "Tell the warehouse team about the new rules for the vans. Keep it short."
+
+    def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        if key == "task_type":
+            return {"type": "choice", "choice": "general", "probabilities": {"general": 1.0}, "confidence": 1.0}
+        if key.startswith("pointer:vagueness"):
+            return {"type": "choice", "choice": "s0001", "probabilities": {"s0001": 0.9}, "confidence": 0.9}
+        if request.get("type") == "choice":
+            return {"type": "choice", "choice": "none", "probabilities": {"none": 1.0}, "confidence": 1.0}
+        return {"type": "noul", "probability_true": probability if key == "gap:outside_reference" else 0.01}
+
+    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(prompt, {"tier": "fast"})
+
+    diagnosis = result["report"]["diagnosis"]
+    assert diagnosis["confirmed_gaps"] == []
+    assert result["status"] == "completed"
+    if hinted:
+        assert diagnosis["possible_gaps"] == [{
+            "key": "outside_reference", "label": "details only you know",
+            "missing_probability": probability, "threshold": 0.9,
+            "sentence": "Tell the warehouse team about the new rules for the vans.",
+        }]
+    else:
+        assert diagnosis["possible_gaps"] == []
 
 
 def test_clear_prompt_with_success_tests_is_never_rewritten() -> None:
@@ -333,9 +364,17 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it() -
     assert record["score_summaries"]["original"]["mean_pass_rate"] == 0.0
 
 
-def test_deep_pass_executes_again_under_same_run_id() -> None:
+def test_run_without_confirmed_gaps_does_not_offer_deep() -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
-    first = optimizer.optimize("Write a clear report.", {"tier": "fast"})
+    result = optimizer.optimize("Write a clear report.", {"tier": "fast"})
+
+    assert result["report"]["diagnosis"]["confirmed_gaps"] == []
+    assert result["report"]["offer_deep"] is None
+
+
+def test_deep_pass_executes_again_under_same_run_id() -> None:
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway(gaps=("goal",)))
+    first = optimizer.optimize("Write a clear report.", {"tier": "fast", "clarification_allowed": False})
 
     assert first["report"]["offer_deep"]["to_tier"] == "deep"
     deep = optimizer.start_deep_pass(first["run_id"])
@@ -344,6 +383,7 @@ def test_deep_pass_executes_again_under_same_run_id() -> None:
     assert deep["report"]["escalation"]["status"] == "completed"
     assert [entry["tier"] for entry in deep["report"]["history"]] == ["fast", "deep"]
     assert optimizer.store.get_run(first["run_id"])["tier"] == "deep"
+    assert optimizer.history.list_runs(None)[0]["escalated_from"] == "fast"
 
 
 def test_deep_pass_expands_a_fast_run_weak_panel_to_deep_budget() -> None:

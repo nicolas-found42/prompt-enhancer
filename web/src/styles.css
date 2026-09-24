@@ -251,6 +251,13 @@ mark {
 .model-picker fieldset {
   border: 1px solid #30363d;
   margin: 14px 0;
+  min-width: 0;
+}
+
+.role-hint {
+  color: #8b949e;
+  font-size: 0.83rem;
+  margin: -6px 0 12px;
 }
 
 .model-picker fieldset label {
@@ -329,6 +336,15 @@ input:focus {
 
 .banner p {
   margin: 0;
+}
+
+.progress-prompt {
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: #c9d1d9;
+  display: -webkit-box;
+  margin: 6px 0 0;
+  overflow: hidden;
 }
 
 .progress-meta,
@@ -559,7 +575,7 @@ input:focus {
   width: 100%;
 }
 
-.history-row[aria-pressed="true"] {
+.history-row[aria-expanded="true"] {
   border-color: #58a6ff;
 }
 
@@ -607,10 +623,11 @@ input:focus {
 
 .history-browser article {
   background: #161b22;
-  border: 1px solid #30363d;
+  border: 1px solid #58a6ff;
   border-radius: 14px;
-  margin-top: 16px;
+  margin-top: 8px;
   padding: 20px 24px;
+  scroll-margin: 16px;
 }
 
 .history-browser article .result {
@@ -625,6 +642,18 @@ input:focus {
 
 .run-details-heading h3 {
   margin: 0;
+}
+
+.history-note {
+  color: #8b949e;
+  font-size: 0.9rem;
+}
+
+.feedback-group {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .history-outcome {

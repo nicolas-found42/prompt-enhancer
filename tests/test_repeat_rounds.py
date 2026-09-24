@@ -108,6 +108,20 @@ def test_lower_tier_no_change_result_offers_a_more_expensive_deep_pass() -> None
     assert payload["report"]["history"][0]["round_number"] == 1
 
 
+def test_round_that_declines_deep_is_not_offered_it() -> None:
+    def no_gap_round(_request: Any) -> dict[str, Any]:
+        outcome = _failed_round(continue_rounds=False)
+        return {**outcome, "report": {"status": "no_change", "offer_deep": False}}
+
+    result = RepeatCoordinator().optimize(
+        "Summarize the weekly report.",
+        {"run_id": "run-no-gaps", "tier": Tier.FAST},
+        no_gap_round,
+    )
+
+    assert result.as_payload()["report"]["offer_deep"] is None
+
+
 def test_improved_result_does_not_offer_deep() -> None:
     result = RepeatCoordinator().optimize(
         "Summarize the report.",

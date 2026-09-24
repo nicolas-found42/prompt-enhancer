@@ -504,7 +504,10 @@ class RepeatCoordinator:
             outcome.get("final_prompt") or outcome.get("selected_prompt") or prompt
         )
         original_kept = history[-1].original_kept
-        offer = _deep_offer(run_id, selected_tier, history) if original_kept else None
+        # A round runner may decline the offer (``report.offer_deep`` false) when
+        # a Deep pass could not do anything the lower tier did not.
+        deep_declined = _mapping_or_empty(outcome.get("report")).get("offer_deep") is False
+        offer = _deep_offer(run_id, selected_tier, history) if original_kept and not deep_declined else None
         return RepeatResult(
             run_id=run_id,
             tier=selected_tier,

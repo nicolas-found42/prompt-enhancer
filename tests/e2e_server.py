@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -41,4 +42,5 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="prompt-enhancer-e2e-") as directory:
         store = RunStore(Path(directory) / "runs.sqlite3")
         optimizer = PromptOptimizer(store=store, gateway=ScriptedGateway(chat=chat, decision=decide))
-        uvicorn.run(create_app(optimizer=optimizer), host="127.0.0.1", port=8765, log_level="warning")
+        port = int(os.environ.get("E2E_API_PORT", "8765"))
+        uvicorn.run(create_app(optimizer=optimizer), host="127.0.0.1", port=port, log_level="warning")
