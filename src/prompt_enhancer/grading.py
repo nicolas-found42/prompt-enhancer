@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from statistics import fmean
 from typing import Any
 
+from . import jev_questions
 from .gateway import Gateway
 from .jev import (
     ChoiceDecision,
@@ -175,22 +176,24 @@ def grade_panel_with_jev(
                 )
                 or ()
             )
+            descriptions = test.get("option_descriptions")
+            if not isinstance(descriptions, Mapping):
+                descriptions = {}
             response_indices[(output_index, test_index)] = len(requests)
             for second in (False,) if kind == "noul" else (False, True):
-                question = "Is the answer to the success criterion in state.test yes?"
                 requests.append(
                     {
                         "key": f"grade_{output_index}_{test_index}_{'second' if second else 'first'}",
                         "model": judge_model,
                         "type": kind,
                         "state": state,
-                        "question": question
+                        "question": jev_questions.GRADING_NOUL_QUESTION
                         if kind == "noul"
-                        else "Answer the success criterion in state.test using the provided criteria.",
+                        else jev_questions.GRADING_OTHER_QUESTION,
                         **(
                             {
                                 "criteria": {
-                                    option: option
+                                    option: descriptions.get(option)
                                     for option in (
                                         reversed(options) if second else options
                                     )

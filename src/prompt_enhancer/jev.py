@@ -64,13 +64,18 @@ JevDecision: TypeAlias = NoulDecision | ChoiceDecision | ScoreDecision
 def decision_question(request: Mapping[str, Any]) -> dict[str, Any]:
     """Build one Decisions API question from a provider-neutral request."""
     kind = str(request.get("type") or "noul")
-    instructions = str(
-        request.get("query")
-        or request.get("question")
-        or request.get("instructions")
-        or ""
-    ).strip()
-    if not instructions:
+    instruction_key = next(
+        (name for name in ("query", "question", "instructions") if name in request),
+        None,
+    )
+    instructions = request[instruction_key] if instruction_key is not None else None
+    if (
+        not isinstance(instructions, (str, dict, list))
+        or not instructions
+        or isinstance(instructions, str)
+        and not instructions.strip()
+        or not _json_compatible(instructions)
+    ):
         raise ValueError("Jev question instructions are required")
     question: dict[str, Any] = {"type": kind, "instructions": instructions}
     criteria = request.get("criteria")
@@ -84,8 +89,25 @@ def decision_question(request: Mapping[str, Any]) -> dict[str, Any]:
     elif criteria is None and kind == "score":
         criteria = list(request.get("levels", ()))
     if criteria is not None:
+        if not _json_compatible(criteria):
+            raise ValueError("Jev question criteria must be JSON-compatible")
         question["criteria"] = criteria
     return question
+
+
+def _json_compatible(value: Any) -> bool:
+    if value is None or isinstance(value, (str, bool, int)):
+        return True
+    if isinstance(value, float):
+        return math.isfinite(value)
+    if isinstance(value, list):
+        return all(_json_compatible(item) for item in value)
+    if isinstance(value, dict):
+        return all(
+            isinstance(key, str) and _json_compatible(item)
+            for key, item in value.items()
+        )
+    return False
 
 
 def decision_payload(
@@ -120,9 +142,18 @@ def batch_decision_payload(
     for key, request in zip(keys, requests, strict=True):
         question = decision_question(request)
         if not shared_state:
-            question["instructions"] = (
-                f"For state.items[{key!r}]: {question['instructions']}"
-            )
+            item = f"state.items[{key!r}]"
+            instructions = question["instructions"]
+            if isinstance(instructions, str):
+                question["instructions"] = f"For {item}: {instructions}"
+            elif isinstance(instructions, dict):
+                if "item" in instructions and instructions["item"] != item:
+                    raise ValueError(
+                        "Jev batch instruction item field conflicts with state"
+                    )
+                question["instructions"] = {**instructions, "item": item}
+            else:
+                question["instructions"] = {"item": item, "question": instructions}
         questions[key] = question
     return keys, {"model": model, "state": state, "questions": questions}
 

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from . import jev_questions
 from .gateway import Gateway, ProviderError
 from .jev import JevResponseError, NoulDecision, parse_decision
 
@@ -36,13 +37,6 @@ class FidelityResult:
         }
 
 
-_CHECKS = {
-    "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
-    "no_invention": "Does the candidate avoid facts or requirements not given by the user?",
-    "edits_confined": "Are edits limited to diagnosed problems or changes required by the named rewrite strategy?",
-}
-
-
 def check_candidate_fidelity(
     gateway: Gateway,
     original_prompt: str,
@@ -68,12 +62,12 @@ def check_candidate_fidelity(
             "query": question,
             "state": state,
         }
-        for name, question in _CHECKS.items()
+        for name, question in jev_questions.FIDELITY_CHECKS.items()
     ]
     try:
         answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
         decisions = [parse_decision(answer) for answer in answers]
-        if len(decisions) != len(_CHECKS) or any(
+        if len(decisions) != len(jev_questions.FIDELITY_CHECKS) or any(
             not isinstance(answer, NoulDecision) for answer in decisions
         ):
             raise JevResponseError("incomplete fidelity response")
@@ -82,7 +76,9 @@ def check_candidate_fidelity(
     probabilities = {
         name: decision.probability
         for name, decision in zip(
-            _CHECKS, cast(list[NoulDecision], decisions), strict=True
+            jev_questions.FIDELITY_CHECKS,
+            cast(list[NoulDecision], decisions),
+            strict=True,
         )
     }
     return FidelityResult(
