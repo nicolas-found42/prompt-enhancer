@@ -19,7 +19,10 @@ SOURCE = f"https://raw.githubusercontent.com/aliannejadi/ClariQ/{COMMIT}/data/tr
 QUOTAS = {"1": 25, "2": 50, "3": 50, "4": 25}
 
 
-def prepare(source: str) -> dict[str, object]:
+def prepare(source: str, *, per_level: int | None = None) -> dict[str, object]:
+    if per_level is not None and per_level < 1:
+        raise ValueError("per_level must be positive")
+    quotas = {level: per_level for level in QUOTAS} if per_level is not None else QUOTAS
     with urlopen(source, timeout=30) as response:
         text = response.read().decode("utf-8")
     topics: dict[str, dict[str, str]] = {}
@@ -32,7 +35,7 @@ def prepare(source: str) -> dict[str, object]:
         level = row.get("clarification_need", "")
         if level in by_level and row.get("initial_request", "").strip():
             by_level[level].append(row)
-    for level, quota in QUOTAS.items():
+    for level, quota in quotas.items():
         if len(by_level[level]) < quota:
             raise ValueError(f"ClariQ level {level} has fewer than {quota} unique prompts")
     cases = [
@@ -44,18 +47,19 @@ def prepare(source: str) -> dict[str, object]:
             "evaluation_gaps": ["clarification_need"],
             "evaluation_notes": f"ClariQ human clarification_need={level}; no specific rubric gap labels are implied.",
         }
-        for level, quota in QUOTAS.items()
+        for level, quota in quotas.items()
         for row in by_level[level][:quota]
     ]
     cases.sort(key=lambda case: case["id"])
     return {
         "schema_version": 1,
-        "name": "clariq-human-clarification-150",
+        "name": f"clariq-human-clarification-{sum(quotas.values())}",
         "metadata": {
             "source_url": SOURCE,
             "source_commit": COMMIT,
             "gold_label": "human-rated clarification_need (1=no clarification; 2-4=clarification needed)",
             "scope": "real search requests; binary clarification need, not detailed gap types",
+            "selection": f"{quotas} unique topics by clarification-need rating",
             "redistribution": "source repository does not declare a license; generated file is local only",
         },
         "cases": cases,
@@ -66,11 +70,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source", default=SOURCE, help="pinned ClariQ train.tsv URL or local file URL")
+    parser.add_argument("--per-level", type=int, help="select this many topics from each of ratings 1–4")
     args = parser.parse_args()
-    dataset = prepare(args.source)
+    dataset = prepare(args.source, per_level=args.per_level)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(dataset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote {sum(QUOTAS.values())} real prompts to {args.output}")
+    count = args.per_level * len(QUOTAS) if args.per_level is not None else sum(QUOTAS.values())
+    print(f"Wrote {count} real prompts to {args.output}")
 
 
 if __name__ == "__main__":

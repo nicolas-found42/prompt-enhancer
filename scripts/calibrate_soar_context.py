@@ -33,7 +33,9 @@ def _metrics(rows: list[Row], threshold: float) -> dict[str, float | int]:
     return {"tp": tp, "fp": fp, "fn": fn, "tn": tn, "precision": precision, "recall": recall, "f0_5": f05}
 
 
-def calibrate(dataset_path: Path, replay_path: Path) -> dict[str, Any]:
+def calibrate(dataset_path: Path, replay_path: Path, *, thresholds: tuple[float, ...] = THRESHOLDS, question_text: str = CONTEXT_QUESTION) -> dict[str, Any]:
+    if not thresholds or any(not 0 <= value <= 1 for value in thresholds):
+        raise ValueError("threshold grid must contain probabilities")
     dataset = load_dataset(dataset_path)
     recording = json.loads(replay_path.read_text(encoding="utf-8"))
     responses = recording.get("responses")
@@ -45,7 +47,7 @@ def calibrate(dataset_path: Path, replay_path: Path) -> dict[str, Any]:
             raise ValueError(f"case {case.id} lacks a reviewable context label")
         question = {
             "model": JEV_MODEL,
-            "query": CONTEXT_QUESTION,
+            "query": question_text,
             "state": {"prompt": case.prompt},
             "type": "noul",
             "key": "gap:context",
@@ -63,16 +65,16 @@ def calibrate(dataset_path: Path, replay_path: Path) -> dict[str, Any]:
         rows.append((case.id, float(probability), "context" in case.expected_gaps, holdout))
     train = [row for row in rows if not row[3]]
     holdout = [row for row in rows if row[3]]
-    selected = max(THRESHOLDS, key=lambda threshold: (_metrics(train, threshold)["f0_5"], threshold))
+    selected = max(thresholds, key=lambda threshold: (_metrics(train, threshold)["f0_5"], threshold))
     return {
         "question_id": "gap:context",
-        "question": CONTEXT_QUESTION,
+        "question": question_text,
         "dataset_digest": dataset.digest,
         "replay_digest": replay_digest(replay_path),
         "rows": len(rows),
         "train_count": len(train),
         "holdout_count": len(holdout),
-        "selection": "Maximum training F0.5 over 0.80 to 0.95 in 0.01 steps; higher threshold breaks ties",
+        "selection": f"Maximum training F0.5 over {min(thresholds):.2f} to {max(thresholds):.2f} in 0.01 steps; higher threshold breaks ties",
         "baseline_threshold": 0.9,
         "selected_threshold": selected,
         "baseline_train": _metrics(train, 0.9),
@@ -87,8 +89,16 @@ def main() -> None:
     parser.add_argument("--dataset", required=True, type=Path)
     parser.add_argument("--replay", required=True, type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--min-threshold", type=float, default=0.8)
+    parser.add_argument("--max-threshold", type=float, default=0.95)
+    parser.add_argument("--question", default=CONTEXT_QUESTION)
     args = parser.parse_args()
-    rendered = json.dumps(calibrate(args.dataset, args.replay), indent=2, sort_keys=True) + "\n"
+    low = round(args.min_threshold * 100)
+    high = round(args.max_threshold * 100)
+    if low < 0 or high > 100 or low > high:
+        parser.error("threshold range must be within 0 to 1 and nonempty")
+    grid = tuple(value / 100 for value in range(low, high + 1))
+    rendered = json.dumps(calibrate(args.dataset, args.replay, thresholds=grid, question_text=args.question), indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")

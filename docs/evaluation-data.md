@@ -45,6 +45,12 @@ refer to local files, codebases, or prior conversation, so live evaluation
 would also need that missing context to measure task success fairly. These
 cases cannot be counted as a hand-labeled diagnosis benchmark yet.
 
+The offline [review form and importer](human-gap-review.md) now make those
+judgments auditable. They preserve reviewer identity, source-session inspection,
+task type, and exact reconstructed context. The 150 prompts and historical
+results remain private; generating the form does **not** turn null labels into
+human gold.
+
 For each batch item, a reviewer should inspect the prompt and historical
 result, then enter checklist keys for gaps actually present in the prompt
 (`goal`, `context`, `constraints`, `output_format`, `done_criteria`, plus any
@@ -72,6 +78,17 @@ The four source gap labels do not all match the optimizer's current checklist
 keys. Each SOAR case retains its source labels, but the harness scores only
 `context` against SOAR's missing-context annotation. It counts explicit
 "No gap" cases as negatives when calculating false positives.
+
+A follow-up audit found that **81 of those 150 selected turns are not the first
+turn** of their conversation. Some prompts depend on preceding exchanges that
+were not supplied to the optimizer; source labels cannot automatically be
+interpreted as the gap truth of that isolated turn. The initial live run is a
+single-turn diagnostic measurement with that limitation. For a cleaner
+context-only calibration, `scripts/prepare_soar_first_turn_context.py` selects
+80 missing-context and 70 no-gap first turns without obvious processed-text
+placeholders, plus a disjoint 60-case holdout from remaining conversations.
+This does not solve the separate problem that surrounding GitHub issue context
+may have been available to the original user and annotator.
 
 `scripts/prepare_clariq.py` converts 150 distinct real user requests. It maps
 rating 1 to no `clarification_need` label and ratings 2–4 to that single label.
@@ -145,3 +162,13 @@ for targeted coverage but are not interchangeable gold sets.
   human-generated MTRAG conversations for multi-turn retrieval and uncertainty
   behavior. It can test whether clarification helps in context, but it does
   not provide per-prompt labels for this optimizer's gap types.
+
+The [public-source follow-up](evaluation-source-followup.md) adds ROPE,
+PELS, and other leads. ROPE supplies participant-written prompts across game,
+travel, and outline-assistant tasks under Apache-2.0, but no per-prompt gap
+gold. `scripts/prepare_rope_user_prompts.py` selects 48 original prompts from
+12 participants; `scripts/screen_rope_cohort.py` excludes unresolved template
+placeholders before reporting a 35-case cross-task outcome probe. All prompts
+from one participant were initially selected together. The study tasks remain
+narrow and the prompts were written for a study rather than observed in
+ordinary chat use.

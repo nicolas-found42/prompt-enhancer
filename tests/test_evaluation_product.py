@@ -118,6 +118,62 @@ def test_harness_reads_product_selection_and_numeric_role_costs() -> None:
     assert report.cases[0].latency_ms == 125
 
 
+def test_harness_resumes_only_with_source_answers_and_keeps_clarification_prediction() -> None:
+    class PausingEngine:
+        def __init__(self):
+            self.resumed = []
+
+        def optimize(self, prompt, options):
+            return {"status": "needs_input", "run_id": "run-1", "report": {"diagnosis": {"confirmed_gaps": [{"key": "context"}]}}}
+
+        def resume(self, run_id, answers):
+            self.resumed.append((run_id, answers))
+            return {
+                "status": "completed", "final_prompt": "Answered request", "original_kept": False,
+                "report": {"diagnosis": {"confirmed_gaps": [{"key": "context"}]},
+                           "selection_evidence": {"original_score": 0.25, "winner_score": 0.5}},
+            }
+
+    engine = PausingEngine()
+    dataset = Dataset.from_dict([{
+        "id": "one", "prompt": "Plan a trip", "expected_gaps": ["clarification_need"],
+        "clarification_answers": {"context": "Paris"}, "clarification_answer_provenance": "human",
+        "evaluation_gaps": ["clarification_need"],
+    }])
+    case = EvaluationHarness(engine).run(dataset).cases[0]
+
+    assert engine.resumed == [("run-1", {"context": "Paris"})]
+    assert case.status == "completed"
+    assert case.predicted_gaps == ("clarification_need",)
+    assert case.score_delta == 0.25
+
+
+def test_harness_rejects_unattributed_clarification_answers() -> None:
+    class PausingEngine:
+        def optimize(self, prompt, options):
+            return {"status": "needs_input", "run_id": "run-1", "report": {}}
+
+    dataset = Dataset.from_dict([{"id": "one", "prompt": "Plan a trip", "clarification_answers": {"context": "Paris"}}])
+    case = EvaluationHarness(PausingEngine()).run(dataset).cases[0]
+
+    assert case.status == "error"
+    assert "require human or source provenance" in case.error
+
+
+def test_dataset_round_trip_preserves_evaluation_scope_and_source_answers() -> None:
+    dataset = Dataset.from_dict([{
+        "id": "one", "prompt": "Plan a trip", "expected_gaps": ["context"],
+        "evaluation_gaps": ["context"],
+        "clarification_answers": {"context": "Paris"},
+        "clarification_answer_provenance": "human",
+    }])
+
+    restored = Dataset.from_dict(dataset.to_dict())
+
+    assert restored.cases[0].metadata == dataset.cases[0].metadata
+    assert restored.digest == dataset.digest
+
+
 def test_harness_retains_engine_failure_reason() -> None:
     class FailedEngine:
         def optimize(self, prompt, options):

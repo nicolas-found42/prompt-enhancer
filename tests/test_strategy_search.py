@@ -141,6 +141,20 @@ def test_selector_orders_worst_mean_spread_then_length_and_reports_reasons():
     assert result.to_dict()["winner_score"]["worst"] == 0.9
 
 
+def test_selector_does_not_claim_an_unrun_strong_check_failed():
+    baseline = {"id": "original", "text": "Original", "grade": {"worst": 0.2}}
+    candidate = {
+        "id": "blocked", "text": "Rewrite", "grade": {"worst": 0.9},
+        "eligible": False, "rejection_reasons": ["candidate failed fidelity checks"],
+        "metadata": {"fidelity": {"passed": False}},
+    }
+
+    result = rank_candidates(baseline, [candidate], strong_check={"passed_candidates": ()})
+
+    assert result.rejection_reasons["blocked"] == ("candidate failed fidelity checks",)
+    assert result.ranked[0].to_dict()["metadata"]["fidelity"] == {"passed": False}
+
+
 def test_selector_keeps_original_when_no_candidate_beats_it():
     result = rank_candidates(
         {"id": "original", "text": "original", "grade": {"worst": 0.8, "mean": 0.8, "spread": 0.0}},

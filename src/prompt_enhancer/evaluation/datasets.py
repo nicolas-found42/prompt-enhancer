@@ -199,11 +199,16 @@ class EvaluationCase:
             raise DatasetError(
                 f"{dataset_name} case {case_id!r} notes must be a string"
             )
-        metadata = {
-            key: item
-            for key, item in value.items()
-            if key not in _CASE_METADATA_EXCLUSIONS
-        }
+        nested_metadata = value.get("metadata", {})
+        if not isinstance(nested_metadata, Mapping):
+            raise DatasetError(f"{dataset_name} case {case_id!r} metadata must be an object")
+        metadata = dict(nested_metadata)
+        for key, item in value.items():
+            if key in _CASE_METADATA_EXCLUSIONS or key == "metadata":
+                continue
+            if key in metadata and metadata[key] != item:
+                raise DatasetError(f"{dataset_name} case {case_id!r} has conflicting metadata for {key!r}")
+            metadata[key] = item
         return cls(
             id=case_id,
             prompt=prompt,

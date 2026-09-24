@@ -145,3 +145,191 @@ uv run python -m prompt_enhancer.evaluation evaluation/planted-pilot.json \
 The replay files are retained locally and ignored by Git. The calibrated
 replay digest is
 `094682a9a2fb01804ff6c6254746aed3a3b4c1c3f93b938c4aa3d8eb25715a74`.
+
+## Follow-up audit: why real cases were unscored
+
+`scripts/analyze_recorded_paths.py` now replays the public optimizer and counts
+each stage without printing prompts. The original SOAR selection included 81
+later turns from conversations, some of which rely on earlier exchanges that
+were not included in the optimizer input. The original results above remain
+reproducible single-turn measurements; their context accuracy must not be
+interpreted as accuracy with the original conversation available.
+
+| Recorded run | Cases | Valid test proposals | Accepted tests | Cases with confirmed gap | Cases with accepted test | Both | Candidate/scored cases |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| SOAR, Space Bunny | 150 | 477 | 23 | 12 | 18 | 0 | 0 |
+| SOAR, DeepSeek | 150 | 728 | 49 | 11 | 31 | 0 | 0 |
+| Planted pilot, Space Bunny | 6 | 17 | 2 | 2 | 2 | 1 | 1 |
+
+All 150 SOAR cases reached success-test parsing and Jev faithfulness checking,
+and all 150 completed. The Jev recordings use the documented `noul` response
+shape (`{"type":"noul","noul":p}`); there was no parser or transport loss in
+these completed replays. The 0.90 faithfulness cutoff accepted none of the 24
+Space Bunny proposals on SOAR cases that had a confirmed gap. This is an
+observed gate intersection, not proof that the rejected tests were good or
+bad. A [blinded 100-test human review sheet](human-gap-review.md#success-test-faithfulness-review)
+is prepared to resolve that question.
+
+In the one pilot case that reached candidate grading, the candidate failed
+fidelity: Jev returned 0.70 for meaning preservation, 0.84 for no invention,
+and 0.74 for confining edits. It was **not** run through the candidate strong
+check; the strong model scored the original only. The selector's old report
+also said “strong check did not pass” for this unrun candidate. That false
+reason is fixed, and the report now retains all three fidelity probabilities.
+
+## Cleaner first-turn context calibration
+
+The new `scripts/prepare_soar_first_turn_context.py` selects 80 human-labeled
+missing-context and 70 human-labeled no-gap **first turns**, one per
+conversation, excluding obvious placeholders in the source's processed text.
+The 150-case development set reused 34 exact recorded answers and made 116
+new live Jev calls. A separate 60-case source holdout (20 positive, 40
+negative) was selected from the remaining conversations and measured live.
+The sets are deliberately stratified, so precision here is not an estimate
+at ordinary prompt prevalence.
+
+The preexisting question was tuned on the development training split using a
+0.50–0.95 grid and maximum F0.5. Its selected cutoff was **0.58**. The
+separate holdout rejected that as a high-confidence production cutoff:
+
+| Exact context question cutoff | Holdout TP | FP | FN | TN | Precision | Recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.58, selected on development | 6 | 13 | 14 | 27 | 31.6% | 30.0% |
+| 0.87, current default | 1 | 0 | 19 | 40 | 100% | 5.0% |
+
+A clearer candidate wording, “Is essential background information missing
+from this request such that a correct response requires asking the user or
+guessing?”, selected 0.50 on its development training split. On the same
+separate source holdout it produced 10 TP, 21 FP, 10 FN, and 19 TN: 32.3%
+precision and 50.0% recall. Neither the lower cutoff nor revised wording was
+adopted. The 0.87 default is retained to avoid a large increase in false
+flags, but its very low first-turn recall means it is **provisional**, not a
+validated general-purpose context detector. Source labels, balancing, and
+possible surrounding GitHub issue context remain limitations. The other
+question cutoffs and their required human labels are in the
+[threshold inventory](evaluation-threshold-inventory.md).
+
+The development and independent holdout dataset digests are
+`7509c4658a1b4cb7bb79d60ce0ec1d30863627cf9ab389a159fc26df405cd58a` and
+`23f0b2c62e8608f03fce0d20613de35727fefabdc82c65b6d86a4888c29ce9ac`.
+The original-wording holdout replay digest is
+`35c9e38c1a98394bb26cc1cabb6ccc8a76b44b96760829811dcd6eb0cb926067`.
+
+## Cross-task participant prompts and paired writers
+
+`scripts/prepare_rope_user_prompts.py` selected 12 participants by stable hash
+from the [ROPE user study](https://github.com/mqo00/rope), pinned to commit
+`1ada01830031e5882f2585577720b182deac6246`. Each participant wrote one
+prompt for each of four fixed tasks: Connect4, TicTacToe, OutlineAssistant,
+and TripAdvisor. These are **real participant-written prompts**, but the
+study's assigned tasks are narrower than spontaneous requests in a chat box.
+The original 48-case dataset digest is
+`4ec4d0d46c23f47ee273a4900794d9a5bf2de7c09ba75e415851724b4922aec5`.
+No source gap labels exist for these cases, so diagnosis accuracy is
+unavailable. Raw study text and provider recordings remain in ignored
+`.local/evaluation/`.
+
+Both writers completed all 48 Fast-tier live cases, and every case field
+matched strict replay. Thirteen prompts contained unresolved template
+placeholders; a fixed regex removed them **after** recording, leaving 35
+identical paired cases (9 Connect4, 11 TicTacToe, 10 OutlineAssistant, 5
+TripAdvisor). The screened dataset digest is
+`1f5ab3123b48442cddf2b26a58e8a84474772c2c785c5b1e303b6a56927ca539`.
+
+| Screened writer | Completed | Proposed tests | Accepted tests | Confirmed-gap cases | Cases with both gap and accepted test | Candidate/comparably scored cases | Improved | Unchanged | Regressed | Unavailable scores | Median latency | Metered OpenRouter cost |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Space Bunny Free | 35/35 | 179 | 52 | 3 | 1 | 1 | 0 | 1 | 0 | 34 | 38.8 s | $0.00822 |
+| DeepSeek V4.1 Flash | 35/35 | 220 | 111 | 3 | 2 | 2 | 0 | 2 | 0 | 33 | 16.7 s | $0.01010 |
+
+All three reached candidates failed Jev fidelity, so no candidate strong
+check ran and the original was retained. The two writers were both scored on
+**one** identical case; both were unchanged there. The other 34 pairwise
+outcomes are unavailable. The full unscreened 48-case runs scored 1 Space
+Bunny case and 3 DeepSeek cases, all unchanged; the screen is the more usable
+study cohort. A writer quality ranking or a representative improvement rate
+cannot be inferred from these denominators. DeepSeek was faster in this run;
+the cost columns are metered OpenRouter charges and omit unpriced OpenCode Go
+subscription consumption. Space Bunny remains the configured default.
+
+The Space Bunny replay digest is
+`ef76a04f936e1cc523b40568b2ff668bbc09907244368347edb3b08a6eb74cdf`;
+DeepSeek's is
+`9847ff0a2f74075536e0d87cc009ca6061510d44124623f41ec90047a028bb63`.
+The paired report is generated by `scripts/compare_writer_reports.py` and
+compares only jointly scored case IDs.
+
+## Real search requests with human clarification ratings
+
+`scripts/prepare_clariq.py --per-level 10` selected 40 unique
+[ClariQ](https://github.com/aliannejadi/ClariQ) initial search requests,
+ten at each of the source's human clarification-need ratings 1–4. Rating 1
+maps to no clarification needed; ratings 2–4 map to clarification needed.
+The source does **not** label specific optimizer checklist gaps. The local
+dataset digest is
+`9f77a0d601eddfd5f2fbae93bd11ee645ec7acb9c8ef4777bc873c2549f03387`.
+
+With clarification allowed, the default Fast-tier writer completed 40/40.
+The optimizer requested no clarification on any case: 0/30 true positives,
+0/10 false positives, and 30/30 missed source-rated needs. No case had
+comparable original-versus-winner weak-panel scores; improvement and
+regression are unavailable for all 40. Recorded metered OpenRouter cost for
+the completed paths was **$0.00437**, and median case latency was **26.8 s**;
+OpenCode Go subscription use has no per-call dollar price here. The source's
+search-clarification judgment is broader than an exact optimizer gap
+checklist, so this is a task-specific clarification audit, not proof that any
+particular `gap:*` threshold is miscalibrated.
+
+One first attempt failed at Space Bunny success-test response parsing after
+accruing $0.000085512 in recorded Jev charges and 27.2 seconds. A single-case
+live retry completed. Its recording was merged into the full strict replay;
+the other 39 case reports were identical to their first live reports, and the
+retry case matched its live retry. The final replay digest is
+`afb2b5089a40774ce8e176061fc63689429ca24cb1bfc6aaf1b673f1a8e799f2`.
+The failed attempt's charge and latency are **additional** to the completed
+path totals above.
+
+## Acceptance status and human dependency
+
+| Spec requirement | Evidence as of this report | Status |
+| --- | --- | --- |
+| 57, real prompts across task types | SOAR first-turn developer prompts, ClariQ search requests, and screened ROPE participant prompts across four fixed tasks | Cross-task real input measured; spontaneous general-use breadth remains limited |
+| 58, planted defects | Six controlled cases exercised live and replay; some hidden requirements cannot be judged from the visible prompt | Exploratory path coverage complete; not broad diagnosis gold |
+| 59, 100–200 real prompts labeled for actual checklist gaps | Corrected 150-session private batch has an offline human review form and validated import; no human checklist labels have been supplied | Waiting on human review |
+| 60, accuracy, improvement, regression, and cost | Narrow SOAR context and ClariQ clarification accuracy measured; all costs and scored denominators reported; candidate coverage is too low for representative outcome estimates | Partial; outcome estimates need human-validated tests/gaps and new live paths |
+| 61, each Jev threshold calibrated per exact question | Exact context question has a provisional source-based calibration and independent first-turn holdout; [inventory](evaluation-threshold-inventory.md) specifies remaining gold judgments | Waiting on question-specific human labels |
+| 62, recorded reproducibility | All completed SOAR, planted-pilot, ROPE, and ClariQ outcomes matched strict replay | Complete for measured paths |
+| 63, writer comparison by outcomes | Same 35 screened ROPE prompts, options, grading rules, and seed; one jointly scored unchanged case | Operational comparison complete; outcome ranking unavailable |
+
+The [private gap-review form and blinded success-test sheet](human-gap-review.md)
+are the concrete review artifacts. A human must inspect the source sessions
+and label at least 100 usable real prompts for actual checklist gaps, and
+judge at least 80 of the 100 blinded proposed success tests as faithful or
+unfaithful (with reviewer and date). These are the specific missing inputs;
+historical assistant answers or model guesses cannot substitute. Further
+sentence-level, inference, fidelity, grading, and strategy labels are listed
+in the threshold inventory for requirement 61. After those judgments, tune
+with held-out groups and rerun any changed optimizer paths live before
+claiming general improvement rates or a writer quality ranking.
+
+## Additional replay commands
+
+```sh
+uv run python scripts/screen_rope_cohort.py \
+  --input .local/evaluation/rope-original-48.json \
+  --output .local/evaluation/rope-screened.json
+uv run python -m prompt_enhancer.evaluation .local/evaluation/rope-screened.json \
+  --replay .local/evaluation/rope-bunny-replay.json --tier fast \
+  --output .local/evaluation/rope-bunny-screened-report.json
+uv run python -m prompt_enhancer.evaluation .local/evaluation/rope-screened.json \
+  --replay .local/evaluation/rope-deepseek-replay.json --tier fast \
+  --writer-model deepseek-v4.1-flash \
+  --output .local/evaluation/rope-deepseek-screened-report.json
+uv run python scripts/compare_writer_reports.py \
+  .local/evaluation/rope-bunny-screened-report.json \
+  .local/evaluation/rope-deepseek-screened-report.json \
+  --output .local/evaluation/rope-paired-comparison.json
+uv run python -m prompt_enhancer.evaluation .local/evaluation/clariq-40.json \
+  --replay .local/evaluation/clariq-40-complete-replay.json \
+  --tier fast --clarification-allowed \
+  --output .local/evaluation/clariq-40-complete-report.json
+```

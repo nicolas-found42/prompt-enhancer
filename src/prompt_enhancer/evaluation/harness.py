@@ -33,6 +33,9 @@ class Engine(Protocol):
     def optimize(self, prompt: str, options: dict[str, Any] | None = None) -> object:
         """Optimize one prompt."""
 
+    def resume(self, run_id: str, answers: dict[str, Any]) -> object:
+        """Continue a paused run with externally supplied answers."""
+
 
 EngineFactory = Callable[[Path | None], Engine]
 
@@ -381,9 +384,27 @@ class EvaluationHarness:
         started = perf_counter()
         try:
             result = _as_mapping(engine.optimize(case.prompt, options.optimize_options()))
+            requested_clarification = _status(result) == "needs_input"
+            resumed = False
+            answers = case.metadata.get("clarification_answers")
+            if requested_clarification and answers is not None:
+                provenance = case.metadata.get("clarification_answer_provenance")
+                if not isinstance(provenance, str) or provenance not in {"human", "source"}:
+                    raise EvaluationError(
+                        "clarification answers require human or source provenance"
+                    )
+                if not isinstance(answers, Mapping) or not answers or any(
+                    not isinstance(key, str) for key in answers
+                ):
+                    raise EvaluationError("clarification answers must be a non-empty object")
+                run_id = result.get("run_id")
+                if not isinstance(run_id, str) or not run_id:
+                    raise EvaluationError("paused engine result requires a run_id")
+                result = _as_mapping(engine.resume(run_id, dict(answers)))
+                resumed = True
             report = _as_mapping(result.get("report", {}))
             observation.predicted_gaps = _predicted_gaps(result, report)
-            if _status(result) == "needs_input":
+            if requested_clarification:
                 observation.predicted_gaps = tuple(sorted({*observation.predicted_gaps, "clarification_need"}))
             evaluation_gaps = case.metadata.get("evaluation_gaps")
             if isinstance(evaluation_gaps, list):
@@ -401,7 +422,7 @@ class EvaluationHarness:
                     observation.cost, observation.cost_by_role = replay.case_costs[case.id]
                 observation.latency_ms = replay.case_latency_ms.get(case.id)
             else:
-                observation.latency_ms = _latency_ms(result, report)
+                observation.latency_ms = None if resumed else _latency_ms(result, report)
                 if observation.latency_ms is None:
                     observation.latency_ms = (perf_counter() - started) * 1000
             observation.status = _status(result)

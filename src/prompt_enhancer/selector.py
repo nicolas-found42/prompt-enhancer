@@ -258,6 +258,9 @@ def _strong_decision(
             if isinstance(value, Mapping):
                 value = value.get(candidate.candidate_id)
     if value is None:
+        # Upstream fidelity can exclude a candidate before any strong-model run.
+        if not candidate.eligible:
+            return None, None
         passed_candidates = _field(strong_check, "passed_candidates", default=None)
         if passed_candidates is not None:
             if isinstance(passed_candidates, Mapping):

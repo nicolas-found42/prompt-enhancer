@@ -426,6 +426,7 @@ class PromptOptimizer:
                 )).to_dict(),
                 "eligible": fidelity.passed,
                 "rejection_reasons": [] if fidelity.passed else ["candidate failed fidelity checks"],
+                "metadata": {"fidelity": fidelity.to_dict()},
             }
             for candidate, grade in grades
         ]
