@@ -49,8 +49,8 @@ from .jev import NoulDecision, parse_decision
 from .models import (
     CostBreakdown,
     OptimizeResult,
+    Tier,
     new_run_id,
-    normalize_tier,
     utc_now,
 )
 from .repeat import RepeatCoordinator, RoundRequest, RoundRunner
@@ -209,7 +209,7 @@ class PromptOptimizer:
             selected_weak = (selected_weak,)
         if not isinstance(selected_weak, (list, tuple)) or not selected_weak or any(not isinstance(item, str) or not item for item in selected_weak):
             raise ValueError("weak model overrides must be a non-empty list")
-        count = {"fast": 2, "standard": 3, "deep": 5}[tier]
+        count = Tier.parse(tier).budget.models
         if len(set(selected_weak[:count])) != count:
             raise ValueError(f"weak panel for {tier} requires {count} distinct models")
         return replace(self.config, writer_model=writer, strong_check_model=strong, weak_models=tuple(selected_weak[:count]))
@@ -224,7 +224,7 @@ class PromptOptimizer:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
         supplied_options = _safe_options(options or {})
-        tier = normalize_tier(supplied_options.pop("tier", "standard"))
+        tier = Tier.parse(supplied_options.pop("tier", "standard")).value
         run_settings = self._run_settings(supplied_options, tier)
         run_seed = _run_seed(prompt, supplied_options.get("seed"))
         return supplied_options, tier, run_settings, run_seed
@@ -325,7 +325,7 @@ class PromptOptimizer:
                 prompt=context.prompt,
                 working_prompt=_prompt_with_assumptions(context.prompt, context.assumptions),
                 run_id=context.run_id,
-                tier=request.tier.value,
+                tier=request.tier,
                 seed=context.seed,
                 diagnosis=context.diagnosis,
                 assumptions=context.assumptions,

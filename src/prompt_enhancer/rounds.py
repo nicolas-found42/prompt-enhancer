@@ -161,6 +161,12 @@ class RoundOutcome:
     def selected_candidate_id(self) -> str | None:
         return self.ranking.selected_candidate_id if self.ranking is not None else None
 
+    @property
+    def selected_strategy(self) -> str | None:
+        """The rewrite strategy of the winning candidate, if one was selected."""
+        selected = self.ranking.selected if self.ranking is not None else None
+        return selected.strategy if selected is not None else None
+
     def report(self) -> dict[str, Any]:
         """The run report for this round, in the shape the web app and history read."""
         plan = self.plan
