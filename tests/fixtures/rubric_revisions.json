@@ -1,0 +1,131 @@
+{
+  "rubric": {
+    "version_id": "rubric-v1",
+    "questions": [
+      {
+        "question_id": "goal-specific",
+        "text": "Is the requested outcome stated as a concrete goal?",
+        "response_type": "noul",
+        "threshold": 0.8
+      },
+      {
+        "question_id": "clear-language",
+        "text": "Is every instruction unambiguous?",
+        "response_type": "noul",
+        "threshold": 0.7
+      },
+      {
+        "question_id": "no-contradiction",
+        "text": "Are the instructions free of contradictions?",
+        "response_type": "noul",
+        "threshold": 0.8
+      }
+    ],
+    "parent_version_id": null,
+    "created_at": "2026-01-01T00:00:00Z"
+  },
+  "evaluation_set": {
+    "identifier": "diagnosis-fixture-v1",
+    "input_digest": "sha256:fixture-v1",
+    "case_ids": [
+      "case-1",
+      "case-2",
+      "case-3",
+      "case-4"
+    ],
+    "replay_artifact": "replays/diagnosis-fixture-v1.json"
+  },
+  "errors": [
+    {
+      "error_id": "error-audience",
+      "evaluation_case_ids": [
+        "case-1",
+        "case-2"
+      ],
+      "current_question_id": null,
+      "proposed_question": {
+        "question_id": "audience-fit",
+        "text": "Is the intended audience explicit when it affects the answer?",
+        "response_type": "noul",
+        "threshold": 0.7
+      },
+      "observation": "Both failed prompts omitted an audience that changed the expected answer.",
+      "weight": 2.0,
+      "predictor_artifact": "predictor/model-v3.json"
+    },
+    {
+      "error_id": "error-vague-reference",
+      "evaluation_case_ids": [
+        "case-2"
+      ],
+      "current_question_id": "clear-language",
+      "proposed_question": {
+        "question_id": "clear-language",
+        "text": "Does every referenced noun, constraint, and requested action have one clear referent?",
+        "response_type": "noul",
+        "threshold": 0.8
+      },
+      "observation": "The broader clarity question missed a recurring unresolved-reference failure.",
+      "weight": 1.5,
+      "predictor_artifact": "predictor/model-v3.json"
+    },
+    {
+      "error_id": "error-contradiction-noise",
+      "evaluation_case_ids": [
+        "case-3",
+        "case-4"
+      ],
+      "current_question_id": "no-contradiction",
+      "proposed_question": null,
+      "observation": "The contradiction check produced more false positives than true findings.",
+      "weight": 2.0,
+      "predictor_artifact": "predictor/model-v3.json"
+    },
+    {
+      "error_id": "error-unchanged",
+      "evaluation_case_ids": [
+        "case-1"
+      ],
+      "current_question_id": "goal-specific",
+      "proposed_question": {
+        "question_id": "goal-specific",
+        "text": "Is the requested outcome stated as a concrete goal?",
+        "response_type": "noul",
+        "threshold": 0.8
+      },
+      "observation": "This question already performed as intended.",
+      "weight": 1.0,
+      "predictor_artifact": "predictor/model-v3.json"
+    }
+  ],
+  "baseline": {
+    "precision": 0.8,
+    "recall": 0.8,
+    "total_cost_usd": 0.1,
+    "regression_count": 1,
+    "case_count": 4
+  },
+  "candidates": {
+    "new": {
+      "precision": 0.85,
+      "recall": 0.85,
+      "total_cost_usd": 0.105,
+      "regression_count": 1,
+      "case_count": 4
+    },
+    "revised": {
+      "precision": 0.9,
+      "recall": 0.9,
+      "total_cost_usd": 0.1,
+      "regression_count": 1,
+      "case_count": 4
+    },
+    "dropped": {
+      "precision": 0.82,
+      "recall": 0.82,
+      "total_cost_usd": 0.11,
+      "regression_count": 2,
+      "case_count": 4
+    }
+  }
+}

@@ -158,12 +158,12 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 | Role | Default model | Route |
 |---|---|---|
 | Judge (fixed) | `typesafe/jev-1.13` | OpenRouter Decisions API |
-| Writer | `deepseek-v4.1-flash` | OpenCode Go |
+| Writer | `space-bunny-free` | OpenCode Go |
 | Strong check | `glm-5.3-flash` | OpenCode Go |
 | Weak panel | `meta-llama/llama-3.1-8b-instruct`, `mistralai/mistral-nemo`, `meta-llama/llama-3.2-3b-instruct` | OpenRouter |
-| Extra weak models on Deep | `mimo-v2.6-flash`, `qwen3.8-flash` | OpenCode Go |
+| Extra weak models on Deep | `mimo-v2.6-flash`, `muse-spark-1.3-contributor` | OpenCode Go |
 
-- Excluded from defaults: Go's Muse Spark models (they train on prompts) and GPT 5.6 Luna (keeps data for 30 days).
+- Muse Spark 1.3 Contributor is included in Deep by explicit user choice. OpenCode Go marks it as training on prompts and not zero data retention. GPT 5.6 Luna remains excluded from defaults.
 - GLM 5.3 Flash is the strong reference by design. No frontier-model check runs per prompt or on a schedule.
 - Every role except the judge can be changed in the picker. Choices are saved as defaults and can be overridden per run.
 
@@ -229,7 +229,7 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
   - Probabilities depend on exact wording, so thresholds can't be reused across differently worded questions.
   - Every `choice` needs an explicit "unknown" or "none" option, because without one the model answers confidently and wrongly.
 - **Weak → strong transfer is a floor, not a guarantee.** Prompt preferences are fairly consistent across model sizes (S2LPP, arXiv 2505.20097). But strict rule-based prompting that helps mid-tier models can hurt the strongest ones ("prompting inversion", arXiv 2510.22251), and explicit step-by-step reasoning can reduce instruction-following (arXiv 2505.11423). This is why the strong check and the crutch rule exist.
-- **OpenCode Go usage policy risk (accepted).** Go says it is designed for coding-agent traffic and monitors for abuse. This tool's traffic is not coding-agent traffic, so the account could be flagged or throttled. The user chose Go for every model it offers anyway; the gateway sends the required headers. The DeepSeek V4.1 Flash 4× promo ends 2026-09-27, after which its monthly cap is $15 (still roughly 5,000 writer calls).
-- **Cost:** a Standard run is estimated at about $0.006. Writer and strong check come out of Go caps; the weak panel is ~$0.002 on OpenRouter; Jev is ~$0.0001.
+- **OpenCode Go usage policy risk (accepted).** Go says it is designed for coding-agent traffic and monitors for abuse. This tool's traffic is not coding-agent traffic, so the account could be flagged or throttled. The user chose Go for every model it offers anyway; the gateway sends the required headers.
+- **Cost:** Writer and strong check come out of Go caps; the small weak panel and Jev are paid through OpenRouter. Live benchmark reports provide the measured cost for the selected writer.
 - **Prior art studied:** pi-prompt-enhancer (Jev gap checklist, fail-open, confident-gaps-only scoring), prompt-oscilloscope (Jev prompt analysis, debounce, hash caching, local secret checks), mimicry and Lossless Rewrite (LLM rewrites, Jev checks meaning in a bounded loop), and OpenRouter's Jev-verified cascade and "prompt to questions" lab.
 - The research note in `docs/research/` from before this interview says the repository was empty and that "Jev" was undefined. This spec supersedes it.
