@@ -52,6 +52,14 @@ class Settings:
             ),
         )
 
+    def model_roles(self) -> dict[str, Any]:
+        return {
+            "judge": self.judge_model,
+            "writer": self.writer_model,
+            "strong": self.strong_check_model,
+            "weak": list(self.weak_models),
+        }
+
     def public_dict(self) -> dict[str, Any]:
         return {
             "judge_model": self.judge_model,
