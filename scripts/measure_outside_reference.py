@@ -16,7 +16,7 @@ from evaluation_review_common import save_json
 
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import DEFAULT_RUBRIC, default_gap_question
-from prompt_enhancer.gateway import GatewayConfig, ModelGateway
+from prompt_enhancer.gateway import GatewayConfig, HttpGateway
 
 CUTOFFS = (0.9, 0.85, 0.8, 0.75)
 
@@ -29,10 +29,10 @@ def measure(dataset: dict[str, Any], decisions_path: Path) -> None:
         raise ValueError("decisions belong to a different dataset or question wording")
     done = {row["case_id"] for row in saved["rows"]}
     todo = [case for case in dataset["cases"] if case["id"] not in done]
-    gateway = ModelGateway(config=GatewayConfig.from_env())
+    gateway = HttpGateway(config=GatewayConfig.from_env())
     for start in range(0, len(todo), 20):
         chunk = todo[start:start + 20]
-        answers = gateway.jev_batch([
+        answers = gateway.decide_batch([
             {"model": JEV_MODEL, "query": question, "state": {"prompt": case["prompt"]},
              "type": "noul", "key": f"gap:outside_reference:{case['id']}"}
             for case in chunk

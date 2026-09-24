@@ -334,7 +334,7 @@ class Diagnoser:
         return self._rubric()
 
     def _decide(self, requests: Sequence[Mapping[str, Any]]) -> tuple[JevDecision, ...]:
-        batch = getattr(self.gateway, "jev_batch", None)
+        batch = getattr(self.gateway, "decide_batch", None)
         raw_responses = batch(requests) if callable(batch) else [self.gateway.jev(request) for request in requests]
         try:
             return tuple(parse_decision(response) for response in raw_responses)

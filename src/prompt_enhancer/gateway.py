@@ -38,17 +38,53 @@ ACCESS_DENIED_STATUS = {401, 402, 403}
 PROVIDER_STATUS_TTL = 600.0
 
 
+class Gateway(Protocol):
+    """The single way the engine reaches any model.
+
+    Answers are returned raw, exactly as recordings store them; callers read
+    them with ``completion_text`` and ``jev.parse_decision``. Every adapter
+    raises ``ProviderError`` when a model cannot be reached or its reply cannot
+    be used.
+    """
+
+    def chat(
+        self,
+        model: str,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        role: str,
+        run_id: str | None = None,
+        **params: Any,
+    ) -> Any: ...
+
+    def decide(self, request: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any: ...
+
+    def decide_batch(
+        self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None
+    ) -> list[Any]: ...
+
+    def new_run(self, run_id: str | None = None) -> str: ...
+
+    def usage_report(self) -> dict[str, Any]: ...
+
+    @property
+    def decision_log(self) -> list[dict[str, Any]]: ...
+
+
+def writer_messages(instructions: str, state: Any = None) -> list[dict[str, str]]:
+    """Messages for a writer call: instructions as system, untrusted state as JSON."""
+    if state is None:
+        return [{"role": "user", "content": instructions}]
+    return [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)},
+    ]
+
+
 def _completion_chat_request(request: Mapping[str, Any]) -> tuple[str, list[dict[str, str]], str]:
     """Translate a stateful completion request into the shared chat shape."""
-    model = str(request.get("model", ""))
-    instructions = str(request.get("instructions", ""))
-    state = request.get("state")
-    messages = (
-        [{"role": "system", "content": instructions}, {"role": "user", "content": json.dumps(state, ensure_ascii=False, sort_keys=True)}]
-        if state is not None
-        else [{"role": "user", "content": instructions}]
-    )
-    return model, messages, str(request.get("role", "writer"))
+    messages = writer_messages(str(request.get("instructions", "")), request.get("state"))
+    return str(request.get("model", "")), messages, str(request.get("role", "writer"))
 
 
 class GatewayTransport(Protocol):
@@ -177,7 +213,7 @@ class HttpTransport:
             body = exc.read() if hasattr(exc, "read") else b""
             return {"status_code": exc.code, "json": _decode_body(body), "headers": dict(exc.headers.items())}
         # URLError, timeout, and connection errors intentionally propagate to
-        # ModelGateway, which retries and wraps them as ProviderError.
+        # HttpGateway, which retries and wraps them as ProviderError.
 
 
 def json_module_dumps(value: Any) -> str:
@@ -214,7 +250,7 @@ def _response_json(response: Any) -> Any:
     return value() if callable(value) else value
 
 
-class ModelGateway:
+class HttpGateway:
     """Route chat and Jev requests while tracking usage by role."""
 
     def __init__(
@@ -249,7 +285,7 @@ class ModelGateway:
         self._provider_status: dict[str, dict[str, Any]] = {}
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str] | None = None, **kwargs: Any) -> ModelGateway:
+    def from_env(cls, environ: Mapping[str, str] | None = None, **kwargs: Any) -> HttpGateway:
         return cls(transport=kwargs.pop("transport", None), config=GatewayConfig.from_env(environ), **kwargs)
 
     @property
@@ -508,7 +544,7 @@ class ModelGateway:
     decision = decide
     jev = decide
 
-    def jev_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
+    def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
         if not requests:
             return []
         keys, envelope = batch_decision_payload(requests, model=JEV_MODEL)
@@ -604,7 +640,7 @@ class ScriptedGateway:
     decision = decide
     jev = decide
 
-    def jev_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
+    def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
         return [self.jev(request, role=role, run_id=run_id) for request in requests]
     def list_models(self, *, refresh: bool = False) -> CatalogSnapshot:
         return self.catalog.fetch(force=refresh) if hasattr(self.catalog, "fetch") else self.catalog
@@ -613,7 +649,7 @@ class ScriptedGateway:
         del probe_models
         return {}
 
-    usage_report = ModelGateway.usage_report
+    usage_report = HttpGateway.usage_report
 
 
 class ReplayGateway(ScriptedGateway):
@@ -685,12 +721,14 @@ class ReplayGateway(ScriptedGateway):
 __all__ = [
     "DEFAULT_GO_BASE_URL",
     "DEFAULT_OPENROUTER_BASE_URL",
+    "Gateway",
     "GatewayConfig",
     "GatewayTransport",
     "HttpTransport",
-    "ModelGateway",
+    "HttpGateway",
     "ProviderError",
     "ReplayGateway",
     "RouteDecision",
     "ScriptedGateway",
+    "writer_messages",
 ]

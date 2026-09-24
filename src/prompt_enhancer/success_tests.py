@@ -101,7 +101,7 @@ class SuccessTestCompiler:
         if not proposed:
             return CompiledSuccessTests((), (), ())
 
-        batch = getattr(self.gateway, "jev_batch", None)
+        batch = getattr(self.gateway, "decide_batch", None)
         requests = [
             {
                 "model": "typesafe/jev-1.13",

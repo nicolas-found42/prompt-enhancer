@@ -72,7 +72,7 @@ class Clarifier:
         choices: dict[str, ChoiceDecision] = {}
         if requests:
             try:
-                answers = self.gateway.jev_batch(requests, role="judge", run_id=run_id)
+                answers = self.gateway.decide_batch(requests, role="judge", run_id=run_id)
                 for request, answer in zip(requests, answers, strict=True):
                     decision = parse_decision(answer)
                     if isinstance(decision, ChoiceDecision):

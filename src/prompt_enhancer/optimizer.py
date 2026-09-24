@@ -1,7 +1,7 @@
 """Public local optimization engine.
 
 The facade is deliberately dependency-injected. Production can provide a
-ModelGateway; tests and local demos can provide ScriptedGateway or ReplayGateway.
+HttpGateway; tests and local demos can provide ScriptedGateway or ReplayGateway.
 The public result always includes the original prompt, evidence, cost, timing,
 and a durable run identifier.
 """
@@ -41,7 +41,7 @@ from .fidelity import check_candidate_fidelity
 from .gateway import (
     GatewayConfig,
     HttpTransport,
-    ModelGateway,
+    HttpGateway,
     ProviderError,
     ScriptedGateway,
 )
@@ -187,7 +187,7 @@ class PromptOptimizer:
             go_api_key=gateway_config.go_api_key,
             openrouter_api_key=gateway_config.openrouter_api_key,
         )
-        return ModelGateway(transport, config=gateway_config, catalog=catalog)
+        return HttpGateway(transport, config=gateway_config, catalog=catalog)
 
     def _clarification_repository(self) -> Any:
         if self.store.path == ":memory:":
@@ -588,7 +588,7 @@ class PromptOptimizer:
         ]
         if not questions:
             return replace(report, rubric_version=rubric.version_id)
-        responses = self.gateway.jev_batch(questions)
+        responses = self.gateway.decide_batch(questions)
         gaps = list(report.confirmed_gaps)
         default_impacts = {item.key: item.impact for task in DEFAULT_RUBRIC.task_types for item in task.checklist}
         for item, response in zip(rubric.questions, responses, strict=True):

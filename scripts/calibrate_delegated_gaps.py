@@ -18,7 +18,7 @@ from human_gap_review import GAPS, TASK_GAPS
 
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import DEFAULT_RUBRIC, default_gap_question
-from prompt_enhancer.gateway import GatewayConfig, ModelGateway
+from prompt_enhancer.gateway import GatewayConfig, HttpGateway
 
 
 def _probability(answer: Any) -> float:
@@ -44,7 +44,7 @@ def measure(dataset_path: Path, decisions_path: Path) -> None:
     if saved["dataset_name"] != dataset["name"]:
         raise ValueError("decisions belong to a different dataset")
     done = {row["case_id"] for row in saved["rows"]}
-    gateway = ModelGateway(config=GatewayConfig.from_env())
+    gateway = HttpGateway(config=GatewayConfig.from_env())
     for case in cases:
         if case["id"] in done:
             continue
@@ -53,7 +53,7 @@ def measure(dataset_path: Path, decisions_path: Path) -> None:
              "state": {"prompt": case["prompt"]}, "type": "noul", "key": f"gap:{gap}"}
             for gap in TASK_GAPS[case["task_stratum"]]
         ]
-        answers = gateway.jev_batch(questions)
+        answers = gateway.decide_batch(questions)
         if len(answers) != len(questions):
             raise ValueError(f"wrong Jev answer count for {case['id']}")
         saved["rows"].append({"case_id": case["id"], "source_group": case["source_group"],

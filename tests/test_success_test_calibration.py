@@ -12,7 +12,7 @@ def test_calibrated_faithfulness_gate_accepts_boundary_probability() -> None:
                 {"id": "rejected", "question": "Does the response add a chart?", "kind": "noul", "expected": "yes"},
             ]})}}]}
 
-        def jev_batch(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        def decide_batch(self, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
             assert [request["key"] for request in requests] == ["faithful:accepted", "faithful:rejected"]
             return [{"type": "noul", "noul": 0.8}, {"type": "noul", "noul": 0.79}]
 

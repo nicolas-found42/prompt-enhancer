@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from prompt_enhancer.api import create_app, run_estimates
 from prompt_enhancer.gateway import (
     GatewayConfig,
-    ModelGateway,
+    HttpGateway,
     ProviderError,
     ScriptedGateway,
 )
@@ -117,7 +117,7 @@ def test_provider_probe_marks_a_refused_provider_unavailable_without_recording_c
         def request(self, url, **_kwargs):
             return {"status_code": 403, "json": {}}
 
-    gateway = ModelGateway(Transport(), config=GatewayConfig(), go_models=["go-writer"])
+    gateway = HttpGateway(Transport(), config=GatewayConfig(), go_models=["go-writer"])
 
     health = gateway.provider_health(probe_models=["go-writer"])
 

@@ -14,7 +14,7 @@ from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import default_gap_question
 from prompt_enhancer.evaluation.datasets import load_dataset
 from prompt_enhancer.evaluation.recording import RecordingGateway
-from prompt_enhancer.gateway import GatewayConfig, ModelGateway, ReplayGateway
+from prompt_enhancer.gateway import GatewayConfig, HttpGateway, ReplayGateway
 from prompt_enhancer.jev import NoulDecision, parse_decision
 
 
@@ -29,7 +29,7 @@ def main() -> None:
     reused = json.loads(args.reuse.read_text(encoding="utf-8")).get("responses", {}) if args.reuse else {}
     if not isinstance(reused, dict):
         raise TypeError("reuse replay requires response object")
-    recording = RecordingGateway(ModelGateway(config=GatewayConfig.from_env()), args.record)
+    recording = RecordingGateway(HttpGateway(config=GatewayConfig.from_env()), args.record)
     if args.record.exists():
         prior = json.loads(args.record.read_text(encoding="utf-8"))
         recording.responses.update(prior.get("responses", {}))

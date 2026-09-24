@@ -101,8 +101,8 @@ class RecordingGateway:
     decision = decide
     jev = decide
 
-    def jev_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
-        answers = self.gateway.jev_batch(requests, role=role, run_id=run_id)
+    def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
+        answers = self.gateway.decide_batch(requests, role=role, run_id=run_id)
         for request, answer in zip(requests, answers, strict=True):
             self._record("decide", JEV_MODEL, dict(request), role, answer)
         return answers

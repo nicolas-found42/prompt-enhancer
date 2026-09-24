@@ -44,7 +44,7 @@ def check_candidate_fidelity(
         for name, question in _CHECKS.items()
     ]
     try:
-        answers = gateway.jev_batch(requests, role="judge", run_id=run_id)
+        answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
         decisions = [parse_decision(answer) for answer in answers]
         if len(decisions) != len(_CHECKS) or any(not isinstance(answer, NoulDecision) for answer in decisions):
             raise ValueError("incomplete fidelity response")

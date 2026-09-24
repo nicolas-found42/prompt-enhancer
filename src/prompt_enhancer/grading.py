@@ -308,7 +308,7 @@ def grade_panel_with_jev(
                     **({"criteria": list(reversed(options) if second else options)} if kind == "score" else {}),
                 })
     responses: list[Any] = []
-    batch = getattr(gateway, "jev_batch", None)
+    batch = getattr(gateway, "decide_batch", None)
     for offset in range(0, len(requests), 40):
         chunk = requests[offset : offset + 40]
         responses.extend(

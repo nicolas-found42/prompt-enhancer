@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from prompt_enhancer.catalog import JEV_MODEL, LiveModelCatalog, parse_catalog
-from prompt_enhancer.gateway import GatewayConfig, ModelGateway
+from prompt_enhancer.gateway import GatewayConfig, HttpGateway
 
 
 class CatalogTransport:
@@ -36,7 +36,7 @@ def test_live_catalog_decodes_both_providers_and_never_exposes_keys():
 
 
 def test_unknown_model_routes_openrouter_even_without_catalog():
-    gateway = ModelGateway(config=GatewayConfig(max_retries=0))
+    gateway = HttpGateway(config=GatewayConfig(max_retries=0))
     assert gateway.route_model("unknown-model").provider == "openrouter"
     assert gateway.route_model(JEV_MODEL).provider == "openrouter"
 
