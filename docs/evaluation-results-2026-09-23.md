@@ -1,5 +1,10 @@
 # SOAR live evaluation, 2026-09-23
 
+The later [delegated-review follow-up](delegated-evaluation-2026-09-23.md)
+completes the two review materials, reruns the changed faithfulness paths,
+and updates the acceptance matrix. Historical measurements below remain as
+recorded; statements about pending review reflect the earlier stage.
+
 ## Method
 
 The [SOAR Lab prompt knowledge gap corpus](https://github.com/SOAR-Lab/prompt-knowledge-gap)
@@ -288,28 +293,15 @@ retry case matched its live retry. The final replay digest is
 The failed attempt's charge and latency are **additional** to the completed
 path totals above.
 
-## Acceptance status and human dependency
+## Acceptance status
 
-| Spec requirement | Evidence as of this report | Status |
-| --- | --- | --- |
-| 57, real prompts across task types | SOAR first-turn developer prompts, ClariQ search requests, and screened ROPE participant prompts across four fixed tasks | Cross-task real input measured; spontaneous general-use breadth remains limited |
-| 58, planted defects | Six controlled cases exercised live and replay; some hidden requirements cannot be judged from the visible prompt | Exploratory path coverage complete; not broad diagnosis gold |
-| 59, 100–200 real prompts labeled for actual checklist gaps | Corrected 150-session private batch has an offline human review form and validated import; no human checklist labels have been supplied | Waiting on human review |
-| 60, accuracy, improvement, regression, and cost | Narrow SOAR context and ClariQ clarification accuracy measured; all costs and scored denominators reported; candidate coverage is too low for representative outcome estimates | Partial; outcome estimates need human-validated tests/gaps and new live paths |
-| 61, each Jev threshold calibrated per exact question | Exact context question has a provisional source-based calibration and independent first-turn holdout; [inventory](evaluation-threshold-inventory.md) specifies remaining gold judgments | Waiting on question-specific human labels |
-| 62, recorded reproducibility | All completed SOAR, planted-pilot, ROPE, and ClariQ outcomes matched strict replay | Complete for measured paths |
-| 63, writer comparison by outcomes | Same 35 screened ROPE prompts, options, grading rules, and seed; one jointly scored unchanged case | Operational comparison complete; outcome ranking unavailable |
-
-The [private gap-review form and blinded success-test sheet](human-gap-review.md)
-are the concrete review artifacts. A human must inspect the source sessions
-and label at least 100 usable real prompts for actual checklist gaps, and
-judge at least 80 of the 100 blinded proposed success tests as faithful or
-unfaithful (with reviewer and date). These are the specific missing inputs;
-historical assistant answers or model guesses cannot substitute. Further
-sentence-level, inference, fidelity, grading, and strategy labels are listed
-in the threshold inventory for requirement 61. After those judgments, tune
-with held-out groups and rerun any changed optimizer paths live before
-claiming general improvement rates or a writer quality ranking.
+This section's earlier human-review dependency was resolved by the user's
+explicit delegation of both pending judgments to Codex. The current
+[acceptance matrix and provenance](delegated-evaluation-2026-09-23.md#acceptance-matrix)
+distinguish user-delegated model labels from source or human annotations and
+show which empirical limits remain. No further review form is required to
+use the app. The result still does not support a representative improvement
+rate or a writer quality ranking where comparable outcomes are scarce.
 
 ## Additional replay commands
 

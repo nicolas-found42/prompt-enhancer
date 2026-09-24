@@ -172,3 +172,33 @@ placeholders before reporting a 35-case cross-task outcome probe. All prompts
 from one participant were initially selected together. The study tasks remain
 narrow and the prompts were written for a study rather than observed in
 ordinary chat use.
+
+### User-delegated gap judgments (2026-09-23)
+
+The user delegated both pending review sheets to Codex and instructed that
+those decisions be used as this project's ground truth. The judgments retain
+`user_delegated_model` provenance throughout; they are not source annotations
+or human inter-rater validation. `scripts/review_public_prompt_gaps.py` labels
+the 99 screened original ROPE prompts from all 30 study participants and the
+40 selected ClariQ initial queries. Every row retains the source dataset and
+ROPE participant or ClariQ query group. GLM 5.3 Flash on OpenCode Go made the
+task and gap judgments using the actual prompt without seeing the source's
+clarification-need rating. There are 139 labeled real prompts across coding,
+writing, planning, general, chat, and research strata; 101 have no asserted
+checklist gap. The source prompts, model responses, and resulting dataset stay
+under ignored `.local/evaluation/`.
+
+The private agent-session batch was also corrected before delegated review.
+`scripts/repair_claude_review_batch.py` replaced 18 Claude metadata or
+sidechain selections with main-session first user turns. The original batch
+was backed up under ignored `.local/evaluation/`. Replacements are ranked
+across every Claude session present when the script runs, so a later rerun
+picks different sessions (a rerun on 2026-09-23 differed in 14 cases). The
+stored `.local/evaluation/local-agent-review-batch.json` is the reviewed
+batch of record; its digest is checked at import. The review script checks
+that each selected turn occurs in its original main session, supplies up to
+two preceding user turns with intervening assistant messages, and excludes a
+case when its needed context cannot be reconstructed. Original results are
+reviewer context, never gold answers. The full private prompts and responses
+remain local. This cohort is reported separately from the public 139, because
+its many context-dependent exclusions change the denominator.
