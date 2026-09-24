@@ -13,6 +13,7 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -78,25 +79,67 @@ def _clarification_gateway() -> ScriptedGateway:
     return ScriptedGateway(chat=chat, decision=decide)
 
 
-def _full_pipeline(optimizer: PromptOptimizer) -> None:
-    optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})
+def _no_candidate_beats_gateway() -> ScriptedGateway:
+    base = _pipeline_gateway().decision_handler
+
+    def decide(request, **kwargs):
+        answer = base(request, **kwargs)
+        # Grading asks each yes/no test twice, the second time reversed.
+        if str(request.get("key", "")).endswith("_second"):
+            return {**answer, "probability_true": 1.0 - answer["probability_true"]}
+        return answer
+
+    def only_original_passes(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Rewrite one","specify_output_format":"Rewrite two","add_done_criteria":"Rewrite three","remove_contradictions":"Rewrite four","add_example":"Rewrite five","split_into_steps":"Rewrite six"}'
+        return "pass" if messages[0]["content"] == "Original request" else "fail"
+
+    return ScriptedGateway(chat=only_original_passes, decision=decide)
 
 
-def _deep_pass(optimizer: PromptOptimizer) -> None:
+def _no_strategy_gateway() -> ScriptedGateway:
+    gateway = _pipeline_gateway()
+    decide = gateway.decision_handler
+
+    def reject_every_strategy(request, **kwargs):
+        if str(request.get("key", "")).startswith("strategy_recheck:"):
+            return {"type": "noul", "probability_true": 0.0, "confidence": 1.0}
+        return decide(request, **kwargs)
+
+    return ScriptedGateway(chat=gateway.chat_handler, decision=reject_every_strategy)
+
+
+def _kept_over_two_rounds(optimizer: PromptOptimizer) -> list[Any]:
+    return [optimizer.optimize("Original request", {"tier": "standard", "clarification_allowed": False})]
+
+
+def _no_strategy(optimizer: PromptOptimizer) -> list[Any]:
+    return [optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})]
+
+
+def _full_pipeline(optimizer: PromptOptimizer) -> list[Any]:
+    return [optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})]
+
+
+def _deep_pass(optimizer: PromptOptimizer) -> list[Any]:
     first = optimizer.optimize("Write a clear report.", {"tier": "fast", "clarification_allowed": False})
-    optimizer.start_deep_pass(first["run_id"])
+    return [first, optimizer.start_deep_pass(first["run_id"])]
 
 
-def _clarify_resume_edit(optimizer: PromptOptimizer) -> None:
+def _clarify_resume_edit(optimizer: PromptOptimizer) -> list[Any]:
     pending = optimizer.optimize("Write a concise report.")
-    optimizer.resume(pending["run_id"], {"goal": "summarize"})
-    optimizer.update_assumption(pending["run_id"], {"key": "goal", "value": "analyze"})
+    resumed = optimizer.resume(pending["run_id"], {"goal": "summarize"})
+    edited = optimizer.update_assumption(pending["run_id"], {"key": "goal", "value": "analyze"})
+    return [pending, resumed, edited]
 
 
-SCENARIOS: dict[str, tuple[Callable[[], ScriptedGateway], Callable[[PromptOptimizer], None]]] = {
+# Each scenario returns every public result it produced, in order.
+SCENARIOS: dict[str, tuple[Callable[[], ScriptedGateway], Callable[[PromptOptimizer], list[Any]]]] = {
     "full_pipeline": (_pipeline_gateway, _full_pipeline),
     "deep_pass": (_deep_gateway, _deep_pass),
     "clarify_resume_edit": (_clarification_gateway, _clarify_resume_edit),
+    "kept_over_two_rounds": (_no_candidate_beats_gateway, _kept_over_two_rounds),
+    "no_strategy": (_no_strategy_gateway, _no_strategy),
 }
 
 
