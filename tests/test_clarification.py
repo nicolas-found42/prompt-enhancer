@@ -163,3 +163,42 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
     assert "Details: the 5-year warranty" in done["final_prompt"]
     assert done["report"]["assumptions"][0]["label"] == "details only you know"
     assert done["timing"]["total_ms"] >= 0
+
+
+def test_unknown_context_is_asked_about_and_the_answer_reads_as_plain_text() -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+    from prompt_enhancer.optimizer import PromptOptimizer
+    from prompt_enhancer.store import RunStore
+
+    def chat(_model, _messages, *, role, **_kwargs):
+        return '{"gaps":{"context":{"question":"What hours did you work?","options":[{"value":"total","label":"Total hours"}]}},"tests":[]}'
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            choice = "writing" if request.get("key") == "task_type" else "unknown"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+        probability = 0.86 if request.get("key") == "gap:context" else 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide))
+    paused = optimizer.optimize("Email my boss about the hours I worked today.", {"tier": "fast"})
+
+    assert paused["status"] == "needs_input"
+    assert paused["questions"][0]["id"] == "context"
+    done = optimizer.resume(paused["run_id"], {"context": {"value": "other", "text": "8:30 to 5:15"}})
+    assert "Context: 8:30 to 5:15" in done["final_prompt"]
+    assert "context:" not in done["final_prompt"]
+
+
+@pytest.mark.parametrize(("keys", "mentions_outside_reference"), [
+    (("goal",), False), (("goal", "outside_reference"), True),
+])
+def test_clarifier_instruction_mentions_outside_reference_only_when_asked(
+    keys: tuple[str, ...], mentions_outside_reference: bool
+) -> None:
+    from prompt_enhancer.clarifier import _instructions
+    from prompt_enhancer.diagnosis import ConfirmedGap, GapImpact
+
+    gaps = [ConfirmedGap(key, key, GapImpact.HIGH, 0.95, 0.95, 0.9) for key in keys]
+
+    assert ("For outside_reference" in _instructions(gaps)) is mentions_outside_reference

@@ -12,6 +12,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol, cast
 
+from ..diagnosis import GapImpact
 from ..rewrite import WRITER_INSTRUCTION_VERSIONS
 from .datasets import (
     Dataset,
@@ -265,6 +266,7 @@ class _ReplayBundle:
     writer_instruction_version: int = HISTORICAL_WRITER_INSTRUCTION_VERSION
     faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
     checklist_keys: tuple[str, ...] | None = None
+    checklist_impacts: Mapping[str, str] | None = None
 
 
 @dataclass(slots=True)
@@ -453,8 +455,10 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
     from ..diagnosis import (
         DEFAULT_RUBRIC,
         HISTORICAL_CHECKLIST_EXCLUSIONS,
+        HISTORICAL_CHECKLIST_IMPACTS,
         checklist_keys,
         restrict_checklist,
+        with_impacts,
     )
     from ..optimizer import PromptOptimizer
 
@@ -472,6 +476,9 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
     if recorded_keys is None:
         recorded_keys = tuple(key for key in checklist_keys(rubric) if key not in HISTORICAL_CHECKLIST_EXCLUSIONS)
     rubric = restrict_checklist(rubric, recorded_keys)
+    rubric = with_impacts(
+        rubric, bundle.checklist_impacts if bundle.checklist_impacts is not None else HISTORICAL_CHECKLIST_IMPACTS
+    )
     return PromptOptimizer(
         gateway=ReplayGateway(recordings, strict=True),
         diagnosis_rubric=rubric,
@@ -498,6 +505,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         writer_version = raw.get("writer_instruction_version", HISTORICAL_WRITER_INSTRUCTION_VERSION)
         faithfulness = raw.get("faithfulness_threshold", HISTORICAL_FAITHFULNESS_THRESHOLD)
         raw_checklist = raw.get("checklist_keys")
+        raw_impacts = raw.get("checklist_impacts")
     else:
         recordings = replay_path
         raw_latencies = {}
@@ -506,6 +514,12 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         writer_version = HISTORICAL_WRITER_INSTRUCTION_VERSION
         faithfulness = HISTORICAL_FAITHFULNESS_THRESHOLD
         raw_checklist = None
+        raw_impacts = None
+    if raw_impacts is not None and (
+        not isinstance(raw_impacts, Mapping)
+        or any(not isinstance(key, str) or value not in {impact.value for impact in GapImpact} for key, value in raw_impacts.items())
+    ):
+        raise EvaluationError("replay checklist_impacts must map question ids to known impacts")
     if raw_checklist is not None and (not isinstance(raw_checklist, list) or any(not isinstance(key, str) or not key for key in raw_checklist)):
         raise EvaluationError("replay checklist_keys must be a list of question ids")
     if isinstance(writer_version, bool) or writer_version not in WRITER_INSTRUCTION_VERSIONS:
@@ -552,6 +566,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         writer_instruction_version=writer_version,
         faithfulness_threshold=float(faithfulness),
         checklist_keys=tuple(raw_checklist) if raw_checklist is not None else None,
+        checklist_impacts=dict(raw_impacts) if raw_impacts is not None else None,
     )
 
 

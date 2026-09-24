@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from prompt_enhancer import PromptOptimizer, RunStore
@@ -66,10 +68,10 @@ def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_thresho
 
     diagnosis = result.get("diagnosis") or result["report"]["diagnosis"]
     assert [gap["key"] for gap in diagnosis["confirmed_gaps"]] == ["context"]
-    assert diagnosis["confirmed_gaps"][0]["threshold"] == 0.87
+    assert diagnosis["confirmed_gaps"][0]["threshold"] == 0.83
 
 
-@pytest.mark.parametrize(("probability", "hinted"), [(0.86, True), (0.7, False)])
+@pytest.mark.parametrize(("probability", "hinted"), [(0.78, True), (0.7, False)])
 def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(probability: float, hinted: bool) -> None:
     prompt = "Tell the warehouse team about the new rules for the vans. Keep it short."
 
@@ -92,11 +94,57 @@ def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(probabil
     if hinted:
         assert diagnosis["possible_gaps"] == [{
             "key": "outside_reference", "label": "details only you know",
-            "missing_probability": probability, "threshold": 0.9,
+            "missing_probability": probability, "threshold": 0.8,
             "sentence": "Tell the warehouse team about the new rules for the vans.",
         }]
     else:
         assert diagnosis["possible_gaps"] == []
+
+
+@pytest.mark.parametrize(("key", "probability", "confirmed"), [
+    ("context", 0.83, True), ("context", 0.82, False),
+    ("outside_reference", 0.8, True), ("outside_reference", 0.79, False),
+])
+def test_recalibrated_gap_cutoffs_confirm_at_their_boundary(key: str, probability: float, confirmed: bool) -> None:
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            choice = "general" if request.get("key") == "task_type" else "none"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+        return {"type": "noul", "probability_true": probability if request.get("key") == f"gap:{key}" else 0.01}
+
+    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide)
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Tell the team about the new rules.", {"tier": "fast", "clarification_allowed": False})
+
+    keys = [gap["key"] for gap in result["report"]["diagnosis"]["confirmed_gaps"]]
+    assert (key in keys) is confirmed
+
+
+def test_possible_gaps_never_reach_model_requests() -> None:
+    sent: list[str] = []
+
+    def chat(_model, messages, *, role, **_kwargs):
+        sent.append(json.dumps(messages, sort_keys=True))
+        if role == "writer":
+            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Rewrite"}'
+        return "An answer."
+
+    def decide(request, **_kwargs):
+        sent.append(json.dumps(request, sort_keys=True))
+        key = str(request.get("key", ""))
+        if request.get("type") == "choice":
+            choice = "general" if key == "task_type" else "none"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+        probability = {"gap:goal": 0.99, "gap:outside_reference": 0.78}.get(key, 1.0 if key.startswith("faithful:") else 0.01)
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    gateway = ScriptedGateway(chat=chat, decision=decide)
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        "Tell the team about the new rules.", {"tier": "fast", "clarification_allowed": False})
+
+    assert [gap["key"] for gap in result["report"]["diagnosis"]["possible_gaps"]] == ["outside_reference"]
+    assert any('"strategy_choice"' in request for request in sent)
+    assert not [request for request in sent if "possible_gaps" in request]
 
 
 def test_clear_prompt_with_success_tests_is_never_rewritten() -> None:

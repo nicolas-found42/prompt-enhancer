@@ -144,7 +144,10 @@ class DiagnosisRubric:
 
 _GENERAL_CHECKLIST = (
     ChecklistItem("goal", "goal", GapImpact.HIGH),
-    ChecklistItem("context", "relevant context", GapImpact.MEDIUM),
+    # High impact, so an unknown context is asked about: rewrites cannot supply
+    # it and failed fidelity in every recorded attempt (see the 2026-09-24
+    # recalibration).
+    ChecklistItem("context", "relevant context", GapImpact.HIGH),
     ChecklistItem("constraints", "constraints", GapImpact.MEDIUM),
     ChecklistItem("output_format", "output format", GapImpact.LOW),
     ChecklistItem("done_criteria", "done criteria", GapImpact.HIGH),
@@ -187,7 +190,10 @@ DEFAULT_RUBRIC = DiagnosisRubric(
         TaskType("planning", "Planning", _PLANNING_CHECKLIST),
         TaskType("chat", "Chat", _CHAT_CHECKLIST),
     ),
-    gap_thresholds={"context": 0.87},
+    # Cutoffs selected on training data as the lowest with precision >= 0.5; see
+    # docs/gap-cutoff-recalibration-2026-09-24.md. outside_reference has no
+    # positive labels; 0.80 is backed only by 0/101 false flags.
+    gap_thresholds={"context": 0.83, "language": 0.77, "outside_reference": 0.8},
     hint_thresholds={"outside_reference": 0.75},
 )
 
@@ -196,6 +202,29 @@ DEFAULT_RUBRIC = DiagnosisRubric(
 # A bundle without ``checklist_keys`` replays without these questions, because
 # its strict recordings never saw them.
 HISTORICAL_CHECKLIST_EXCLUSIONS = ("outside_reference",)
+
+
+# Impacts that differ from the ones replay bundles saw before bundles recorded
+# ``checklist_impacts``. A bundle without the field replays with these.
+HISTORICAL_CHECKLIST_IMPACTS: Mapping[str, str] = {"context": GapImpact.MEDIUM.value}
+
+
+def checklist_impacts(rubric: DiagnosisRubric) -> dict[str, str]:
+    return {item.key: item.impact.value for task in rubric.task_types for item in task.checklist}
+
+
+def with_impacts(rubric: DiagnosisRubric, impacts: Mapping[str, str]) -> DiagnosisRubric:
+    """Override the impact of the named checklist items, as a replay recorded them."""
+    return replace(
+        rubric,
+        task_types=tuple(
+            replace(task, checklist=tuple(
+                replace(item, impact=GapImpact(impacts[item.key])) if item.key in impacts else item
+                for item in task.checklist
+            ))
+            for task in rubric.task_types
+        ),
+    )
 
 
 def checklist_keys(rubric: DiagnosisRubric) -> tuple[str, ...]:
@@ -495,6 +524,15 @@ class Diagnoser:
                     )
                 )
         return tuple(problems), pointed
+
+
+def model_diagnosis(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """The diagnosis as sent to models: without the user-facing possible gaps.
+
+    Near-miss hints must never steer a strategy, candidate, or fidelity decision,
+    and leaving them out keeps recorded replays exact.
+    """
+    return {key: value for key, value in payload.items() if key != "possible_gaps"}
 
 
 def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
