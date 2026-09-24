@@ -43,6 +43,22 @@ def test_search_strategies_uses_previous_failures_to_target_a_strategy():
     assert result.previous_failures == ("split_into_steps did not help",)
 
 
+def test_candidate_writer_receives_confirmed_diagnosis():
+    captured = []
+    diagnosis = {
+        "confirmed_gaps": [{"key": "context", "label": "relevant context"}],
+        "problem_sentences": [{"sentence": {"text": "Plan the trip"}, "kind": "vagueness"}],
+    }
+
+    def writer(request):
+        captured.append(request.to_dict())
+        return {strategy.name: request.prompt for strategy in request.strategies}
+
+    search_strategies("Plan the trip", diagnosis=diagnosis, tier="fast", writer=writer)
+
+    assert captured[0]["diagnosis"] == diagnosis
+
+
 def test_runner_is_parallel_order_stable_and_reproducible():
     seen = []
 

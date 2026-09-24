@@ -47,7 +47,11 @@ from .history import RunHistory
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .models import CostBreakdown, OptimizeResult, new_run_id, normalize_tier, utc_now
 from .repeat import RepeatCoordinator, RoundRequest
-from .rewrite import CandidateWriter
+from .rewrite import (
+    CURRENT_WRITER_INSTRUCTION_VERSION,
+    WRITER_INSTRUCTION_VERSIONS,
+    CandidateWriter,
+)
 from .rewrite import ModelGateway as RewriteGateway
 from .rewrite import _text as completion_text
 from .rubric_revisions import SQLiteRubricStore
@@ -57,7 +61,11 @@ from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
 from .strategies import STRATEGY_LIBRARY, RewriteStrategy, search_strategies
 from .strong_check import StrongCheckPolicy
-from .success_tests import CompletionGateway, SuccessTestCompiler
+from .success_tests import (
+    DEFAULT_FAITHFULNESS_THRESHOLD,
+    CompletionGateway,
+    SuccessTestCompiler,
+)
 
 
 class RunNotFoundError(KeyError):
@@ -84,10 +92,18 @@ class PromptOptimizer:
         config: Settings | None = None,
         rubric_store: SQLiteRubricStore | None = None,
         diagnosis_rubric: DiagnosisRubric = DEFAULT_RUBRIC,
+        writer_instruction_version: int = CURRENT_WRITER_INSTRUCTION_VERSION,
+        faithfulness_threshold: float = DEFAULT_FAITHFULNESS_THRESHOLD,
     ) -> None:
+        if writer_instruction_version not in WRITER_INSTRUCTION_VERSIONS:
+            raise ValueError("unknown candidate writer instruction version")
+        if not 0 <= faithfulness_threshold <= 1:
+            raise ValueError("faithfulness threshold must be a probability")
         self.store = store or RunStore()
         self.config = config or Settings.from_env()
         self.diagnosis_rubric = diagnosis_rubric
+        self.writer_instruction_version = writer_instruction_version
+        self.faithfulness_threshold = faithfulness_threshold
         self.settings_store = (
             SettingsStore(
                 Path(self.store.path).with_suffix(".settings.json"),
@@ -329,6 +345,7 @@ class PromptOptimizer:
             compiled = SuccessTestCompiler(
                 cast(CompletionGateway, self.gateway),
                 writer_model=selected_settings.writer_model,
+                faithfulness_threshold=self.faithfulness_threshold,
             ).compile(working_prompt)
         except (ValueError, TypeError) as exc:
             raise ProviderError("writer", selected_settings.writer_model, None, "invalid success-test response") from exc
@@ -374,6 +391,7 @@ class PromptOptimizer:
             writer=CandidateWriter(
                 cast(RewriteGateway, self.gateway),
                 writer_model=selected_settings.writer_model,
+                instruction_version=self.writer_instruction_version,
             ),
             previous_failures=prior_failures,
             recheck=recheck_strategy,

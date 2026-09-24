@@ -175,12 +175,14 @@ class CandidateBatchRequest:
     prompt: str
     strategies: tuple[RewriteStrategy, ...]
     previous_failures: tuple[str, ...] = ()
+    diagnosis: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "prompt": self.prompt,
             "strategies": [strategy.to_dict() for strategy in self.strategies],
             "previous_failures": list(self.previous_failures),
+            "diagnosis": dict(self.diagnosis),
         }
 
 
@@ -486,7 +488,10 @@ def search_strategies(
     if not eligible:
         return StrategySearchResult((), (), tuple(rejected), selected_budget, failures)
 
-    request = CandidateBatchRequest(prompt, tuple(eligible), failures)
+    request = CandidateBatchRequest(
+        prompt, tuple(eligible), failures,
+        diagnosis=diagnosis if isinstance(diagnosis, Mapping) else {},
+    )
     generated: list[str] | None = None
     if writer is not None:
         generated = _writer_texts(_call_writer(writer, request), eligible)

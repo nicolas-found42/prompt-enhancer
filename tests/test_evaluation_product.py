@@ -243,3 +243,70 @@ def test_failed_cases_are_excluded_from_diagnosis_accuracy() -> None:
     assert report.diagnosis.labeled_cases == 0
     assert report.diagnosis.excluded_failed_cases == 1
     assert report.diagnosis.micro.false_negatives == 0
+
+
+def _candidate_gateway() -> ScriptedGateway:
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Context rewrite","specify_output_format":"Format rewrite","add_done_criteria":"Done rewrite"}'
+        return {"choices": [{"message": {"content": "pass" if messages[0]["content"] != "Original request" else "fail"}}]}
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            choice = "general" if request.get("key") == "task_type" else "none"
+            return {"type": "choice", "choice": choice, "probabilities": {choice: 1.0}, "confidence": 1.0}
+        if "output" in request.get("state", {}):
+            passed = request["state"]["output"] == "pass"
+            probability = float(not passed) if str(request.get("key", "")).endswith("_second") else float(passed)
+        else:
+            probability = 1.0
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    return ScriptedGateway(chat=chat, decision=decide)
+
+
+def _record_candidate_run(path: Path, version: int) -> dict:
+    gateway = RecordingGateway(_candidate_gateway(), path)
+    gateway.writer_instruction_version = version
+    gateway.faithfulness_threshold = 0.9 if version == 1 else 0.8
+    optimizer = PromptOptimizer(
+        gateway=gateway, store=RunStore(":memory:"),
+        writer_instruction_version=version, faithfulness_threshold=gateway.faithfulness_threshold,
+    )
+    return optimizer.optimize("Original request", {"tier": "fast", "clarification_allowed": False})
+
+
+def _replay(path: Path) -> dict:
+    engine = default_engine_factory(path)
+    engine.store = RunStore(":memory:")
+    return engine.optimize("Original request", {"tier": "fast", "clarification_allowed": False})
+
+
+def test_unversioned_historical_recording_replays_with_original_writer_request(tmp_path: Path) -> None:
+    path = tmp_path / "historical.json"
+    original = _record_candidate_run(path, 1)
+    bundle = json.loads(path.read_text())
+    del bundle["writer_instruction_version"]
+    del bundle["faithfulness_threshold"]
+    path.write_text(json.dumps(bundle))
+
+    assert default_engine_factory(path).faithfulness_threshold == 0.9
+    replayed = _replay(path)
+
+    assert original["final_prompt"] != "Original request"
+    assert replayed["final_prompt"] == original["final_prompt"]
+
+
+def test_versioned_recording_selects_current_writer_request(tmp_path: Path) -> None:
+    path = tmp_path / "current.json"
+    original = _record_candidate_run(path, 2)
+    recorded = json.loads(path.read_text())
+    assert (recorded["writer_instruction_version"], recorded["faithfulness_threshold"]) == (2, 0.8)
+    assert default_engine_factory(path).faithfulness_threshold == 0.8
+
+    assert _replay(path)["final_prompt"] == original["final_prompt"]
+
+    bundle = json.loads(path.read_text())
+    bundle["writer_instruction_version"] = 1
+    path.write_text(json.dumps(bundle))
+    assert _replay(path)["status"] == "failed"

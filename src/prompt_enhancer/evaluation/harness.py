@@ -12,6 +12,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol, cast
 
+from ..rewrite import WRITER_INSTRUCTION_VERSIONS
 from .datasets import (
     Dataset,
     canonical_json,
@@ -21,6 +22,10 @@ from .datasets import (
 
 IMPROVEMENT_EPSILON = 1e-12
 REPORT_SCHEMA_VERSION = 1
+# Recordings without engine metadata predate it: they used the version 1 writer
+# instruction and the 0.90 success-test faithfulness gate.
+HISTORICAL_WRITER_INSTRUCTION_VERSION = 1
+HISTORICAL_FAITHFULNESS_THRESHOLD = 0.9
 
 
 class EvaluationError(RuntimeError):
@@ -257,6 +262,8 @@ class _ReplayBundle:
     case_latency_ms: Mapping[str, float]
     case_costs: Mapping[str, tuple[float, Mapping[str, float]]]
     rubric_thresholds: Mapping[str, float] | None
+    writer_instruction_version: int = HISTORICAL_WRITER_INSTRUCTION_VERSION
+    faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
 
 
 @dataclass(slots=True)
@@ -455,7 +462,12 @@ def default_engine_factory(replay_path: Path | None = None) -> Engine:
         replace(DEFAULT_RUBRIC, gap_thresholds=bundle.rubric_thresholds)
         if bundle.rubric_thresholds is not None else DEFAULT_RUBRIC
     )
-    return PromptOptimizer(gateway=ReplayGateway(recordings, strict=True), diagnosis_rubric=rubric)
+    return PromptOptimizer(
+        gateway=ReplayGateway(recordings, strict=True),
+        diagnosis_rubric=rubric,
+        writer_instruction_version=bundle.writer_instruction_version,
+        faithfulness_threshold=bundle.faithfulness_threshold,
+    )
 
 
 def _load_replay(path: str | Path) -> _ReplayBundle:
@@ -473,11 +485,19 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_latencies = raw.get("case_latency_ms", {})
         raw_costs = raw.get("case_costs", {})
         raw_thresholds = raw.get("rubric_thresholds")
+        writer_version = raw.get("writer_instruction_version", HISTORICAL_WRITER_INSTRUCTION_VERSION)
+        faithfulness = raw.get("faithfulness_threshold", HISTORICAL_FAITHFULNESS_THRESHOLD)
     else:
         recordings = replay_path
         raw_latencies = {}
         raw_costs = {}
         raw_thresholds = None
+        writer_version = HISTORICAL_WRITER_INSTRUCTION_VERSION
+        faithfulness = HISTORICAL_FAITHFULNESS_THRESHOLD
+    if isinstance(writer_version, bool) or writer_version not in WRITER_INSTRUCTION_VERSIONS:
+        raise EvaluationError("replay writer_instruction_version is not a known version")
+    if isinstance(faithfulness, bool) or not isinstance(faithfulness, (int, float)) or not 0 <= faithfulness <= 1:
+        raise EvaluationError("replay faithfulness_threshold must be a probability")
     if not isinstance(raw_latencies, Mapping):
         raise EvaluationError("replay case_latency_ms must be an object")
     latencies: dict[str, float] = {}
@@ -515,6 +535,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         case_latency_ms=latencies,
         case_costs=costs,
         rubric_thresholds=thresholds,
+        writer_instruction_version=writer_version,
+        faithfulness_threshold=float(faithfulness),
     )
 
 

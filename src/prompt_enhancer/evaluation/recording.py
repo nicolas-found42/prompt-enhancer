@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -19,25 +20,39 @@ class RecordingGateway:
         self.case_latency_ms: dict[str, float] = {}
         self.case_costs: dict[str, dict[str, Any]] = {}
         self.rubric_thresholds: dict[str, float] | None = None
+        self.writer_instruction_version: int | None = None
+        self.faithfulness_threshold: float | None = None
+        # The weak-model panel calls the gateway from worker threads.
+        self._lock = threading.RLock()
 
     def _record(self, operation: str, model: str, payload: Any, role: str, answer: Any) -> Any:
         key = ReplayGateway.request_key(operation, model, payload, role)
-        previous = self.responses.get(key)
-        if previous is not None and previous != answer:
-            raise ValueError("identical gateway request produced different responses; strict replay cannot represent it")
-        self.responses[key] = answer
-        self.save()
+        with self._lock:
+            previous = self.responses.get(key)
+            if previous is not None and previous != answer:
+                raise ValueError("identical gateway request produced different responses; strict replay cannot represent it")
+            self.responses[key] = answer
+            self.save()
         return answer
 
     def save(self) -> None:
+        with self._lock:
+            self._save()
+
+    def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(json.dumps({
+        bundle: dict[str, Any] = {
             "responses": self.responses,
             "case_latency_ms": self.case_latency_ms,
             "case_costs": self.case_costs,
             "rubric_thresholds": self.rubric_thresholds,
-        }, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        }
+        if self.writer_instruction_version is not None:
+            bundle["writer_instruction_version"] = self.writer_instruction_version
+        if self.faithfulness_threshold is not None:
+            bundle["faithfulness_threshold"] = self.faithfulness_threshold
+        temporary.write_text(json.dumps(bundle, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         temporary.replace(self.path)
 
     def attach_case_metrics(self, report: Any) -> None:

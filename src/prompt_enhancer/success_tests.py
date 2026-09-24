@@ -65,6 +65,10 @@ class CompletionGateway(Protocol):
     def jev(self, request: Mapping[str, Any]) -> Any: ...
 
 
+# Chosen from user-delegated faithfulness judgments; see docs/delegated-evaluation-2026-09-23.md.
+DEFAULT_FAITHFULNESS_THRESHOLD = 0.8
+
+
 class SuccessTestCompiler:
     """Use a writer for tests, then a separate Jev pass for faithfulness."""
 
@@ -80,7 +84,7 @@ class SuccessTestCompiler:
         gateway: CompletionGateway,
         *,
         writer_model: str = DEFAULT_GO_WRITER,
-        faithfulness_threshold: float = 0.9,
+        faithfulness_threshold: float = DEFAULT_FAITHFULNESS_THRESHOLD,
     ) -> None:
         self.gateway = gateway
         self.writer_model = writer_model

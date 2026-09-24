@@ -159,6 +159,8 @@ def main(
             if args.record:
                 recording = RecordingGateway(engine.gateway, args.record)
                 recording.rubric_thresholds = dict(engine.diagnosis_rubric.gap_thresholds)
+                recording.writer_instruction_version = engine.writer_instruction_version
+                recording.faithfulness_threshold = engine.faithfulness_threshold
                 engine.gateway = recording
             harness = EvaluationHarness(engine)
         else:
