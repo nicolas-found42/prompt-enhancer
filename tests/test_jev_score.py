@@ -59,7 +59,12 @@ def test_grading_mixed_tests_uses_correct_answers_and_one_noul_request_each() ->
 
     panel = [
         PanelResult(
-            candidate_id="candidate", model="weak", sample=0, seed=1, output="answer"
+            candidate_id="candidate",
+            model="weak",
+            sample=0,
+            seed=1,
+            prompt="user-prompt-sentinel",
+            output="model-output-sentinel",
         )
     ]
     tests = [
@@ -69,6 +74,10 @@ def test_grading_mixed_tests_uses_correct_answers_and_one_noul_request_each() ->
             "question": "Which outcome?",
             "expected": "pass",
             "options": ["pass", "fail"],
+            "option_descriptions": {
+                "pass": "The output meets the criterion.",
+                "fail": "The output misses the criterion.",
+            },
         },
         {"kind": "noul", "question": "Is it incorrect?", "expected": "no"},
     ]
@@ -84,6 +93,21 @@ def test_grading_mixed_tests_uses_correct_answers_and_one_noul_request_each() ->
         "grade_0_2_first",
     ]
     assert len(evidence) == 4
+    assert all(
+        request["state"]["prompt"] == "user-prompt-sentinel"
+        and request["state"]["output"] == "model-output-sentinel"
+        and "user-prompt-sentinel" not in request["question"]
+        and "model-output-sentinel" not in request["question"]
+        for request in requests
+    )
+    assert requests[1]["criteria"] == {
+        "pass": "The output meets the criterion.",
+        "fail": "The output misses the criterion.",
+    }
+    assert list(requests[2]["criteria"].items()) == [
+        ("fail", "The output misses the criterion."),
+        ("pass", "The output meets the criterion."),
+    ]
     assert grades["candidate"].per_model_samples["weak"] == (0.8,)
 
 

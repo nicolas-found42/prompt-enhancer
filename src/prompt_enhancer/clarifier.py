@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from . import jev_questions
 from .clarification import ClarificationPlan, GapAssessment, build_plan
 from .diagnosis import ConfirmedGap
 from .gateway import Gateway, completion_text, writer_messages
@@ -75,10 +76,10 @@ class Clarifier:
                     "model": self.judge_model,
                     "key": f"infer:{gap.key}",
                     "type": "choice",
-                    "query": f"Which value for {gap.label} can be inferred from the original prompt, or is it unknown?",
+                    "query": jev_questions.infer_gap_question(gap.label),
                     "criteria": {
                         **{item["value"]: item["label"] for item in options},
-                        "unknown": "The prompt does not establish this value.",
+                        "unknown": jev_questions.UNKNOWN_GAP_DESCRIPTION,
                     },
                     "state": {"prompt": prompt, "gap": gap.key},
                 }

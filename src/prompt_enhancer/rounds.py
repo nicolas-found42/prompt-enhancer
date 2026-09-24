@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any
 
+from . import jev_questions
 from .config import Settings
 from .diagnosis import model_diagnosis
 from .fidelity import check_candidate_fidelity
@@ -298,7 +299,7 @@ def run_round(
             role="writer",
             kind="invalid_response",
         ) from exc
-    tests = tuple(asdict(test) for test in compiled.tests)
+    tests = tuple(test.to_dict() for test in compiled.tests)
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
     if not tests or no_gaps:
@@ -317,10 +318,10 @@ def run_round(
             "model": settings.judge_model,
             "key": "strategy_choice",
             "type": "choice",
-            "query": "Which rewrite strategy best addresses the diagnosed weakness?",
+            "query": jev_questions.STRATEGY_CHOICE_QUESTION,
             "criteria": {
                 **{item.name: item.description for item in STRATEGY_LIBRARY},
-                "none": "No rewrite strategy is suitable.",
+                "none": jev_questions.STRATEGY_NONE_DESCRIPTION,
             },
             "state": {
                 "prompt": working_prompt,
@@ -344,7 +345,7 @@ def run_round(
                 "model": settings.judge_model,
                 "key": f"strategy_recheck:{strategy.name}",
                 "type": "noul",
-                "query": "Is this strategy appropriate for the prompt and diagnosed weakness without inventing requirements?",
+                "query": jev_questions.STRATEGY_RECHECK_QUESTION,
                 "state": {
                     "prompt": working_prompt,
                     "diagnosis": model_view,

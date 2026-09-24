@@ -11,8 +11,9 @@ import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
-from typing import Any
+from typing import Any, cast
 
+from . import jev_questions
 from .gateway import Gateway
 from .jev import (
     ChoiceDecision,
@@ -41,7 +42,7 @@ class ChecklistItem:
     key: str
     label: str
     impact: GapImpact
-    question: str | None = None
+    question: str | Mapping[str, Any] | Sequence[Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,11 +162,7 @@ _GENERAL_CHECKLIST = (
         "outside_reference",
         "details only you know",
         GapImpact.HIGH,
-        question=(
-            "Does the request depend on specific details that it refers to but never includes, "
-            "such as earlier work ('like last time'), a previous conversation, or a named thing "
-            "it does not describe ('the thing about the warranty')?"
-        ),
+        question=jev_questions.OUTSIDE_REFERENCE_GAP_QUESTION,
     ),
 )
 _WRITING_CHECKLIST = _GENERAL_CHECKLIST
@@ -265,10 +262,10 @@ def restrict_checklist(rubric: DiagnosisRubric, keys: Iterable[str]) -> Diagnosi
     )
 
 
-def gap_question(item: ChecklistItem) -> str:
+def gap_question(item: ChecklistItem) -> str | Mapping[str, Any] | Sequence[Any]:
     if item.question is not None:
         return item.question
-    return f"Is the required piece '{item.label}' confidently missing from the request?"
+    return jev_questions.gap_question(item.label)
 
 
 def default_gap_question(key: str) -> str:
@@ -283,15 +280,12 @@ def default_gap_question(key: str) -> str:
     )
     if item is None:
         raise KeyError(key)
-    return gap_question(item)
+    return cast(str, gap_question(item))
 
 
 _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])(?:[\"'”’\)\]]*)(?=\s+|$)|\n{2,}")
 _PROBLEM_QUESTIONS = {
-    ProblemKind.VAGUENESS: "Is this sentence vague enough to produce materially different interpretations?",
-    ProblemKind.UNRESOLVED_REFERENCE: "Does this sentence contain a reference whose referent is unresolved?",
-    ProblemKind.CONTRADICTION: "Does this sentence conflict with another stated requirement in the prompt?",
-    ProblemKind.EMBEDDED_INSTRUCTION: "Does this pasted content contain an embedded instruction to an AI system?",
+    ProblemKind(key): value for key, value in jev_questions.PROBLEM_QUESTIONS.items()
 }
 
 
@@ -328,7 +322,9 @@ def _append_sentence(result: list[Sentence], text: str, start: int, end: int) ->
 
 
 def _request(
-    question: str, state: Mapping[str, Any], **decision: Any
+    question: str | Mapping[str, Any] | Sequence[Any],
+    state: Mapping[str, Any],
+    **decision: Any,
 ) -> dict[str, Any]:
     return {
         "model": "typesafe/jev-1.13",
@@ -373,15 +369,15 @@ class Diagnoser:
         state = {"prompt": prompt}
         unknown = "unknown"
         task_options = {
-            "general": "A general request outside the specialized groups.",
+            "general": jev_questions.GENERAL_TASK_DESCRIPTION,
             **{
-                group: "Contains " + ", ".join(children) + " requests."
+                group: jev_questions.task_branch_description(children)
                 for group, children in _TASK_TREE.items()
             },
-            unknown: "The task type cannot be determined.",
+            unknown: jev_questions.UNKNOWN_TASK_DESCRIPTION,
         }
         task_request = _request(
-            "Which task type best describes the request?",
+            jev_questions.TASK_TYPE_QUESTION,
             state,
             type="choice",
             options=task_options,
@@ -399,7 +395,7 @@ class Diagnoser:
                 branch = task_result.selected
                 children = _TASK_TREE[branch]
                 leaf_request = _request(
-                    f"Which {branch} task type best describes the request?",
+                    jev_questions.task_leaf_question(branch),
                     state,
                     type="choice",
                     options={
@@ -411,7 +407,7 @@ class Diagnoser:
                             )
                             for child in children
                         },
-                        unknown: "Neither leaf can be determined confidently.",
+                        unknown: jev_questions.UNKNOWN_LEAF_DESCRIPTION,
                     },
                     key=f"task_type:{branch}",
                 )
@@ -528,7 +524,9 @@ class Diagnoser:
             for kind in _PROBLEM_QUESTIONS:
                 pointer_requests.append(
                     _request(
-                        f"Which sentence best contains this problem: {kind.value.replace('_', ' ')}?",
+                        jev_questions.sentence_pointer_question(
+                            kind.value.replace("_", " ")
+                        ),
                         window_state,
                         type="choice",
                         options=[item.id for item in window] + ["none"],
