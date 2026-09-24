@@ -8,12 +8,12 @@ from typing import Any
 
 from .clarification import ClarificationPlan, GapAssessment, build_plan
 from .diagnosis import ConfirmedGap
+from .gateway import Gateway, completion_text, writer_messages
 from .jev import ChoiceDecision, JevResponseError, parse_decision
-from .rewrite import _text as completion_text
 
 
 class Clarifier:
-    def __init__(self, gateway: Any, *, writer_model: str, judge_model: str) -> None:
+    def __init__(self, gateway: Gateway, *, writer_model: str, judge_model: str) -> None:
         self.gateway = gateway
         self.writer_model = writer_model
         self.judge_model = judge_model
@@ -30,22 +30,22 @@ class Clarifier:
             return build_plan((), allow_clarification=allow_clarification)
         proposed: Mapping[str, Any] = {}
         try:
-            response = self.gateway.complete(
-                {
-                    "model": self.writer_model,
-                    "role": "writer",
-                    "state": {
+            response = self.gateway.chat(
+                self.writer_model,
+                writer_messages(
+                    _instructions(gaps),
+                    {
                         "prompt": prompt,
                         "gaps": [{"key": gap.key, "label": gap.label} for gap in gaps],
                     },
-                    "instructions": _instructions(gaps),
-                },
+                ),
+                role="writer",
                 run_id=run_id,
             )
             payload = json.loads(completion_text(response))
             if isinstance(payload, Mapping) and isinstance(payload.get("gaps"), Mapping):
                 proposed = payload["gaps"]
-        except (ValueError, TypeError):
+        except ValueError:
             proposed = {}
 
         requests: list[dict[str, Any]] = []
@@ -77,7 +77,7 @@ class Clarifier:
                     decision = parse_decision(answer)
                     if isinstance(decision, ChoiceDecision):
                         choices[str(request["key"]).removeprefix("infer:")] = decision
-            except (JevResponseError, ValueError, TypeError):
+            except (JevResponseError, ValueError):
                 choices = {}
 
         assessments: list[GapAssessment] = []

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from .gateway import ProviderError
+from .gateway import Gateway, ProviderError
 from .jev import JevResponseError, NoulDecision, parse_decision
 from .rewrite import FidelityResult
 
@@ -17,7 +17,7 @@ _CHECKS = {
 
 
 def check_candidate_fidelity(
-    gateway: Any,
+    gateway: Gateway,
     original_prompt: str,
     candidate_prompt: str,
     diagnosis: Mapping[str, Any],
@@ -47,8 +47,8 @@ def check_candidate_fidelity(
         answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
         decisions = [parse_decision(answer) for answer in answers]
         if len(decisions) != len(_CHECKS) or any(not isinstance(answer, NoulDecision) for answer in decisions):
-            raise ValueError("incomplete fidelity response")
-    except (ProviderError, JevResponseError, ValueError, TypeError, KeyError) as exc:
+            raise JevResponseError("incomplete fidelity response")
+    except (ProviderError, JevResponseError) as exc:
         return FidelityResult(False, False, False, {"error": type(exc).__name__})
     probabilities = {
         name: decision.probability

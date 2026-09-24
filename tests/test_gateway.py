@@ -194,9 +194,9 @@ def test_settings_overrides_are_per_run_and_persist(tmp_path):
 
 def test_scripted_and_replay_gateways_are_deterministic():
     scripted = ScriptedGateway([{"text": "one"}])
-    assert scripted.complete("m", "hello") == {"text": "one"}
+    assert scripted.chat("m", [{"role": "user", "content": "hello"}], role="writer") == {"text": "one"}
     replay = ReplayGateway({("chat", "m", "writer"): {"text": "replayed"}})
-    assert replay.complete("m", "hello", role="writer") == {"text": "replayed"}
+    assert replay.chat("m", [{"role": "user", "content": "hello"}], role="writer") == {"text": "replayed"}
     assert replay.calls[0]["operation"] == "chat"
 
 

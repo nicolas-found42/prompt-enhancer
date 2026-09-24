@@ -5,6 +5,7 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
+from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.rubric_revisions import (
     EvaluationMetrics,
     EvaluationPolicy,
@@ -245,15 +246,14 @@ def test_writer_proposes_question_from_measured_error_without_supplied_question(
                 observation="Audience omissions caused missed weak-model failures.",
             )]
 
-    class Writer:
-        def complete(self, request):
-            assert request["state"]["errors"][0]["error_id"] == "missing-audience"
-            return '{"suggestions":[{"error_id":"missing-audience","action":"new","question":{"question_id":"audience-gap","text":"Is the audience missing when it materially affects the answer?","response_type":"noul","threshold":0.8,"missing_when":"yes"}}]}'
+    def write(_model, messages, **_kwargs):
+        assert json.loads(messages[1]["content"])["errors"][0]["error_id"] == "missing-audience"
+        return '{"suggestions":[{"error_id":"missing-audience","action":"new","question":{"question_id":"audience-gap","text":"Is the audience missing when it materially affects the answer?","response_type":"noul","threshold":0.8,"missing_when":"yes"}}]}'
 
     rubric, evaluation_set = fixture_inputs()
     store = SQLiteRubricStore(tmp_path / "writer-proposals.sqlite3")
     store.initialize(rubric)
-    service = RubricRevisionService(store, ErrorSource(), FixtureEvaluator(), writer_gateway=Writer())
+    service = RubricRevisionService(store, ErrorSource(), FixtureEvaluator(), writer_gateway=ScriptedGateway(chat=write))
 
     result = service.propose(evaluation_set)
 

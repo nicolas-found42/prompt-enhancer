@@ -123,7 +123,7 @@ def test_grading_reports_per_model_worst_mean_and_sample_spread():
     report = grade_candidate(
         candidate,
         panel,
-        lambda request: {"passed": request.output == "pass"},
+        lambda request: float(request.output == "pass"),
         threshold=0.5,
     )
 

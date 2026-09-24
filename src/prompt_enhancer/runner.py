@@ -151,15 +151,6 @@ def _invoke_execute(execute: Any, request: PanelRequest, run_id: str | None) -> 
             seed=request.seed,
             temperature=request.temperature,
         )
-    if hasattr(execute, "complete"):
-        return execute.complete(
-            prompt=request.prompt,
-            model=request.model,
-            seed=request.seed,
-            temperature=request.temperature,
-            role="weak",
-            run_id=run_id,
-        )
     if not callable(execute):
         raise TypeError("execute must be callable or expose complete/chat")
 

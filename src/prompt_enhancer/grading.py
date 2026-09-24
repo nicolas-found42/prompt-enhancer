@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import fmean
 from typing import Any
 
-from .jev import ChoiceDecision, NoulDecision, ScoreDecision, parse_decision
+from .gateway import Gateway
+from .jev import ChoiceDecision, JevResponseError, NoulDecision, ScoreDecision, parse_decision
 
 
 @dataclass(frozen=True)
@@ -120,61 +121,13 @@ def _run_fields(run: Any) -> tuple[str, str, int, int, str]:
     return candidate_id, model, sample, seed, output
 
 
-def _number(value: Any) -> float | None:
-    if isinstance(value, bool):
-        return 1.0 if value else 0.0
-    if isinstance(value, (int, float)):
-        return max(0.0, min(1.0, float(value)))
-    return None
-
-
-def _score(value: Any) -> float:
-    """Normalize common Jev/fake-gateway judge response shapes."""
-
-    number = _number(value)
-    if number is not None:
-        return number
-    if value is None:
+def _noul_probability(answer: Any) -> float:
+    """A Jev yes/no answer as a probability; unusable answers score zero."""
+    try:
+        decision = parse_decision(answer)
+    except JevResponseError:
         return 0.0
-    if isinstance(value, Mapping):
-        if "noul" in value or value.get("type") == "noul":
-            try:
-                decision = parse_decision(value)
-                if isinstance(decision, NoulDecision):
-                    return decision.probability
-            except ValueError:
-                return 0.0
-        for key in ("pass", "passed", "success"):
-            if key in value:
-                result = _number(value[key])
-                if result is not None:
-                    return result
-        for key in ("score", "probability", "value", "answer", "result", "judgment"):
-            if key in value:
-                return _score(value[key])
-        numeric_values = [_number(item) for item in value.values()]
-        numeric_values = [item for item in numeric_values if item is not None]
-        return fmean(numeric_values) if numeric_values else 0.0
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        scores = [_score(item) for item in value]
-        return fmean(scores) if scores else 0.0
-    for key in ("passed", "pass", "score", "probability", "value"):
-        attribute = getattr(value, key, None)
-        if attribute is not None:
-            return _score(attribute)
-    return 0.0
-
-
-def _judge(judge: Any, request: GradeRequest) -> Any:
-    if hasattr(judge, "grade"):
-        return judge.grade(request)
-    if hasattr(judge, "judge"):
-        return judge.judge(request)
-    if hasattr(judge, "decide"):
-        return judge.decide(request)
-    if callable(judge):
-        return judge(request)
-    raise TypeError("judge must be callable or expose grade/judge/decide")
+    return decision.probability if isinstance(decision, NoulDecision) else 0.0
 
 
 def metrics_from_scores(
@@ -210,17 +163,15 @@ def metrics_from_scores(
 def grade_candidate(
     candidate: Any,
     panel_runs: Any,
-    judge: Any,
+    judge: Callable[[GradeRequest], float],
     *,
     tests: Sequence[Any] = (),
     threshold: float = 0.5,
 ) -> GradeReport:
     """Grade every panel output and return robust aggregate metrics.
 
-    ``judge`` receives a :class:`GradeRequest`, which keeps the grader
-    replaceable and prevents prompt text from being hidden in a judge
-    instruction.  No gateway calls happen here; callers inject a fake, replay,
-    or production gateway explicitly.
+    ``judge`` scores one :class:`GradeRequest` between 0 and 1.  No gateway
+    calls happen here; ``grade_panel_with_jev`` supplies scores from Jev.
     """
 
     if not 0.0 <= threshold <= 1.0:
@@ -237,7 +188,7 @@ def grade_candidate(
     for run in runs:
         _, model, sample, seed, output = _run_fields(run)
         request = GradeRequest(candidate_id, model, sample, seed, output, tuple(tests))
-        score = _score(_judge(judge, request))
+        score = float(judge(request))
         per_model_scores.setdefault(model, []).append(score)
     rates, model_samples, worst, mean, spread, sample_scores = metrics_from_scores(
         per_model_scores, threshold=threshold
@@ -255,33 +206,10 @@ def grade_candidate(
     )
 
 
-def grade_candidates(
-    candidates: Sequence[Any],
-    panel_runs: Any,
-    judge: Any,
-    *,
-    tests: Sequence[Any] = (),
-    threshold: float = 0.5,
-) -> dict[str, GradeReport]:
-    """Grade each candidate from one shared panel result."""
-
-    result: dict[str, GradeReport] = {}
-    for candidate in candidates:
-        candidate_id = _candidate_id(candidate, _runs(panel_runs))
-        result[candidate_id] = grade_candidate(
-            candidate,
-            panel_runs,
-            judge,
-            tests=tests,
-            threshold=threshold,
-        )
-    return result
-
-
 def grade_panel_with_jev(
     panel_runs: Any,
     tests: Sequence[Mapping[str, Any]],
-    gateway: Any,
+    gateway: Gateway,
     *,
     judge_model: str,
     run_id: str,
@@ -308,14 +236,8 @@ def grade_panel_with_jev(
                     **({"criteria": list(reversed(options) if second else options)} if kind == "score" else {}),
                 })
     responses: list[Any] = []
-    batch = getattr(gateway, "decide_batch", None)
     for offset in range(0, len(requests), 40):
-        chunk = requests[offset : offset + 40]
-        responses.extend(
-            batch(chunk, role="judge", run_id=run_id)
-            if callable(batch)
-            else [gateway.decide(item, role="judge", run_id=run_id) for item in chunk]
-        )
+        responses.extend(gateway.decide_batch(requests[offset : offset + 40], role="judge", run_id=run_id))
     if len(responses) != len(requests):
         raise ValueError("Jev returned an incomplete grading batch")
     evidence = [
@@ -331,8 +253,8 @@ def grade_panel_with_jev(
             kind = str(test.get("kind", "noul"))
             expected = str(test.get("expected", "yes"))
             if kind == "noul":
-                direct = _score(responses[pair_index])
-                reverse = _score(responses[pair_index + 1])
+                direct = _noul_probability(responses[pair_index])
+                reverse = _noul_probability(responses[pair_index + 1])
                 test_scores.append(min(reverse, 1.0 - direct) if expected.casefold() in {"no", "false"} else min(direct, 1.0 - reverse))
             else:
                 try:
@@ -361,6 +283,6 @@ __all__ = [
     "GradeReport",
     "GradeRequest",
     "grade_candidate",
-    "grade_candidates",
+    "grade_panel_with_jev",
     "metrics_from_scores",
 ]

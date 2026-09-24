@@ -17,6 +17,7 @@ from difflib import unified_diff
 from typing import Any, Protocol
 
 from .catalog import DEFAULT_GO_WRITER
+from .gateway import Gateway, completion_text, writer_messages
 
 # Version 1 is the historical request without diagnosis; version 2 adds it.
 WRITER_INSTRUCTION_VERSIONS = (1, 2)
@@ -161,7 +162,7 @@ class CandidateWriter:
 
     def __init__(
         self,
-        gateway: ModelGateway,
+        gateway: Gateway,
         *,
         writer_model: str = DEFAULT_GO_WRITER,
         instruction_version: int = CURRENT_WRITER_INSTRUCTION_VERSION,
@@ -250,15 +251,9 @@ class CandidateWriter:
         )
         if self.instruction_version == 1:
             state.pop("diagnosis", None)
-        response = self.gateway.complete(
-            {
-                "model": self.writer_model,
-                "role": "writer",
-                "instructions": original_instructions if self.instruction_version == 1 else current_instructions,
-                "state": state,
-            }
-        )
-        payload = json.loads(_text(response))
+        instructions = original_instructions if self.instruction_version == 1 else current_instructions
+        response = self.gateway.chat(self.writer_model, writer_messages(instructions, state), role="writer")
+        payload = json.loads(completion_text(response))
         if not isinstance(payload, Mapping):
             raise TypeError("candidate writer must return a JSON object")
         if any(not isinstance(payload.get(strategy.name), str) or not payload[strategy.name].strip() for strategy in request.strategies):

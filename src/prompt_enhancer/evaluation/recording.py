@@ -10,11 +10,11 @@ from typing import Any
 
 from ..catalog import JEV_MODEL
 from ..diagnosis import DEFAULT_RUBRIC, checklist_impacts, checklist_keys
-from ..gateway import ReplayGateway, _completion_chat_request
+from ..gateway import Gateway, ReplayGateway
 
 
 class RecordingGateway:
-    def __init__(self, gateway: Any, path: Path) -> None:
+    def __init__(self, gateway: Gateway, path: Path) -> None:
         self.gateway = gateway
         self.path = path
         self.responses: dict[str, Any] = {}
@@ -77,19 +77,10 @@ class RecordingGateway:
     def new_run(self, run_id: str | None = None) -> str:
         return self.gateway.new_run(run_id)
 
-    set_run = new_run
-
     def chat(self, model: str, messages: Any, *, role: str = "writer", run_id: str | None = None, **params: Any) -> Any:
         normalized = list(messages) if not isinstance(messages, str) else [{"role": "user", "content": messages}]
         answer = self.gateway.chat(model, messages, role=role, run_id=run_id, **params)
         return self._record("chat", model, {"model": model, "messages": normalized, **params}, role, answer)
-
-    def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
-        if isinstance(model, Mapping) and messages is None:
-            model_id, messages, role = _completion_chat_request(model)
-            kwargs.setdefault("role", role)
-            return self.chat(model_id, messages, **kwargs)
-        return self.chat(str(model), messages, **kwargs)
 
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
         request = dict(payload)
@@ -98,9 +89,6 @@ class RecordingGateway:
         answer = self.gateway.decide(payload, role=role, run_id=run_id)
         return self._record("decide", JEV_MODEL, request, role, answer)
 
-    decision = decide
-    jev = decide
-
     def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
         answers = self.gateway.decide_batch(requests, role=role, run_id=run_id)
         for request, answer in zip(requests, answers, strict=True):
@@ -108,15 +96,15 @@ class RecordingGateway:
         return answers
 
     def list_models(self, *, refresh: bool = False) -> Any:
-        return self.gateway.list_models(refresh=refresh)
+        return getattr(self.gateway, "list_models")(refresh=refresh)
 
-    def usage_report(self) -> Any:
+    def usage_report(self) -> dict[str, Any]:
         return self.gateway.usage_report()
 
     @property
-    def decision_log(self) -> Any:
+    def decision_log(self) -> list[dict[str, Any]]:
         return self.gateway.decision_log
 
     @property
     def usage(self) -> Any:
-        return self.gateway.usage
+        return getattr(self.gateway, "usage")

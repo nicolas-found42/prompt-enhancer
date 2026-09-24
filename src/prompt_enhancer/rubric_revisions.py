@@ -19,7 +19,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from .catalog import DEFAULT_GO_WRITER
-from .rewrite import _text as _completion_text
+from .gateway import Gateway, completion_text, writer_messages
 
 
 class RevisionKind(str, Enum):
@@ -318,7 +318,7 @@ class MeasuredErrorProposer:
 class WriterRevisionProposer:
     """Ask a writer to turn measured errors into candidate Jev questions."""
 
-    def __init__(self, gateway: Any, *, writer_model: str = DEFAULT_GO_WRITER) -> None:
+    def __init__(self, gateway: Gateway, *, writer_model: str = DEFAULT_GO_WRITER) -> None:
         self.gateway = gateway
         self.writer_model = writer_model
         self._evidence: dict[tuple[str, str, str | None, str | None, str | None], tuple[MeasuredError, ...]] = {}
@@ -326,22 +326,19 @@ class WriterRevisionProposer:
     def propose(
         self, rubric: RubricVersion, errors: Sequence[MeasuredError]
     ) -> Sequence[RubricQuestionChange]:
-        response = self.gateway.complete({
-            "model": self.writer_model,
-            "role": "writer",
-            "instructions": (
-                "Propose at most one new, revised, or dropped Jev diagnosis question per measured error. "
-                "Return JSON only as {\"suggestions\":[{\"error_id\":\"...\",\"action\":\"new|revised|dropped\","
-                "\"question\":{\"question_id\":\"...\",\"text\":\"...\",\"response_type\":\"noul\","
-                "\"threshold\":0.8,\"missing_when\":\"yes|no\"}}]}. "
-                "For dropped, omit question. Use only errors and rubric in state as evidence."
-            ),
-            "state": {
-                "rubric": [asdict(question) for question in rubric.questions],
-                "errors": [asdict(error) for error in errors],
-            },
-        })
-        payload = json.loads(_completion_text(response))
+        instructions = (
+            "Propose at most one new, revised, or dropped Jev diagnosis question per measured error. "
+            "Return JSON only as {\"suggestions\":[{\"error_id\":\"...\",\"action\":\"new|revised|dropped\","
+            "\"question\":{\"question_id\":\"...\",\"text\":\"...\",\"response_type\":\"noul\","
+            "\"threshold\":0.8,\"missing_when\":\"yes|no\"}}]}. "
+            "For dropped, omit question. Use only errors and rubric in state as evidence."
+        )
+        state = {
+            "rubric": [asdict(question) for question in rubric.questions],
+            "errors": [asdict(error) for error in errors],
+        }
+        response = self.gateway.chat(self.writer_model, writer_messages(instructions, state), role="writer")
+        payload = json.loads(completion_text(response))
         suggestions = payload.get("suggestions") if isinstance(payload, Mapping) else None
         if not isinstance(suggestions, list):
             raise TypeError("writer revision response must contain suggestions")
@@ -936,7 +933,7 @@ class RubricRevisionService:
         evaluator: RevisionEvaluator,
         *,
         proposer: RevisionProposer | None = None,
-        writer_gateway: Any | None = None,
+        writer_gateway: Gateway | None = None,
         policy: EvaluationPolicy | None = None,
         clock: Callable[[], str] | None = None,
         id_factory: Callable[[], str] | None = None,

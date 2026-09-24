@@ -57,7 +57,7 @@ class Gateway(Protocol):
         **params: Any,
     ) -> Any: ...
 
-    def decide(self, request: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any: ...
+    def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any: ...
 
     def decide_batch(
         self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None
@@ -81,11 +81,20 @@ def writer_messages(instructions: str, state: Any = None) -> list[dict[str, str]
     ]
 
 
-def _completion_chat_request(request: Mapping[str, Any]) -> tuple[str, list[dict[str, str]], str]:
-    """Translate a stateful completion request into the shared chat shape."""
-    messages = writer_messages(str(request.get("instructions", "")), request.get("state"))
-    return str(request.get("model", "")), messages, str(request.get("role", "writer"))
-
+def completion_text(value: Any) -> str:
+    """The text of a raw chat answer, in any provider's reply shape."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        if isinstance(value.get("message"), Mapping):
+            return completion_text(value["message"])
+        for key in ("content", "text", "output", "completion", "answer"):
+            if isinstance(value.get(key), str):
+                return value[key]
+        choices = value.get("choices")
+        if isinstance(choices, list) and choices:
+            return completion_text(choices[0])
+    raise ValueError("model gateway returned no text completion")
 
 class GatewayTransport(Protocol):
     def request(
@@ -242,6 +251,13 @@ def _response_status(response: Any) -> int | None:
         return None
 
 
+def _decision_answers(response: Any, keys: Sequence[str]) -> list[Any]:
+    answers = response.get("answers") if isinstance(response, Mapping) else None
+    if not isinstance(answers, Mapping) or any(key not in answers for key in keys):
+        raise ProviderError("openrouter", JEV_MODEL, None, "decision answers are missing", role="judge", kind="invalid_response")
+    return [answers[key] for key in keys]
+
+
 def _response_json(response: Any) -> Any:
     if isinstance(response, Mapping):
         value = response.get("json", response.get("data", response))
@@ -304,8 +320,6 @@ class HttpGateway:
         self._session = session
         return session
 
-    set_run = new_run
-
     def session_for(self, run_id: str | None = None) -> str:
         if run_id is None:
             return self._session
@@ -329,8 +343,6 @@ class HttpGateway:
                 self._go_model_ids.update(result.go_ids)
                 return result
         raise TypeError("catalog.fetch() must return CatalogSnapshot")
-
-    catalog_snapshot = list_models
 
     def route_model(self, model: str, *, run_id: str | None = None) -> RouteDecision:
         provider = "openrouter"
@@ -362,8 +374,6 @@ class HttpGateway:
             headers["HTTP-Referer"] = self.config.referer
             headers["X-Title"] = self.config.title
         return RouteDecision(provider, model, f"{base.rstrip('/')}{path}", headers)
-
-    route = route_model
 
     def _attempt(self, decision: RouteDecision, payload: Mapping[str, Any]) -> Any:
         return self.transport.request(
@@ -521,12 +531,6 @@ class HttpGateway:
             return {**response, "choices": [{"message": {"content": text}}]}
         return response
 
-    def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
-        if isinstance(model, Mapping) and messages is None:
-            model_id, messages, role = _completion_chat_request(model)
-            kwargs.setdefault("role", role)
-            return self.chat(model_id, messages, **kwargs)
-        return self.chat(str(model), messages, **kwargs)
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
         request = dict(payload)
         key, envelope = decision_payload(request, model=JEV_MODEL)
@@ -537,12 +541,9 @@ class HttpGateway:
             envelope,
             role=role,
         )
-        answer = response["answers"][key]
+        answer = _decision_answers(response, [key])[0]
         self.decision_log.append({"question": request, "answer": answer})
         return answer
-
-    decision = decide
-    jev = decide
 
     def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
         if not requests:
@@ -554,7 +555,7 @@ class HttpGateway:
             envelope,
             role=role,
         )
-        answers = [response["answers"][key] for key in keys]
+        answers = _decision_answers(response, keys)
         self.decision_log.extend(
             {"question": request, "answer": answer}
             for request, answer in zip(requests, answers, strict=True)
@@ -601,8 +602,6 @@ class ScriptedGateway:
         self._run_id = str(run_id) if run_id is not None else "scripted"
         return self._run_id
 
-    set_run = new_run
-
     def _next(self, handler: Callable[..., Any] | None, *args: Any, **kwargs: Any) -> Any:
         if handler is not None:
             return handler(*args, **kwargs)
@@ -624,24 +623,15 @@ class ScriptedGateway:
         self.calls.append({"operation": "chat", "role": role, "model": model, "run_id": run_id})
         return self._next(self.chat_handler, model, messages, role=role, run_id=run_id, **params)
 
-    def complete(self, model: str | Mapping[str, Any], messages: Any = None, **kwargs: Any) -> Any:
-        if isinstance(model, Mapping) and messages is None:
-            model_id, messages, role = _completion_chat_request(model)
-            kwargs.setdefault("role", role)
-            return self.chat(model_id, messages, **kwargs)
-        return self.chat(str(model), messages, **kwargs)
-
     def decide(self, payload: Mapping[str, Any], *, role: str = "judge", run_id: str | None = None) -> Any:
         self.calls.append({"operation": "decide", "role": role, "model": JEV_MODEL, "run_id": run_id})
         answer = self._next(self.decision_handler, dict(payload), role=role, run_id=run_id)
         self.decision_log.append({"question": dict(payload), "answer": answer})
         return answer
 
-    decision = decide
-    jev = decide
-
     def decide_batch(self, requests: Sequence[Mapping[str, Any]], *, role: str = "judge", run_id: str | None = None) -> list[Any]:
-        return [self.jev(request, role=role, run_id=run_id) for request in requests]
+        return [self.decide(request, role=role, run_id=run_id) for request in requests]
+
     def list_models(self, *, refresh: bool = False) -> CatalogSnapshot:
         return self.catalog.fetch(force=refresh) if hasattr(self.catalog, "fetch") else self.catalog
 
@@ -713,9 +703,6 @@ class ReplayGateway(ScriptedGateway):
         )
         self.decision_log.append({"question": request, "answer": answer})
         return answer
-
-    decision = decide
-    jev = decide
 
 
 __all__ = [

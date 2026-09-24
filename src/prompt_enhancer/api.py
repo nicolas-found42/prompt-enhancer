@@ -309,7 +309,9 @@ def create_app(
     @app.get("/api/catalog")
     def catalog() -> dict[str, Any]:
         try:
-            return app_optimizer.gateway.list_models(refresh=True).to_public_dict()
+            # The model catalog is not part of the Gateway interface; live and
+            # scripted gateways offer it, and any failure falls back below.
+            return getattr(app_optimizer.gateway, "list_models")(refresh=True).to_public_dict()
         except Exception as exc:
             if app_settings.openrouter_api_key or app_settings.opencode_go_key:
                 raise HTTPException(status_code=503, detail="model catalog is unavailable") from exc
