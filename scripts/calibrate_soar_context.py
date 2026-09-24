@@ -7,12 +7,11 @@ provide ground truth for the other checklist questions.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
-from evaluation_review_common import binary_metrics
+from evaluation_review_common import binary_metrics, in_holdout_group
 
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import default_gap_question
@@ -56,7 +55,7 @@ def calibrate(dataset_path: Path, replay_path: Path, *, thresholds: tuple[float,
         probability = answer.get("noul", answer.get("probability_true"))
         if isinstance(probability, bool) or not isinstance(probability, (float, int)) or not 0 <= probability <= 1:
             raise ValueError(f"invalid context probability for case {case.id}")
-        holdout = int(hashlib.sha256(case.id.encode()).hexdigest()[:8], 16) % 5 == 0
+        holdout = in_holdout_group(case.id)
         rows.append((case.id, float(probability), "context" in case.expected_gaps, holdout))
     train = [row for row in rows if not row[3]]
     holdout = [row for row in rows if row[3]]

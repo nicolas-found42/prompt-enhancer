@@ -86,7 +86,10 @@ def import_review(batch: dict[str, Any], review: dict[str, Any], *, minimum: int
         raise ValueError("review batch digest does not match")
     reviewer = review.get("reviewer")
     if not isinstance(reviewer, str) or not reviewer.strip():
-        raise ValueError("human reviewer identity is required")
+        raise ValueError("reviewer identity is required")
+    reviewer_kind = review.get("reviewer_kind", "human")
+    if reviewer_kind not in {"human", "user_delegated_model"}:
+        raise ValueError("reviewer_kind must be human or user_delegated_model")
     judgments = review.get("reviews")
     if not isinstance(judgments, list) or len(judgments) != len(cases):
         raise ValueError("review must contain one judgment per source case")
@@ -112,17 +115,19 @@ def import_review(batch: dict[str, Any], review: dict[str, Any], *, minimum: int
             raise ValueError(f"reconstructed context text required for {case['id']}")
         prompt = case["prompt"] if mode == "standalone" else f"Relevant prior conversation context:\n{context.strip()}\n\nCurrent user request:\n{case['prompt']}"
         selected.append({
-            "id": case["id"], "source": "hand_labeled", "prompt": prompt,
+            "id": case["id"], "source": "hand_labeled" if reviewer_kind == "human" else "real", "prompt": prompt,
             "expected_gaps": gaps, "task_stratum": task,
             "reviewer": reviewer.strip(), "source_session": case["session"],
             "context_mode": mode, "review_notes": judgment.get("notes", ""),
+            "label_provenance": reviewer_kind,
+            "reviewed_at": review.get("reviewed_at"),
         })
     if len(selected) < minimum:
-        raise ValueError(f"only {len(selected)} usable human judgments; require {minimum}")
+        raise ValueError(f"only {len(selected)} usable judgments; require {minimum}")
     return {
         "schema_version": 1,
-        "name": "local-agent-human-gap-review",
-        "metadata": {"batch_digest": batch_digest(batch), "reviewer": reviewer.strip(), "usable_cases": len(selected), "task_counts": dict(Counter(c["task_stratum"] for c in selected))},
+        "name": f"local-agent-{reviewer_kind}-gap-review",
+        "metadata": {"batch_digest": batch_digest(batch), "reviewer": reviewer.strip(), "label_provenance": reviewer_kind, "reviewed_at": review.get("reviewed_at"), "usable_cases": len(selected), "task_counts": dict(Counter(c["task_stratum"] for c in selected))},
         "cases": selected,
     }
 

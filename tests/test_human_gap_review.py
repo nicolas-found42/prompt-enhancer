@@ -43,8 +43,19 @@ def test_review_import_rejects_missing_provenance_or_shortfall():
     with pytest.raises(ValueError, match="source session review required"):
         import_review(batch, review, minimum=2)
     review["reviews"][1]["judgment"] = "uncertain"
-    with pytest.raises(ValueError, match="only 1 usable human judgments"):
+    with pytest.raises(ValueError, match="only 1 usable judgments"):
         import_review(batch, review, minimum=2)
+
+
+def test_delegated_review_keeps_model_provenance_separate_from_human_labels():
+    batch = _batch()
+    review = _review(batch)
+    review["reviewer_kind"] = "user_delegated_model"
+
+    dataset = import_review(batch, review, minimum=2)
+
+    assert dataset["metadata"]["label_provenance"] == "user_delegated_model"
+    assert all(case["source"] == "real" and case["label_provenance"] == "user_delegated_model" for case in dataset["cases"])
 
 
 def test_review_import_rejects_gap_outside_task_checklist():
