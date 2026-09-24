@@ -6,11 +6,11 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
-from typing import Any, Protocol
+from typing import Any
 
 from .catalog import DEFAULT_GO_WRITER
+from .gateway import Gateway, completion_text, writer_messages
 from .jev import NoulDecision, parse_decision
-from .rewrite import _text
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,11 +60,6 @@ class CompiledSuccessTests:
         }
 
 
-class CompletionGateway(Protocol):
-    def complete(self, request: Mapping[str, Any]) -> Any: ...
-    def jev(self, request: Mapping[str, Any]) -> Any: ...
-
-
 # Chosen from user-delegated faithfulness judgments; see docs/delegated-evaluation-2026-09-23.md.
 DEFAULT_FAITHFULNESS_THRESHOLD = 0.8
 
@@ -81,7 +76,7 @@ class SuccessTestCompiler:
 
     def __init__(
         self,
-        gateway: CompletionGateway,
+        gateway: Gateway,
         *,
         writer_model: str = DEFAULT_GO_WRITER,
         faithfulness_threshold: float = DEFAULT_FAITHFULNESS_THRESHOLD,
@@ -91,17 +86,13 @@ class SuccessTestCompiler:
         self.faithfulness_threshold = faithfulness_threshold
 
     def compile(self, prompt: str) -> CompiledSuccessTests:
-        writer_request = {
-            "model": self.writer_model,
-            "role": "writer",
-            "instructions": self._INSTRUCTIONS,
-            "state": {"prompt": prompt},
-        }
-        proposed = self._parse_tests(self.gateway.complete(writer_request))
+        response = self.gateway.chat(
+            self.writer_model, writer_messages(self._INSTRUCTIONS, {"prompt": prompt}), role="writer"
+        )
+        proposed = self._parse_tests(response)
         if not proposed:
             return CompiledSuccessTests((), (), ())
 
-        batch = getattr(self.gateway, "jev_batch", None)
         requests = [
             {
                 "model": "typesafe/jev-1.13",
@@ -118,12 +109,7 @@ class SuccessTestCompiler:
             }
             for test in proposed
         ]
-        raw = (
-            batch(requests)
-            if callable(batch)
-            else [self.gateway.jev(request) for request in requests]
-        )
-        decisions = tuple(parse_decision(response) for response in raw)
+        decisions = tuple(parse_decision(response) for response in self.gateway.decide_batch(requests))
 
         accepted: list[SuccessTest] = []
         rejected: list[RejectedSuccessTest] = []
@@ -156,7 +142,7 @@ class SuccessTestCompiler:
 
     @classmethod
     def _parse_tests(cls, response: Any) -> tuple[SuccessTest, ...]:
-        content = _text(response)
+        content = completion_text(response)
         if not content:
             raise TypeError("writer response must contain JSON text")
         content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)

@@ -11,8 +11,9 @@ import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any
 
+from .gateway import Gateway
 from .jev import (
     ChoiceDecision,
     JevDecision,
@@ -264,10 +265,6 @@ _PROBLEM_QUESTIONS = {
 }
 
 
-class DecisionGateway(Protocol):
-    def jev(self, request: Mapping[str, Any]) -> Any: ...
-
-
 
 
 def split_sentences(prompt: str) -> tuple[Sentence, ...]:
@@ -320,7 +317,7 @@ class Diagnoser:
 
     def __init__(
         self,
-        gateway: DecisionGateway,
+        gateway: Gateway,
         *,
         rubric: DiagnosisRubric | Callable[[], DiagnosisRubric] = DEFAULT_RUBRIC,
     ) -> None:
@@ -334,8 +331,7 @@ class Diagnoser:
         return self._rubric()
 
     def _decide(self, requests: Sequence[Mapping[str, Any]]) -> tuple[JevDecision, ...]:
-        batch = getattr(self.gateway, "jev_batch", None)
-        raw_responses = batch(requests) if callable(batch) else [self.gateway.jev(request) for request in requests]
+        raw_responses = self.gateway.decide_batch(requests)
         try:
             return tuple(parse_decision(response) for response in raw_responses)
         except JevResponseError:

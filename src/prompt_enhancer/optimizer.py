@@ -1,7 +1,7 @@
 """Public local optimization engine.
 
-The facade is deliberately dependency-injected. Production can provide a
-ModelGateway; tests and local demos can provide ScriptedGateway or ReplayGateway.
+The facade is deliberately dependency-injected with a Gateway: production uses
+HttpGateway; tests and local demos use ScriptedGateway or ReplayGateway.
 The public result always includes the original prompt, evidence, cost, timing,
 and a durable run identifier.
 """
@@ -29,7 +29,6 @@ from .config import Settings
 from .diagnosis import (
     DEFAULT_RUBRIC,
     ConfirmedGap,
-    DecisionGateway,
     Diagnoser,
     DiagnosisReport,
     DiagnosisRubric,
@@ -39,11 +38,14 @@ from .diagnosis import (
 from .failures import describe_failure
 from .fidelity import check_candidate_fidelity
 from .gateway import (
+    Gateway,
     GatewayConfig,
+    HttpGateway,
     HttpTransport,
-    ModelGateway,
     ProviderError,
     ScriptedGateway,
+    completion_text,
+    writer_messages,
 )
 from .grading import grade_panel_with_jev
 from .history import RunHistory
@@ -55,8 +57,6 @@ from .rewrite import (
     WRITER_INSTRUCTION_VERSIONS,
     CandidateWriter,
 )
-from .rewrite import ModelGateway as RewriteGateway
-from .rewrite import _text as completion_text
 from .rubric_revisions import SQLiteRubricStore
 from .runner import PanelResult, run_candidates
 from .selector import rank_candidates
@@ -66,7 +66,6 @@ from .strategies import STRATEGY_LIBRARY, RewriteStrategy, search_strategies
 from .strong_check import StrongCheckPolicy
 from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
-    CompletionGateway,
     SuccessTestCompiler,
 )
 
@@ -106,7 +105,7 @@ class PromptOptimizer:
 
     def __init__(
         self,
-        gateway: Any | None = None,
+        gateway: Gateway | None = None,
         store: RunStore | None = None,
         config: Settings | None = None,
         rubric_store: SQLiteRubricStore | None = None,
@@ -139,7 +138,7 @@ class PromptOptimizer:
             self.config.writer_model = defaults.writer
             self.config.strong_check_model = defaults.strong
             self.config.weak_models = defaults.weak
-        self.gateway: Any = gateway if gateway is not None else self._default_gateway()
+        self.gateway: Gateway = gateway if gateway is not None else self._default_gateway()
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (SQLiteRubricStore(self.store.path) if self.store.path != ":memory:" else None)
         self.repeat = RepeatCoordinator()
@@ -173,7 +172,7 @@ class PromptOptimizer:
         self.config.weak_models = selected.weak
         return self.get_model_settings()
 
-    def _default_gateway(self) -> Any:
+    def _default_gateway(self) -> Gateway:
         if not self.config.openrouter_api_key or not self.config.opencode_go_key:
             return ScriptedGateway()
         gateway_config = GatewayConfig.from_env()
@@ -187,7 +186,7 @@ class PromptOptimizer:
             go_api_key=gateway_config.go_api_key,
             openrouter_api_key=gateway_config.openrouter_api_key,
         )
-        return ModelGateway(transport, config=gateway_config, catalog=catalog)
+        return HttpGateway(transport, config=gateway_config, catalog=catalog)
 
     def _clarification_repository(self) -> Any:
         if self.store.path == ":memory:":
@@ -417,7 +416,7 @@ class PromptOptimizer:
         self._stage("writing_tests")
         try:
             compiled = SuccessTestCompiler(
-                cast(CompletionGateway, self.gateway),
+                self.gateway,
                 writer_model=selected_settings.writer_model,
                 faithfulness_threshold=self.faithfulness_threshold,
             ).compile(working_prompt)
@@ -465,7 +464,7 @@ class PromptOptimizer:
             model_view,
             tier,
             writer=CandidateWriter(
-                cast(RewriteGateway, self.gateway),
+                self.gateway,
                 writer_model=selected_settings.writer_model,
                 instruction_version=self.writer_instruction_version,
             ),
@@ -579,7 +578,7 @@ class PromptOptimizer:
                 for task in self.diagnosis_rubric.task_types
             ),
         )
-        report = Diagnoser(cast(DecisionGateway, self.gateway), rubric=diagnosis_rubric).diagnose(prompt)
+        report = Diagnoser(self.gateway, rubric=diagnosis_rubric).diagnose(prompt)
         if rubric is None:
             return report
         questions = [
@@ -588,7 +587,7 @@ class PromptOptimizer:
         ]
         if not questions:
             return replace(report, rubric_version=rubric.version_id)
-        responses = self.gateway.jev_batch(questions)
+        responses = self.gateway.decide_batch(questions)
         gaps = list(report.confirmed_gaps)
         default_impacts = {item.key: item.impact for task in DEFAULT_RUBRIC.task_types for item in task.checklist}
         for item, response in zip(rubric.questions, responses, strict=True):
@@ -733,17 +732,17 @@ class PromptOptimizer:
         updated_prompt = _apply_assumption(final_prompt, key, old_value, value, previous.get("source"))
         if updated_prompt is None:
             try:
-                response = self.gateway.complete(
-                    {
-                        "model": self.config.writer_model,
-                        "role": "writer",
-                        "state": {
+                response = self.gateway.chat(
+                    self.config.writer_model,
+                    writer_messages(
+                        "Revise only the stated assumption in the final prompt. Preserve all other wording and return only the revised prompt.",
+                        {
                             "original_prompt": record["prompt"],
                             "final_prompt": final_prompt,
                             "assumption": {"key": key, "previous": old_value, "corrected": value},
                         },
-                        "instructions": "Revise only the stated assumption in the final prompt. Preserve all other wording and return only the revised prompt.",
-                    },
+                    ),
+                    role="writer",
                     run_id=run_id,
                 )
                 updated_prompt = completion_text(response).strip()
@@ -840,10 +839,7 @@ class PromptOptimizer:
         )
 
     def _usage_cost(self) -> CostBreakdown:
-        report = getattr(
-            self.gateway, "usage_report", lambda: {"total": 0.0, "by_role": {}}
-        )()
-        return cast(CostBreakdown, report)
+        return cast(CostBreakdown, self.gateway.usage_report())
 
     def _needs_input_result(
         self,
@@ -905,7 +901,7 @@ class PromptOptimizer:
         selection = report.get("selection_evidence") if isinstance(report, Mapping) else {}
         original_score = selection.get("original_score") if isinstance(selection, Mapping) else None
         old_answers = list((previous or {}).get("jev_answers") or [])
-        current_answers = list(getattr(self.gateway, "decision_log", []))
+        current_answers = list(self.gateway.decision_log)
         answers = current_answers if current_answers[:len(old_answers)] == old_answers else old_answers + current_answers
         evidence: dict[str, Any] = {"jev_answers": answers}
         if isinstance(original_score, Mapping):

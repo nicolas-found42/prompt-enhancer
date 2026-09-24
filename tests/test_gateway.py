@@ -12,7 +12,7 @@ from prompt_enhancer.catalog import (
 )
 from prompt_enhancer.gateway import (
     GatewayConfig,
-    ModelGateway,
+    HttpGateway,
     ProviderError,
     ReplayGateway,
     ScriptedGateway,
@@ -40,21 +40,21 @@ class QueueTransport:
 
 
 def test_default_go_route_uses_subscription_endpoint():
-    gateway = ModelGateway(config=GatewayConfig(), go_models=["go-writer"])
+    gateway = HttpGateway(config=GatewayConfig(), go_models=["go-writer"])
 
     assert gateway.route_model("go-writer").url == "https://opencode.ai/zen/go/v1/chat/completions"
     assert GatewayConfig.from_env({}).go_models_url == "https://opencode.ai/zen/go/v1/models"
 
 
 def test_gateway_reads_provider_credentials_from_environment():
-    gateway = ModelGateway.from_env({"OPENCODE_GO_KEY": "go-test-key", "OPENROUTER_API_KEY": "router-test-key"})
+    gateway = HttpGateway.from_env({"OPENCODE_GO_KEY": "go-test-key", "OPENROUTER_API_KEY": "router-test-key"})
 
     assert gateway.config.go_api_key == "go-test-key"
     assert gateway.config.openrouter_api_key == "router-test-key"
 
 
 def test_known_go_defaults_do_not_fall_back_to_openrouter_without_catalog():
-    gateway = ModelGateway(config=GatewayConfig())
+    gateway = HttpGateway(config=GatewayConfig())
 
     assert gateway.route_model("deepseek-v4.1-flash").provider == "go"
     assert gateway.route_model("space-bunny-free").provider == "go"
@@ -73,7 +73,7 @@ def test_go_catalog_sends_its_user_agent():
 
 def test_go_anthropic_model_uses_messages_endpoint_and_normalizes_output():
     transport = QueueTransport([Response(200, {"content": [{"type": "text", "text": "Done"}], "usage": {"input_tokens": 3, "output_tokens": 1}})])
-    gateway = ModelGateway(transport, config=GatewayConfig(go_api_key="go-test-key"), catalog=StaticModelCatalog(["qwen3.8-flash"]))
+    gateway = HttpGateway(transport, config=GatewayConfig(go_api_key="go-test-key"), catalog=StaticModelCatalog(["qwen3.8-flash"]))
 
     response = gateway.chat("qwen3.8-flash", [{"role": "system", "content": "Be concise"}, {"role": "user", "content": "Say done"}], seed=9)
 
@@ -90,7 +90,7 @@ def test_go_anthropic_model_uses_messages_endpoint_and_normalizes_output():
 
 def test_go_responses_model_uses_responses_endpoint_and_normalizes_output():
     transport = QueueTransport([Response(200, {"output": [{"type": "message", "content": [{"type": "output_text", "text": "Done"}]}], "usage": {"input_tokens": 3, "output_tokens": 1}})])
-    gateway = ModelGateway(transport, catalog=StaticModelCatalog(["grok-4.6"]))
+    gateway = HttpGateway(transport, catalog=StaticModelCatalog(["grok-4.6"]))
 
     response = gateway.chat("grok-4.6", "Say done", max_tokens=32, seed=9)
 
@@ -103,7 +103,7 @@ def test_go_responses_model_uses_responses_endpoint_and_normalizes_output():
 
 def test_muse_reserves_room_for_reasoning_before_visible_output():
     transport = QueueTransport([Response(200, {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": "OK"}]}]})])
-    gateway = ModelGateway(transport, catalog=StaticModelCatalog(["muse-spark-1.3-contributor"]))
+    gateway = HttpGateway(transport, catalog=StaticModelCatalog(["muse-spark-1.3-contributor"]))
 
     gateway.chat("muse-spark-1.3-contributor", "Return OK", role="weak")
 
@@ -133,7 +133,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
             )
         ],
     )
-    gateway = ModelGateway(
+    gateway = HttpGateway(
         transport,
         config=GatewayConfig(
             go_api_key="go-secret",
@@ -171,7 +171,7 @@ def test_retries_provider_error_without_returning_key():
             Response(200, {"ok": True}),
         ]
     )
-    gateway = ModelGateway(
+    gateway = HttpGateway(
         transport,
         config=GatewayConfig(openrouter_api_key="never-return-me", max_retries=1),
     )
@@ -192,26 +192,28 @@ def test_settings_overrides_are_per_run_and_persist(tmp_path):
     assert store.load().defaults.writer == "writer-v2"
 
 
-def test_scripted_and_replay_gateways_are_deterministic():
+def test_scripted_gateway_answers_in_order_then_reports_exhaustion():
     scripted = ScriptedGateway([{"text": "one"}])
-    assert scripted.complete("m", "hello") == {"text": "one"}
-    replay = ReplayGateway({("chat", "m", "writer"): {"text": "replayed"}})
-    assert replay.complete("m", "hello", role="writer") == {"text": "replayed"}
-    assert replay.calls[0]["operation"] == "chat"
+    messages = [{"role": "user", "content": "hello"}]
+
+    assert scripted.chat("m", messages, role="writer") == {"text": "one"}
+    with pytest.raises(ProviderError, match="no scripted response remains"):
+        scripted.chat("m", messages, role="writer")
 
 
 def test_strict_replay_requires_the_recorded_request() -> None:
     payload = {"model": "writer", "messages": [{"role": "user", "content": "First prompt"}]}
     key = ReplayGateway.request_key("chat", "writer", payload, "writer")
-    replay = ReplayGateway({key: {"text": "First result"}}, strict=True)
+    replay = ReplayGateway({key: {"text": "First result"}})
 
     assert replay.chat("writer", payload["messages"], role="writer") == {"text": "First result"}
+    assert replay.calls[0]["operation"] == "chat"
     with pytest.raises(ProviderError, match="no recorded response"):
         replay.chat("writer", [{"role": "user", "content": "Another prompt"}], role="writer")
 
-    alias = ReplayGateway({"complete:writer": {"text": "generic"}}, strict=True)
+    single = ReplayGateway({"some-other-key": {"text": "generic"}})
     with pytest.raises(ProviderError, match="no recorded response"):
-        alias.chat("writer", payload["messages"], role="writer")
+        single.chat("writer", payload["messages"], role="writer")
 
 
 def test_usage_ledger_splits_roles():
@@ -244,7 +246,7 @@ def test_jev_requests_use_decisions_api_and_return_typed_answer_payload():
             "usage": {"input_tokens": 100, "output_tokens": 1, "cost": 0.0000042},
         }),
     ])
-    gateway = ModelGateway(
+    gateway = HttpGateway(
         transport,
         config=GatewayConfig(openrouter_api_key="or-secret", max_retries=0),
     )
@@ -267,15 +269,15 @@ def test_jev_requests_use_decisions_api_and_return_typed_answer_payload():
     assert gateway.usage_report()["total"] == pytest.approx(0.0000042)
 
 
-def test_jev_batch_sends_one_request_for_multiple_questions():
+def test_decide_batch_sends_one_request_for_multiple_questions():
     transport = QueueTransport([
         Response(200, {"answers": {
             "gap:goal": {"type": "noul", "noul": 0.91},
             "gap:context": {"type": "noul", "noul": 0.12},
         }}),
     ])
-    gateway = ModelGateway(transport, config=GatewayConfig(max_retries=0))
-    answers = gateway.jev_batch([
+    gateway = HttpGateway(transport, config=GatewayConfig(max_retries=0))
+    answers = gateway.decide_batch([
         {"key": "gap:goal", "type": "noul", "query": "Is goal missing?", "state": {"prompt": "A"}},
         {"key": "gap:context", "type": "noul", "query": "Is context missing?", "state": {"prompt": "A"}},
     ])

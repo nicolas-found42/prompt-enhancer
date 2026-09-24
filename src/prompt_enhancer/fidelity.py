@@ -3,11 +3,38 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, cast
 
-from .gateway import ProviderError
+from .gateway import Gateway, ProviderError
 from .jev import JevResponseError, NoulDecision, parse_decision
-from .rewrite import FidelityResult
+
+
+@dataclass(frozen=True)
+class FidelityResult:
+    """Outcome of the three non-negotiable fidelity checks."""
+
+    meaning_preserved: bool
+    no_invention: bool
+    edits_confined: bool
+    evidence: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def passed(self) -> bool:
+        return self.meaning_preserved and self.no_invention and self.edits_confined
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "meaning_preserved": self.meaning_preserved,
+            "no_invention": self.no_invention,
+            "edits_confined": self.edits_confined,
+            "meaning": self.meaning_preserved,
+            "invention": self.no_invention,
+            "confined": self.edits_confined,
+            "passed": self.passed,
+            "evidence": dict(self.evidence),
+        }
+
 
 _CHECKS = {
     "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
@@ -17,7 +44,7 @@ _CHECKS = {
 
 
 def check_candidate_fidelity(
-    gateway: Any,
+    gateway: Gateway,
     original_prompt: str,
     candidate_prompt: str,
     diagnosis: Mapping[str, Any],
@@ -44,11 +71,11 @@ def check_candidate_fidelity(
         for name, question in _CHECKS.items()
     ]
     try:
-        answers = gateway.jev_batch(requests, role="judge", run_id=run_id)
+        answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
         decisions = [parse_decision(answer) for answer in answers]
         if len(decisions) != len(_CHECKS) or any(not isinstance(answer, NoulDecision) for answer in decisions):
-            raise ValueError("incomplete fidelity response")
-    except (ProviderError, JevResponseError, ValueError, TypeError, KeyError) as exc:
+            raise JevResponseError("incomplete fidelity response")
+    except (ProviderError, JevResponseError) as exc:
         return FidelityResult(False, False, False, {"error": type(exc).__name__})
     probabilities = {
         name: decision.probability
