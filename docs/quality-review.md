@@ -4,6 +4,40 @@ Jev reviews relationships between code and its stated contracts. Ruff/Prettier,
 ESLint, types, tests, coverage, security scanning, and dependency audits remain the
 required deterministic checks. Semantic findings never block a commit or merge.
 
+## Agent procedure
+
+Use this procedure when changing source code or tests, reviewing a branch, or
+modifying the semantic review tooling. Documentation-only changes need link and
+content checks rather than model inference.
+
+1. **Fix the comparison base before work.** For a branch review, use the PR's
+   base or the user-specified ref. For a new change, record the starting commit's
+   full SHA. Keep that base through fixes and pushes so a moved `origin/main`
+   cannot silently make the review empty.
+2. **Run the required deterministic checks.** Follow the repository's existing
+   checks and commit hooks. For changes to the semantic review runner, rules, or
+   recordings, also run the offline quality-review tests described below.
+3. **Review the committed snapshot.** Once the task has an authorized commit,
+   run `lint` without `--live` against the recorded base and reviewed head. Run
+   `plan` for changed Gateway methods; use `--findings` for explicit review claims
+   with their relevant tests, helpers, and trusted contracts. Inspect the selected
+   evidence and budgets. If the task ends with uncommitted changes, report that
+   this tool has not reviewed them; its input is Git commits, not the working tree.
+4. **Use the appropriate inference mode.** Honor existing authorization for live
+   inference in the task. When authorized, use `lint --live` and, for applicable
+   Gateway or candidate findings, `run --live`. Otherwise use offline planning or
+   an applicable recording. A dry run, replay, missing key, or partial review must
+   be identified as such. Follow the limits below; narrow scope or report omitted
+   work when a budget is exceeded.
+5. **Triage and close the loop.** Check each finding against its source and policy.
+   Fix substantiated defects within the task's scope; retain the reason for
+   dismissing or deferring a candidate. After a fix changes the reviewed code,
+   rerun the affected review on the new committed head with the same base. In the
+   final handoff, report the reviewed SHA and scope, mode, completion status,
+   actionable or unresolved findings, and report location. Jev judgments inform
+   the review; a completed request or high confidence does not establish that
+   code is correct.
+
 ## Install and select evidence
 
 Use Node 24+ and the repository's Python environment:
