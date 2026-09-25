@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: read
+  issues: read
+  pull-requests: read
 
 jobs:
   checks:
@@ -31,6 +33,14 @@ jobs:
         run: uv python install
       - name: Install Python dependencies
         run: uv sync --locked
+      - name: Verify issue closing link
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json closingIssuesReferences |
+            uv run --locked python scripts/check_pr_issue_link.py "$GITHUB_HEAD_REF"
       - name: Install web dependencies
         run: npm ci --prefix web
       - name: Install semantic review tooling for offline integration tests

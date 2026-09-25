@@ -67,6 +67,10 @@ run establishes local validation, not remote CI completion.
 
 ## Semantic review and handoff
 
+When reviewing a change that replaces or removes tests, compare the old tests
+with the base and account for each behavior they covered. Preserve the scenario
+in the new tests or state why it no longer applies.
+
 For source/test changes or branch reviews, follow the
 [Jev agent procedure](../quality-review.md#agent-procedure). Keep its reviewed
 commit, scope, inference mode, and incomplete results explicit. Its optional
