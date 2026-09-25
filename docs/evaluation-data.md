@@ -185,6 +185,67 @@ budget (`--budget USD`); calibration rejects `--live` without an explicit
 budget and `--record`. Keep private prompts, answers, reports, and artifacts under ignored
 `.local/evaluation/`.
 
+## Choice and Score option-order experiment
+
+The order-bias experiment compares repeated asks in the declared order and
+reverse order with ordinary repeat variation. It operates on recorded success
+tests and the prompt/output pair each test judged. It does not include Noul.
+Choice probabilities stay keyed by their semantic option labels. Score
+probability indexes are mapped back to the original semantic levels before
+expected-level mass or argmax changes are compared.
+
+Each version 1 manifest case has an `id`, `source_group` identifying one
+distinct prompt/output pair, `provenance` (`matched_recording` or
+`synthetic_known_answer`), `prompt`, `output`, and `success_tests`. Choice tests
+include the expected option, declared `options`, and their
+`option_descriptions`; Score tests include ordered `levels` and the expected
+level. A source group must not refer to more than one prompt/output pair.
+
+Strict replay needs the exact manifest and all unique recorded request
+identities. It performs no network fallback:
+
+```sh
+uv run python -m prompt_enhancer.evaluation order-bias \
+  .local/evaluation/order-bias-manifest.json \
+  --replay .local/evaluation/order-bias-recording.json \
+  --output .local/evaluation/order-bias-report.json \
+  --artifact .local/evaluation/order-bias-policy.json
+```
+
+Live collection defaults to three independent requests per order. It is
+bounded to 100 cases and 1,000 question evaluations and requires a finite dollar
+budget plus `--record`:
+
+```sh
+uv run --env-file .env python -m prompt_enhancer.evaluation order-bias \
+  .local/evaluation/order-bias-manifest.json \
+  --live --budget 0.50 \
+  --record .local/evaluation/order-bias-recording.json \
+  --output .local/evaluation/order-bias-report.json \
+  --artifact .local/evaluation/order-bias-policy.json
+```
+
+The report keeps synthetic results, matched source-run billing, and experiment
+cost, token use, latency, and the estimated cost ceiling in separate fields.
+The fixed-seed paired bootstrap resamples distinct source groups 1,000 times.
+At least 30 complete matched groups are required to make a policy eligible.
+`single` is recommended when the 95% upper bounds for excess expected-mass
+shift and excess semantic-flip rate are each at most 0.01. `mean_pair` is
+recommended if either lower bound exceeds 0.01; other outcomes recommend
+`insufficient_evidence`. These initial tolerances are policy choices, not a
+claim of universal Jev accuracy.
+
+Pass the saved artifact to `PromptOptimizer(grading_policy=...)`, or set
+`PROMPT_ENHANCER_ORDER_BIAS_POLICY` to its path for the application server, to
+use it at runtime. A matching question schema and Jev snapshot are required.
+The run report and web report show the selected policy and its reason per
+success test. `single` asks once;
+`mean_pair` averages the semantically aligned Choice or Score pass masses. An
+absent, synthetic-only, partial, incompatible, or inconclusive artifact keeps
+the named `legacy_min_pair` behavior. Noul continues to use one direct ask. No
+matched order-bias dataset is checked into this repository, so the default
+remains `legacy_min_pair`; synthetic fixtures verify code paths only.
+
 ## Local coding-agent sessions
 
 An inspection of the local Codex, Claude Code, and oh-my-pi histories found
