@@ -544,7 +544,10 @@ class PromptOptimizer:
                 continue
             entry = entries[index] if index < len(entries) else {}
             snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
-            from .evaluation.calibration import runtime_question_identity
+            from .evaluation.calibration import (
+                DEFAULT_POLICY_VERSION,
+                runtime_question_identity,
+            )
 
             identity = runtime_question_identity(
                 f"rubric:{item.question_id}",
@@ -552,6 +555,11 @@ class PromptOptimizer:
                 family="rubric",
                 rubric_version=rubric.version_id,
                 snapshot=snapshot if isinstance(snapshot, str) else None,
+                policy_version=(
+                    self.decision_policy.policy_version
+                    if self.decision_policy is not None
+                    else DEFAULT_POLICY_VERSION
+                ),
             )
             identity = replace(
                 identity,

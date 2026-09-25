@@ -863,6 +863,9 @@ def _identity_from_event(
             "family": _first(value, "family", "question_family", default=""),
             "schema_version": _first(value, "schema_version", default=1),
             "rubric_version": _first(value, "rubric_version", default=None),
+            "policy_version": _first(
+                value, "policy_version", default=DEFAULT_POLICY_VERSION
+            ),
             "answering_snapshot": _first(
                 value,
                 "answering_snapshot",
@@ -900,6 +903,7 @@ def _identity_from_event(
         ("family", ("family", "question_family"), ""),
         ("schema_version", ("schema_version",), 1),
         ("rubric_version", ("rubric_version",), None),
+        ("policy_version", ("policy_version",), DEFAULT_POLICY_VERSION),
         (
             "answering_snapshot",
             ("answering_snapshot", "snapshot", "answered_by", "model_snapshot"),
@@ -1306,6 +1310,22 @@ def _score_probability(decision: ScoreDecision, spec: EventSpec) -> float | None
     return total
 
 
+def _decision_margin(decision: Any, spec: EventSpec) -> float | None:
+    """Derived separation statistic, never a Noul provider confidence."""
+
+    if isinstance(decision, NoulDecision):
+        return abs(2.0 * decision.probability - 1.0)
+    if isinstance(decision, ChoiceDecision):
+        probabilities = sorted(decision.probabilities.values(), reverse=True)
+        if not probabilities:
+            return None
+        return probabilities[0] - (probabilities[1] if len(probabilities) > 1 else 0.0)
+    if isinstance(decision, ScoreDecision):
+        probability = _score_probability(decision, spec)
+        return abs(2.0 * probability - 1.0) if probability is not None else None
+    return None
+
+
 def normalize_event(
     observation: CalibrationObservation, spec: EventSpec | None = None
 ) -> NormalizedEvent:
@@ -1353,14 +1373,13 @@ def normalize_event(
     provider_confidence = _raw_confidence(observation.raw_answer)
     label, semantic_label = _label_parts(observation.label)
     expected_class = semantic_label
-    derived_margin: float | None = None
+    derived_margin = _decision_margin(decision, event_spec)
     probability: float | None = None
     predicted_class: str | None = None
 
     if isinstance(decision, NoulDecision):
         provider_confidence = None
         probability = _noul_probability(decision, event_spec)
-        derived_margin = abs(2.0 * decision.probability - 1.0)
         predicted_class = "yes" if decision.probability >= 0.5 else "no"
         negative_event = event_spec.polarity in {"negative", "no", "false"} or (
             event_spec.expected_class is not None
@@ -1433,7 +1452,6 @@ def normalize_event(
                 derived_margin=derived_margin,
                 provider_confidence=provider_confidence,
             )
-        derived_margin = abs(2.0 * probability - 1.0)
         if expected_class is None and event_spec.expected_class is not None:
             expected_class = _class_key(event_spec.expected_class)
     else:
@@ -2115,6 +2133,10 @@ def calibrate_question(
 
     policy = verdict_policy or VerdictPolicy()
     threshold_policy = threshold_policy or ThresholdPolicy()
+    if identity.policy_version != policy.policy_version:
+        raise CalibrationError(
+            "question policy version must match the verdict policy version"
+        )
     raw_observations = tuple(observations)
     if not raw_observations:
         raise CalibrationError("calibration requires at least one observation")
@@ -2738,9 +2760,12 @@ class DecisionPolicy:
 
     @classmethod
     def from_artifact(
-        cls, artifact: CalibrationArtifact | Mapping[str, Any] | str | Path
+        cls,
+        artifact: CalibrationArtifact | Mapping[str, Any] | str | Path,
+        *,
+        policy_version: str = DEFAULT_POLICY_VERSION,
     ) -> DecisionPolicy:
-        return cls(artifact)
+        return cls(artifact, policy_version=policy_version)
 
     @property
     def question_ids(self) -> tuple[str, ...]:
@@ -2770,6 +2795,8 @@ class DecisionPolicy:
             and stored.answering_snapshot is not None
             and stored.question_id == identity.question_id
             and stored.answering_snapshot == actual_snapshot
+            and stored.policy_version == self.policy_version
+            and identity.policy_version == self.policy_version
             and stored.identity_digest == identity.identity_digest
         )
 
@@ -2868,13 +2895,8 @@ class DecisionPolicy:
         return None
 
     @staticmethod
-    def _margin(decision: Any) -> float | None:
-        if isinstance(decision, NoulDecision):
-            return abs(2.0 * decision.probability - 1.0)
-        if isinstance(decision, (ChoiceDecision, ScoreDecision)):
-            probabilities = list(decision.probabilities.values())
-            return max(probabilities) if probabilities else None
-        return None
+    def _margin(decision: Any, identity: QuestionIdentity) -> float | None:
+        return _decision_margin(decision, EventSpec.from_identity(identity))
 
     def apply(
         self,
@@ -2952,7 +2974,7 @@ class DecisionPolicy:
             checks: list[bool] = []
             for name, actual in (
                 ("probability_gte", probability),
-                ("margin_gte", self._margin(decision)),
+                ("margin_gte", self._margin(decision, identity)),
                 (
                     "confidence_gte",
                     None
@@ -2995,6 +3017,7 @@ def runtime_question_identity(
     family: str = "",
     rubric_version: str | None = None,
     snapshot: str | None = None,
+    policy_version: str = DEFAULT_POLICY_VERSION,
 ) -> QuestionIdentity:
     """Build the runtime identity without changing the Gateway request shape."""
 
@@ -3015,8 +3038,8 @@ def runtime_question_identity(
         event_mapping=event_mapping,
         family=family,
         rubric_version=rubric_version,
-        answering_snapshot=snapshot
-        or getattr(request.get("_calibration_gateway", None), "jev_model", None),
+        answering_snapshot=snapshot,
+        policy_version=policy_version,
     )
 
 

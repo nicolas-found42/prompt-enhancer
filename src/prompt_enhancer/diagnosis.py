@@ -428,6 +428,7 @@ class Diagnoser:
             family=family,
             rubric_version=self.rubric_version,
             snapshot=observation.answered_by,
+            policy_version=self.decision_policy.policy_version,
         )
         if event_mapping is not None:
             identity = replace(identity, event_mapping=dict(event_mapping))

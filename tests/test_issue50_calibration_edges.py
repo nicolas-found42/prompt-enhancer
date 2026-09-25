@@ -210,6 +210,102 @@ def test_choice_selected_correctness_scores_confidence_in_the_selection() -> Non
     assert event.label is False
     assert event.probability == pytest.approx(0.9)
     assert compute_metrics([event], 0.5)["brier"] == pytest.approx(0.81)
+    assert event.derived_margin == pytest.approx(0.8)
+
+
+def test_choice_margin_predicate_matches_calibration_and_runtime() -> None:
+    identity = QuestionIdentity(
+        question_id="pointer:choice",
+        question="Which option?",
+        primitive="choice",
+        criteria=("right", "wrong"),
+        event_mapping={"selected_correctness": True},
+        answering_snapshot=_SNAPSHOT,
+    )
+    artifact = CalibrationArtifact.from_dict(
+        {
+            "kind": "calibration-artifact",
+            "name": "choice-margin",
+            "input_digest": "known-input",
+            "questions": {
+                identity.question_id: {
+                    "identity": identity.to_dict(),
+                    "verdict": "gate-above-confidence",
+                    "threshold": 0.5,
+                    "predicate": {"margin_gte": 0.7},
+                }
+            },
+        }
+    )
+    policy = DecisionPolicy.from_artifact(artifact)
+
+    def apply(probability: float):
+        raw = {
+            "type": "choice",
+            "choice": "right",
+            "probabilities": {"right": probability, "wrong": 1 - probability},
+        }
+        return policy.apply(
+            question_id=identity.question_id,
+            identity=identity,
+            decision=parse_decision(raw),
+            raw_answer=raw,
+            snapshot=_SNAPSHOT,
+        )
+
+    assert apply(0.9).may_gate
+    assert apply(0.6).reason == "frozen_calibration_predicate_failed"
+
+
+def test_choice_can_earn_gate_above_margin_on_held_out_groups() -> None:
+    identity = QuestionIdentity(
+        question_id="pointer:choice",
+        question="Which option?",
+        primitive="choice",
+        criteria=("right", "wrong"),
+        event_mapping={"selected_correctness": True},
+        answering_snapshot=_SNAPSHOT,
+    )
+    observations = []
+    for partition, count in (("fit", 2), ("calibration", 30), ("evaluation", 30)):
+        for index in range(count):
+            correct = index < (1 if partition == "fit" else 5)
+            probability = 0.95 if index < 2 else 0.69 if index < 5 else 0.8
+            selected = "right" if correct else "wrong"
+            name = f"{partition}-{index}"
+            observations.append(
+                CalibrationObservation(
+                    event_id=name,
+                    source_group=name,
+                    example_id=name,
+                    identity=identity,
+                    label="right",
+                    raw_answer={
+                        "type": "choice",
+                        "choice": selected,
+                        "probabilities": {
+                            selected: probability,
+                            "wrong" if correct else "right": 1 - probability,
+                        },
+                    },
+                    provenance="synthetic_known_answer",
+                    answering_snapshot=_SNAPSHOT,
+                    partition=partition,
+                )
+            )
+    result = calibrate_question(
+        identity,
+        observations,
+        verdict_policy=VerdictPolicy(
+            require_control=False,
+            require_repeats=False,
+            require_brier_better_than_control=False,
+        ),
+        bootstrap_resamples=16,
+    )
+
+    assert result.verdict == "gate-above-confidence"
+    assert result.predicate["margin_gte"] >= 0.4
 
 
 def test_negative_polarity_noul_brier_targets_the_no_class() -> None:
@@ -758,6 +854,73 @@ def test_runtime_finds_matching_identity_when_manifest_contains_two_versions() -
     )
 
     assert decision.may_gate
+
+
+def test_custom_verdict_policy_version_must_match_question_identity() -> None:
+    identity = _noul_identity()
+    observation = _noul_observation("one", "source", "example", True, 0.9)
+
+    with pytest.raises(CalibrationError, match="policy version"):
+        calibrate_question(
+            identity,
+            [observation],
+            verdict_policy=VerdictPolicy(policy_version="custom-v2"),
+            bootstrap_resamples=8,
+        )
+
+    manifest = manifest_from_dict(
+        {
+            "events": [
+                {
+                    "id": "one",
+                    "source_group": "source",
+                    "question_id": "gap:goal",
+                    "question": "Is the goal missing?",
+                    "primitive": "noul",
+                    "label": True,
+                    "label_provenance": "synthetic_known_answer",
+                    "answering_snapshot": _SNAPSHOT,
+                    "policy_version": "custom-v2",
+                    "answer": {"type": "noul", "probability_true": 0.9},
+                }
+            ]
+        }
+    )
+    assert manifest.events[0].identity.policy_version == "custom-v2"
+
+
+def test_runtime_requires_matching_explicit_policy_version() -> None:
+    identity = replace(_noul_identity(), policy_version="custom-v2")
+    artifact = CalibrationArtifact.from_dict(
+        {
+            "kind": "calibration-artifact",
+            "name": "custom-policy",
+            "input_digest": "known-input",
+            "questions": {
+                identity.question_id: {
+                    "identity": identity.to_dict(),
+                    "verdict": "gate",
+                    "threshold": 0.8,
+                }
+            },
+        }
+    )
+    raw = {"type": "noul", "probability_true": 0.9}
+    default_policy = DecisionPolicy.from_artifact(artifact)
+    custom_policy = DecisionPolicy(artifact, policy_version="custom-v2")
+
+    assert not default_policy.apply(
+        question_id=identity.question_id,
+        identity=identity,
+        decision=parse_decision(raw),
+        snapshot=_SNAPSHOT,
+    ).may_gate
+    assert custom_policy.apply(
+        question_id=identity.question_id,
+        identity=identity,
+        decision=parse_decision(raw),
+        snapshot=_SNAPSHOT,
+    ).may_gate
 
 
 def test_live_cli_persists_raw_replay_and_partial_budget_report(
