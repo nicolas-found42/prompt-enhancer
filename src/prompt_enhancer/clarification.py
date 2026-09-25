@@ -34,6 +34,10 @@ class UnknownRunError(ClarificationError):
 class InvalidAnswerError(ClarificationError):
     """An answer does not match a question or is missing required text."""
 
+    def __init__(self, message: str, *, question_id: str | None = None) -> None:
+        super().__init__(message)
+        self.question_id = question_id
+
 
 class RunNotPausedError(ClarificationError):
     """A run cannot be resumed or skipped because it is not paused."""
@@ -272,13 +276,17 @@ def _selected_answer(question: ClarificationQuestion, answer: Any) -> str:
         matching = [option for option in question.options if option.other]
     if not matching:
         raise InvalidAnswerError(
-            f"Answer for {question.id!r} is not one of its options"
+            f"Answer for {question.id!r} is not one of its options",
+            question_id=question.id,
         )
     if matching[0].other:
         if text is None and value != OTHER_VALUE:
             text = value
         if text is None or not text.strip():
-            raise InvalidAnswerError(f"Answer for {question.id!r} requires other text")
+            raise InvalidAnswerError(
+                f"Answer for {question.id!r} requires other text",
+                question_id=question.id,
+            )
         return text.strip()
     return matching[0].label
 
@@ -303,7 +311,9 @@ def apply_answers(
     answered: dict[str, str] = {}
     for question in questions:
         if question.id not in answers:
-            raise InvalidAnswerError(f"Missing answer for {question.id!r}")
+            raise InvalidAnswerError(
+                f"Missing answer for {question.id!r}", question_id=question.id
+            )
         answered[question.id] = _selected_answer(question, answers[question.id])
 
     assumptions = {item["key"]: dict(item) for item in state.get("assumptions", [])}
@@ -483,6 +493,11 @@ class ClarificationService:
     def resume(self, run_id: str, answers: Mapping[str, Any]) -> dict[str, Any]:
         state = self._load_paused(run_id)
         return self._finish(run_id, apply_answers(state, answers))
+
+    def validate_answers(self, run_id: str, answers: Mapping[str, Any]) -> None:
+        """Validate answers against a paused run without continuing or saving it."""
+
+        apply_answers(self._load_paused(run_id), answers)
 
     def skip(self, run_id: str) -> dict[str, Any]:
         state = self._load_paused(run_id)
