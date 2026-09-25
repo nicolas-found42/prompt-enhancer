@@ -17,3 +17,7 @@ This is a multi-context repository: start with `CONTEXT-MAP.md`, then see `docs/
 Before handing off changes or declaring a PR ready, follow [docs/agents/validation.md](docs/agents/validation.md) for pre-commit installation, local checks, CI-only checks, CodeQL, and the validation report.
 
 When changing source code or tests, reviewing a branch, or modifying Jev review tooling, also follow the [Jev agent procedure](docs/quality-review.md#agent-procedure) for comparison bases, offline/live review, and finding triage. Semantic findings remain advisory alongside the deterministic checks.
+
+### Merged PR cleanup
+
+After a PR merges, follow [docs/agents/branch-cleanup.md](docs/agents/branch-cleanup.md) to sync local `main` and prune its branch and worktree.
