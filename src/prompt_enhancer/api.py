@@ -10,7 +10,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .clarification import RunNotPausedError
+from .clarification import InvalidAnswerError, RunNotPausedError
 from .config import Settings
 from .history import RunNotFound
 from .jobs import JobBusy, JobNotFound, RunJobs
@@ -189,6 +189,21 @@ def create_app(
     @app.post("/api/jobs/{run_id}/resume", status_code=202)
     def start_resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:
         require_run(run_id)
+        try:
+            app_optimizer.validate_resume(run_id, request.answers)
+        except InvalidAnswerError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_answer",
+                    "question_id": exc.question_id,
+                    "message": str(exc),
+                },
+            ) from exc
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return submit(
             run_id,
             "resume",

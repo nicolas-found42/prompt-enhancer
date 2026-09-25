@@ -216,6 +216,23 @@ function originalPromptOf(result: OptimizeResult): string | undefined {
   );
 }
 
+type ClarificationValidationError = { questionId: string; message: string };
+
+function clarificationValidationError(
+  caught: unknown
+): ClarificationValidationError | null {
+  if (!(caught instanceof ApiError) || caught.status !== 422) return null;
+  const detail = record(caught.detail);
+  if (
+    detail.code !== "invalid_answer" ||
+    typeof detail.question_id !== "string" ||
+    typeof detail.message !== "string"
+  ) {
+    return null;
+  }
+  return { questionId: detail.question_id, message: detail.message };
+}
+
 function deepOfferText(result: OptimizeResult): string {
   const offer = record(result.report.offer_deep);
   const multiplier =
@@ -237,6 +254,8 @@ export default function App() {
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [clarificationError, setClarificationError] =
+    useState<ClarificationValidationError | null>(null);
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
@@ -383,8 +402,12 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [job?.run_id, job?.state, finish]);
 
-  async function begin(start: () => Promise<Job>) {
+  async function begin(
+    start: () => Promise<Job>,
+    onFailure?: (caught: unknown) => void
+  ) {
     setError(null);
+    setClarificationError(null);
     setCopied(false);
     setViewingHistoryResult(false);
     try {
@@ -394,9 +417,11 @@ export default function App() {
       setResult(null);
       setJob(started);
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Unable to start the run."
-      );
+      if (onFailure) onFailure(caught);
+      else
+        setError(
+          caught instanceof Error ? caught.message : "Unable to start the run."
+        );
     }
   }
 
@@ -645,11 +670,27 @@ export default function App() {
         <ClarificationPanel
           questions={questions}
           onSubmit={(answers) =>
-            begin(() => startResume(result!.run_id, answers))
+            begin(
+              () => startResume(result!.run_id, answers),
+              (caught) => {
+                const validationError = clarificationValidationError(caught);
+                if (validationError) {
+                  setClarificationError(validationError);
+                } else {
+                  setError(
+                    caught instanceof Error
+                      ? caught.message
+                      : "Unable to continue with these answers."
+                  );
+                }
+              }
+            )
           }
           onSkip={() => begin(() => startSkip(result!.run_id))}
           busy={busy}
           error={error}
+          validationError={clarificationError}
+          onValidationErrorDismiss={() => setClarificationError(null)}
         />
       ) : null}
 

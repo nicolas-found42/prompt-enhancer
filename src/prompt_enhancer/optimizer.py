@@ -716,6 +716,16 @@ class PromptOptimizer:
             run_id, state, usage_before, started_perf
         )
 
+    def validate_resume(self, run_id: str, answers: Mapping[str, Any]) -> None:
+        """Validate a resume request before its background job is queued."""
+
+        try:
+            self._clarification.validate_answers(run_id, answers)
+        except UnknownRunError as exc:
+            if self.store.get_run(run_id) is not None:
+                raise RunNotPausedError(f"Run {run_id!r} is not paused") from exc
+            raise RunNotFoundError(run_id) from exc
+
     def skip_clarification(
         self, run_id: str, *, progress: ProgressCallback | None = None
     ) -> OptimizeResult:
