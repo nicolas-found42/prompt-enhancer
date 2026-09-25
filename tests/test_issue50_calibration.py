@@ -147,10 +147,13 @@ def test_calibration_keeps_partitions_disjoint_and_persists_a_verdict() -> None:
                 repeat_index=0,
             )
         )
+    identity = replace(_identity(), policy_version="test-verdict-policy-v1")
+    observations = [replace(item, identity=identity) for item in observations]
     result = calibrate_question(
-        _identity(),
+        identity,
         observations,
         verdict_policy=VerdictPolicy(
+            policy_version="test-verdict-policy-v1",
             minimum_evaluation_groups=3,
             minimum_positive_examples=2,
             minimum_negative_examples=2,
@@ -500,6 +503,7 @@ def test_offline_cli_reports_all_five_verdicts_on_known_answers(
                         "label": positive,
                         "label_provenance": "synthetic_known_answer",
                         "answering_snapshot": JEV_MODEL,
+                        "policy_version": "test-verdict-policy-v1",
                         "request_id": f"request:{event_id}",
                         "answer_id": f"answer:{event_id}",
                         "answer": {"type": "noul", "probability_true": probability},
@@ -521,6 +525,7 @@ def test_offline_cli_reports_all_five_verdicts_on_known_answers(
                 "--calibration-policy",
                 json.dumps(
                     {
+                        "policy_version": "test-verdict-policy-v1",
                         "require_control": False,
                         "require_repeats": False,
                         "require_brier_better_than_control": False,

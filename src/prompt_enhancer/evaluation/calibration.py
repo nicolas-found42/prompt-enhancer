@@ -17,7 +17,7 @@ import random
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -597,8 +597,8 @@ class VerdictPolicy:
     """Provisional, versioned defaults from issue #50.
 
     These values are deliberately explicit and are not claims about Jev's real
-    world accuracy.  Callers can provide a lower policy for a known-answer
-    fixture without changing the persisted policy version.
+    world accuracy. Changed parameters require an explicit new version so a
+    runtime artifact cannot silently reuse the default policy identity.
     """
 
     minimum_evaluation_groups: int = 30
@@ -614,6 +614,18 @@ class VerdictPolicy:
     require_brier_better_than_control: bool = True
     ranker_auc_lower_bound: float = 0.5
     policy_version: str = DEFAULT_POLICY_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.policy_version.strip():
+            raise CalibrationError("policy_version must be non-empty")
+        if self.policy_version == DEFAULT_POLICY_VERSION and any(
+            getattr(self, item.name) != item.default
+            for item in fields(self)
+            if item.name != "policy_version"
+        ):
+            raise CalibrationError(
+                "changed verdict parameters require a distinct policy_version"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

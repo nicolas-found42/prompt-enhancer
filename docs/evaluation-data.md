@@ -118,6 +118,10 @@ Optional `--fit temperature` fits only on fit groups; threshold selection uses
 calibration groups, and evaluation groups are held for metrics/verdicts. The
 artifact records `mode: none` with an unavailable reason when the fit partition
 has no usable labels, so runtime and evaluation both use the raw probabilities.
+When `--calibration-policy` changes a verdict threshold or evidence requirement,
+set a distinct `policy_version` in that policy and in every matching input event.
+The runtime `DecisionPolicy` must use the same version to apply the artifact;
+version or snapshot mismatches abstain.
 The CLI bounds inputs by default to 100 source examples, 3 repeats per
 question/example/arm (`--runs`), and 5,000 question evaluations; override with
 `--max-source-examples`, `--runs`, and `--max-question-evaluations` as needed.

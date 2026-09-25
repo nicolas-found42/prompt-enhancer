@@ -32,6 +32,14 @@ _FIXTURE = (
     Path(__file__).parent / "fixtures" / "evaluation" / "calibration_known_answer.json"
 )
 _SNAPSHOT = "test-jev-snapshot"
+_TEST_POLICY_VERSION = "test-verdict-policy-v1"
+
+
+def _with_test_policy(
+    identity: QuestionIdentity, observations: list[CalibrationObservation]
+) -> tuple[QuestionIdentity, list[CalibrationObservation]]:
+    versioned = replace(identity, policy_version=_TEST_POLICY_VERSION)
+    return versioned, [replace(item, identity=versioned) for item in observations]
 
 
 def _noul_identity() -> QuestionIdentity:
@@ -293,10 +301,12 @@ def test_choice_can_earn_gate_above_margin_on_held_out_groups() -> None:
                     partition=partition,
                 )
             )
+    identity, observations = _with_test_policy(identity, observations)
     result = calibrate_question(
         identity,
         observations,
         verdict_policy=VerdictPolicy(
+            policy_version=_TEST_POLICY_VERSION,
             require_control=False,
             require_repeats=False,
             require_brier_better_than_control=False,
@@ -466,10 +476,12 @@ def test_evaluation_repeat_range_straddling_cutoff_prevents_a_gate() -> None:
             partition="evaluation",
         ),
     ]
+    identity, observations = _with_test_policy(identity, observations)
     result = calibrate_question(
         identity,
         observations,
         verdict_policy=VerdictPolicy(
+            policy_version=_TEST_POLICY_VERSION,
             minimum_evaluation_groups=2,
             minimum_positive_examples=1,
             minimum_negative_examples=1,
@@ -551,10 +563,12 @@ def test_confidence_subset_must_pass_on_held_out_groups() -> None:
         _noul_observation(name, name, name, label, probability, partition=partition)
         for name, partition, label, probability in rows
     ]
+    identity, observations = _with_test_policy(identity, observations)
     result = calibrate_question(
         identity,
         observations,
         verdict_policy=VerdictPolicy(
+            policy_version=_TEST_POLICY_VERSION,
             minimum_evaluation_groups=3,
             minimum_positive_examples=1,
             minimum_negative_examples=1,
@@ -627,10 +641,12 @@ def test_frozen_confidence_subset_earns_gate_only_on_held_out_support() -> None:
                 )
             )
 
+    identity, observations = _with_test_policy(identity, observations)
     result = calibrate_question(
         identity,
         observations,
         verdict_policy=VerdictPolicy(
+            policy_version=_TEST_POLICY_VERSION,
             require_control=False,
             require_repeats=False,
             require_brier_better_than_control=False,
@@ -796,11 +812,13 @@ def test_unavailable_temperature_fit_freezes_an_explicit_no_fit_gate() -> None:
                 )
             )
 
+    identity, observations = _with_test_policy(identity, observations)
     result = calibrate_question(
         identity,
         observations,
         fit_mode="temperature",
         verdict_policy=VerdictPolicy(
+            policy_version=_TEST_POLICY_VERSION,
             require_control=False,
             require_repeats=False,
             require_brier_better_than_control=False,
@@ -808,7 +826,9 @@ def test_unavailable_temperature_fit_freezes_an_explicit_no_fit_gate() -> None:
         bootstrap_resamples=8,
     )
     raw = {"type": "noul", "probability_true": 0.95}
-    runtime = DecisionPolicy.from_artifact(result.artifact()).apply(
+    runtime = DecisionPolicy.from_artifact(
+        result.artifact(), policy_version=_TEST_POLICY_VERSION
+    ).apply(
         question_id=identity.question_id,
         identity=identity,
         decision=parse_decision(raw),
@@ -887,6 +907,13 @@ def test_custom_verdict_policy_version_must_match_question_identity() -> None:
         }
     )
     assert manifest.events[0].identity.policy_version == "custom-v2"
+
+
+def test_changed_verdict_parameters_require_a_new_policy_version() -> None:
+    with pytest.raises(CalibrationError, match="distinct policy_version"):
+        VerdictPolicy(precision_floor=0.1)
+
+    assert VerdictPolicy(precision_floor=0.1, policy_version="experiment-v2")
 
 
 def test_runtime_requires_matching_explicit_policy_version() -> None:
