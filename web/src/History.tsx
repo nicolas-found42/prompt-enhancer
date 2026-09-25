@@ -7,6 +7,7 @@ export type RunSummary = {
   run_id: string;
   created_at?: string;
   status?: string;
+  outcome?: string;
   prompt: string;
   final_prompt?: string | null;
   original_kept?: boolean | null;
@@ -41,13 +42,15 @@ type HistoryProps = {
 type Badge = { label: string; tone: "good" | "neutral" | "warn" | "bad" };
 
 function badgeFor(run: RunSummary | RunDetail): Badge {
+  const detail = run as RunDetail;
   const reportStatus = String(
-    record(record((run as RunDetail).result).report).status ?? ""
+    record(detail.report).status ??
+      record(record(detail.result).report).status ??
+      ""
   );
-  if (run.status === "failed")
-    return reportStatus === "cancelled"
-      ? { label: "Cancelled", tone: "neutral" }
-      : { label: "Failed", tone: "bad" };
+  if (run.outcome === "cancelled" || reportStatus === "cancelled")
+    return { label: "Cancelled", tone: "neutral" };
+  if (run.status === "failed") return { label: "Failed", tone: "bad" };
   if (run.status === "needs_input")
     return { label: "Waiting for answers", tone: "warn" };
   if (run.original_kept === false) return { label: "Improved", tone: "good" };

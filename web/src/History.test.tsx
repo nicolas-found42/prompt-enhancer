@@ -118,3 +118,77 @@ it("does not let an older search response replace a newer applied query", async 
   expect(screen.getByText("Newer result")).toBeVisible();
   expect(screen.queryByText("Older result")).not.toBeInTheDocument();
 });
+
+it("shows cancelled runs with neutral status in the list and opened details", async () => {
+  const cancelledRun = {
+    run_id: "cancelled-run",
+    status: "failed",
+    outcome: "cancelled",
+    prompt: "Keep the original prompt.",
+  };
+  const failedRun = {
+    run_id: "failed-run",
+    status: "failed",
+    outcome: "failed",
+    prompt: "Write a useful reply.",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/runs/cancelled-run"))
+        return jsonResponse({
+          ...cancelledRun,
+          report: {
+            status: "cancelled",
+            failure: {
+              kind: "cancelled",
+              headline: "Run cancelled",
+              hint: "You cancelled this run. Your prompt was not changed.",
+              message: "cancelled by the user",
+            },
+          },
+          result: {
+            status: "failed",
+            run_id: "cancelled-run",
+            report: {
+              status: "cancelled",
+              failure: {
+                kind: "cancelled",
+                headline: "Run cancelled",
+                hint: "You cancelled this run. Your prompt was not changed.",
+                message: "cancelled by the user",
+              },
+            },
+            cost: { total: 0 },
+            timing: { total_ms: 10 },
+          },
+        });
+      return jsonResponse([cancelledRun, failedRun]);
+    })
+  );
+  const user = userEvent.setup();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History />);
+
+  const cancelledBadge = await screen.findByText("Cancelled");
+  expect(cancelledBadge).toHaveClass("badge-neutral");
+  expect(screen.getByText("Failed")).toHaveClass("badge-bad");
+
+  await user.click(
+    screen.getByRole("button", { name: /Keep the original prompt/ })
+  );
+
+  expect(
+    await screen.findByRole("heading", { name: "Run details" })
+  ).toBeVisible();
+  const cancelledBadges = screen.getAllByText("Cancelled");
+  expect(cancelledBadges).toHaveLength(2);
+  for (const badge of cancelledBadges)
+    expect(badge).toHaveClass("badge-neutral");
+  expect(screen.getByRole("heading", { name: "Run cancelled" })).toBeVisible();
+});

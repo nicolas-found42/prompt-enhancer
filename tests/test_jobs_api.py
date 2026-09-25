@@ -105,6 +105,9 @@ def test_cancel_stops_the_run_at_the_next_stage() -> None:
     assert result["status"] == "failed"
     assert result["report"]["status"] == "cancelled"
     assert result["final_prompt"] == "Write a reply."
+    summary = client.get("/api/runs").json()[0]
+    assert summary["status"] == "failed"
+    assert summary["outcome"] == "cancelled"
 
 
 def test_invalid_writer_reply_is_not_reported_as_a_network_error() -> None:

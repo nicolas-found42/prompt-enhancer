@@ -83,6 +83,46 @@ def test_history_http_contract(tmp_path: Path):
     assert client.get("/api/runs/run-http").json()["feedback"] == "reject"
 
 
+def test_history_summary_exposes_outcome_without_rewriting_legacy_status(
+    tmp_path: Path,
+):
+    history = RunHistory(RunStore(tmp_path / "history-outcomes.sqlite3"))
+    history.save_run(
+        {
+            "run_id": "run-cancelled",
+            "prompt": "Keep the original prompt.",
+            "result": {
+                "status": "failed",
+                "final_prompt": "Keep the original prompt.",
+                "report": {
+                    "status": "cancelled",
+                    "failure": {"kind": "cancelled"},
+                },
+            },
+        }
+    )
+    history.save_run(
+        {
+            "run_id": "run-failed",
+            "prompt": "Write a useful reply.",
+            "result": {
+                "status": "failed",
+                "report": {
+                    "status": "failed",
+                    "failure": {"kind": "provider_error"},
+                },
+            },
+        }
+    )
+
+    summaries = {run["run_id"]: run for run in history.list_runs()}
+
+    assert summaries["run-cancelled"]["status"] == "failed"
+    assert summaries["run-cancelled"]["outcome"] == "cancelled"
+    assert summaries["run-failed"]["status"] == "failed"
+    assert summaries["run-failed"]["outcome"] == "failed"
+
+
 def test_history_rejects_feedback_for_incomplete_run(tmp_path: Path):
     history = RunHistory(RunStore(tmp_path / "history-incomplete.sqlite3"))
     history.save_run(
