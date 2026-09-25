@@ -42,6 +42,14 @@ def sentence_pointer_question(problem: str) -> str:
     return f"Which sentence best contains this problem: {problem}?"
 
 
+def sentence_existence_question(problem: str) -> str:
+    return (
+        f"Does the problem '{problem}' exist in at least one sentence in this exact candidate window? "
+        "Use the full prompt to understand references or conflicts, but consider only the listed candidate sentence IDs. "
+        "Answer no when the problem is absent from every sentence in this window."
+    )
+
+
 FIDELITY_CHECKS = {
     "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
     "no_invention": "Does the candidate avoid facts or requirements not given by the user?",

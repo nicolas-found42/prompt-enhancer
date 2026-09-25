@@ -8,7 +8,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from ..diagnosis import DEFAULT_RUBRIC, checklist_impacts, checklist_keys
+from ..diagnosis import (
+    DEFAULT_RUBRIC,
+    SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    checklist_impacts,
+    checklist_keys,
+)
 from ..gateway import Gateway, ReplayGateway
 
 
@@ -23,6 +28,7 @@ class RecordingGateway:
         self.rubric_thresholds: dict[str, float] | None = None
         self.writer_instruction_version: int | None = None
         self.faithfulness_threshold: float | None = None
+        self.sentence_diagnosis_version = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
         self.checklist_impacts: dict[str, str] | None = checklist_impacts(
@@ -59,6 +65,7 @@ class RecordingGateway:
             "case_latency_ms": self.case_latency_ms,
             "case_costs": self.case_costs,
             "rubric_thresholds": self.rubric_thresholds,
+            "sentence_diagnosis_version": self.sentence_diagnosis_version,
         }
         if self.writer_instruction_version is not None:
             bundle["writer_instruction_version"] = self.writer_instruction_version

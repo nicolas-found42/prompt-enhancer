@@ -21,6 +21,19 @@ The recording also stores each case's measured cost and latency. Replay uses
 those observations while recomputing diagnosis and improvement from recorded
 model responses; it never makes provider calls.
 
+## Sentence-level diagnosis metrics
+
+The evaluation report also compares confirmed sentence problems with optional
+exact labels. Add `expected_problem_sentences` to a case as a list of
+`{"kind": "vagueness", "sentence_id": "s0001"}` objects. The metric compares
+the `(kind, sentence_id)` pairs and reports precision, recall, false flags, and
+per-kind counts. Existing datasets label checklist gaps but do not identify
+problem sentences, so the report marks this metric `unavailable` with a reason
+until a dataset already has sentence-level labels. It does not treat missing
+labels as negative examples. Synthetic labels can test the report path, but they
+do not establish real-world accuracy; the default existence cutoff remains a
+provisional policy value.
+
 The current model split is OpenCode Go for `space-bunny-free` (writer),
 `glm-5.3-flash` (strong check), `mimo-v2.6-flash`, and
 `muse-spark-1.3-contributor` (the two additional Deep weak models). OpenRouter

@@ -30,6 +30,8 @@ from .clarifier import Clarifier
 from .config import Settings
 from .diagnosis import (
     DEFAULT_RUBRIC,
+    HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     ConfirmedGap,
     Diagnoser,
     DiagnosisReport,
@@ -118,16 +120,23 @@ class PromptOptimizer:
         decision_policy: DecisionPolicy | Mapping[str, Any] | str | Path | None = None,
         calibration: CalibrationArtifact | Mapping[str, Any] | str | Path | None = None,
         grading_policy: OrderBiasPolicy | Mapping[str, Any] | str | Path | None = None,
+        sentence_diagnosis_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     ) -> None:
         if writer_instruction_version not in WRITER_INSTRUCTION_VERSIONS:
             raise ValueError("unknown candidate writer instruction version")
         if not 0 <= faithfulness_threshold <= 1:
             raise ValueError("faithfulness threshold must be a probability")
+        if sentence_diagnosis_version not in {
+            HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        }:
+            raise ValueError("unsupported sentence diagnosis protocol version")
         self.store = store or RunStore()
         self.config = config or Settings.from_env()
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
+        self.sentence_diagnosis_version = sentence_diagnosis_version
         from .evaluation.calibration import (
             DEFAULT_POLICY_VERSION,
             CalibrationArtifact,
@@ -541,6 +550,7 @@ class PromptOptimizer:
             rubric=diagnosis_rubric,
             decision_policy=self.decision_policy,
             rubric_version=active_rubric_version,
+            sentence_protocol_version=self.sentence_diagnosis_version,
         ).diagnose(prompt)
         calibration_evidence = dict(report.calibration or {})
         if rubric is None:
