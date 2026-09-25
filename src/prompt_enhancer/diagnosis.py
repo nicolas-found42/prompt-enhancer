@@ -25,6 +25,12 @@ from .jev import (
     parse_decision,
 )
 
+SENTENCE_DIAGNOSIS_PROTOCOL_VERSION = 2
+HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION = 1
+SENTENCE_EXISTENCE_QUESTION_VERSION = 1
+DEFAULT_EXISTENCE_THRESHOLD = 0.8
+DEFAULT_EXISTENCE_THRESHOLD_VERSION = "existence-cutoffs-v1"
+
 
 class GapImpact(StrEnum):
     HIGH = "high"
@@ -110,6 +116,8 @@ class DiagnosisReport:
     rubric_version: str | None = None
     possible_gaps: tuple[PossibleGap, ...] = ()
     calibration: Mapping[str, Any] | None = None
+    sentence_protocol_version: int = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+    sentence_evidence: tuple[Mapping[str, Any], ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -132,6 +140,7 @@ class DiagnosisReport:
             for problem in self.problem_sentences
         ]
         result["possible_gaps"] = [asdict(gap) for gap in self.possible_gaps]
+        result["sentence_evidence"] = [dict(item) for item in self.sentence_evidence]
         return result
 
 
@@ -148,9 +157,15 @@ class DiagnosisRubric:
     # Lower bounds for reporting a near-miss gap as a hint. Only the listed
     # checklist keys are hinted; confirmation still uses the gap thresholds.
     hint_thresholds: Mapping[str, float] = field(default_factory=dict)
+    existence_thresholds: Mapping[str, float] = field(default_factory=dict)
+    existence_threshold_version: str = DEFAULT_EXISTENCE_THRESHOLD_VERSION
 
     def gap_threshold_for(self, question_id: str) -> float:
         return self.gap_thresholds.get(question_id, self.gap_threshold)
+
+    def existence_threshold_for(self, kind: ProblemKind | str) -> float:
+        key = kind.value if isinstance(kind, ProblemKind) else str(kind)
+        return self.existence_thresholds.get(key, DEFAULT_EXISTENCE_THRESHOLD)
 
 
 _GENERAL_CHECKLIST = (
@@ -350,7 +365,7 @@ def _request_key(request: Mapping[str, Any]) -> str:
 class _DecisionObservation:
     request: Mapping[str, Any]
     raw_answer: Any
-    decision: JevDecision
+    decision: JevDecision | None
     answered_by: str | None
 
 
@@ -364,11 +379,18 @@ class Diagnoser:
         rubric: DiagnosisRubric | Callable[[], DiagnosisRubric] = DEFAULT_RUBRIC,
         decision_policy: DecisionPolicy | None = None,
         rubric_version: str | None = "default-v1",
+        sentence_protocol_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     ) -> None:
+        if sentence_protocol_version not in {
+            HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        }:
+            raise ValueError("unsupported sentence diagnosis protocol version")
         self.gateway = gateway
         self._rubric = rubric
         self.decision_policy = decision_policy
         self.rubric_version = rubric_version
+        self.sentence_protocol_version = sentence_protocol_version
         self._calibration_evidence: dict[str, Any] = {}
 
     @property
@@ -384,15 +406,15 @@ class Diagnoser:
         before = len(log) if isinstance(log, Sequence) else 0
         raw_responses = list(self.gateway.decide_batch(requests))
         entries = list(log)[before:] if isinstance(log, Sequence) else []
-        try:
-            decisions = tuple(parse_decision(response) for response in raw_responses)
-        except JevResponseError:
-            # An unusable audit is fail-open: it must not invent a defect.
-            return ()
         observations: list[_DecisionObservation] = []
-        for index, (request, raw_answer, decision) in enumerate(
-            zip(requests, raw_responses, decisions, strict=True)
-        ):
+        for index, request in enumerate(requests):
+            raw_answer = raw_responses[index] if index < len(raw_responses) else None
+            try:
+                decision = parse_decision(raw_answer)
+            except JevResponseError:
+                # A malformed answer invalidates its own decision only. Other
+                # independent questions in the same batch remain usable.
+                decision = None
             entry = entries[index] if index < len(entries) else {}
             answered_by = (
                 entry.get("answered_by") if isinstance(entry, Mapping) else None
@@ -407,7 +429,9 @@ class Diagnoser:
             )
         return tuple(observations)
 
-    def _decide(self, requests: Sequence[Mapping[str, Any]]) -> tuple[JevDecision, ...]:
+    def _decide(
+        self, requests: Sequence[Mapping[str, Any]]
+    ) -> tuple[JevDecision | None, ...]:
         return tuple(observation.decision for observation in self._observe(requests))
 
     def _policy_decision(
@@ -518,7 +542,9 @@ class Diagnoser:
             rubric.task_types[0],
         )
         gaps, near_misses, sentences = self._diagnose_gaps(prompt, state, task, rubric)
-        problems, pointed = self._diagnose_sentences(prompt, state, sentences, rubric)
+        problems, pointed, sentence_evidence = self._diagnose_sentences(
+            prompt, state, sentences, rubric
+        )
         # Quote the sentence Jev pointed at, preferring an unresolved reference.
         suspect = pointed.get(ProblemKind.UNRESOLVED_REFERENCE) or pointed.get(
             ProblemKind.VAGUENESS
@@ -534,6 +560,9 @@ class Diagnoser:
                 for gap in near_misses
             ),
             calibration=dict(self._calibration_evidence) or None,
+            rubric_version=self.rubric_version,
+            sentence_protocol_version=self.sentence_protocol_version,
+            sentence_evidence=sentence_evidence,
         )
 
     def _diagnose_gaps(
@@ -621,7 +650,30 @@ class Diagnoser:
         state: Mapping[str, Any],
         sentences: tuple[Sentence, ...],
         rubric: DiagnosisRubric,
+    ) -> tuple[
+        tuple[ProblemSentence, ...],
+        dict[ProblemKind, Sentence],
+        tuple[Mapping[str, Any], ...],
+    ]:
+        if (
+            self.sentence_protocol_version
+            == HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+        ):
+            problems, pointed = self._diagnose_sentences_v1(
+                prompt, state, sentences, rubric
+            )
+            return problems, pointed, ()
+        return self._diagnose_sentences_v2(prompt, state, sentences, rubric)
+
+    def _diagnose_sentences_v1(
+        self,
+        prompt: str,
+        state: Mapping[str, Any],
+        sentences: tuple[Sentence, ...],
+        rubric: DiagnosisRubric,
     ) -> tuple[tuple[ProblemSentence, ...], dict[ProblemKind, Sentence]]:
+        """Replay the historical pointer-then-confirmation protocol exactly."""
+
         del prompt
         if not sentences:
             return (), {}
@@ -727,6 +779,438 @@ class Diagnoser:
                 )
         return tuple(problems), pointed
 
+    def _diagnose_sentences_v2(
+        self,
+        prompt: str,
+        state: Mapping[str, Any],
+        sentences: tuple[Sentence, ...],
+        rubric: DiagnosisRubric,
+    ) -> tuple[
+        tuple[ProblemSentence, ...],
+        dict[ProblemKind, Sentence],
+        tuple[Mapping[str, Any], ...],
+    ]:
+        del prompt
+        if not sentences:
+            return (), {}, ()
+
+        pairs: list[dict[str, Any]] = []
+        requests: list[Mapping[str, Any]] = []
+        for window_index, start in enumerate(range(0, len(sentences), 254)):
+            window = sentences[start : start + 254]
+            sentence_values = [{"id": item.id, "text": item.text} for item in window]
+            window_state = {
+                **state,
+                "sentences": sentence_values,
+                "candidate_sentence_ids": [item.id for item in window],
+                "sentence_window": {
+                    "protocol_version": self.sentence_protocol_version,
+                    "index": window_index,
+                    "first_sentence_id": window[0].id,
+                    "last_sentence_id": window[-1].id,
+                },
+            }
+            for kind in _PROBLEM_QUESTIONS:
+                pointer_request = _request(
+                    jev_questions.sentence_pointer_question(
+                        kind.value.replace("_", " ")
+                    ),
+                    window_state,
+                    type="choice",
+                    options=[item.id for item in window] + ["none"],
+                    key=f"pointer:{kind.value}:{window_index}",
+                )
+                existence_request = _request(
+                    jev_questions.sentence_existence_question(
+                        kind.value.replace("_", " ")
+                    ),
+                    window_state,
+                    type="noul",
+                    key=f"existence:{kind.value}:{window_index}",
+                    question_schema={
+                        "protocol": self.sentence_protocol_version,
+                        "question": SENTENCE_EXISTENCE_QUESTION_VERSION,
+                    },
+                )
+                pairs.append(
+                    {
+                        "kind": kind,
+                        "window_index": window_index,
+                        "window": window,
+                        "candidate_sentence_ids": tuple(item.id for item in window),
+                        "pointer_request": pointer_request,
+                        "existence_request": existence_request,
+                    }
+                )
+                requests.extend((pointer_request, existence_request))
+
+        # Each pair's pointer Choice and existence Noul share one batch request.
+        observations = self._observe(requests)
+        evidence: list[dict[str, Any]] = []
+        selected: dict[tuple[ProblemKind, str], dict[str, Any]] = {}
+        for index, pair in enumerate(pairs):
+            kind = pair["kind"]
+            pointer_observation = (
+                observations[index * 2] if index * 2 < len(observations) else None
+            )
+            existence_observation = (
+                observations[index * 2 + 1]
+                if index * 2 + 1 < len(observations)
+                else None
+            )
+            record: dict[str, Any] = {
+                "protocol_version": self.sentence_protocol_version,
+                "kind": kind.value,
+                "window_index": pair["window_index"],
+                "candidate_sentence_ids": list(pair["candidate_sentence_ids"]),
+                "candidate_sentences": [
+                    {"id": item.id, "text": item.text} for item in pair["window"]
+                ],
+                "existence": {},
+                "pointer": {},
+                "confirmation": {
+                    "requested": False,
+                    "accepted": False,
+                    "reason": "existence_not_supported",
+                },
+            }
+            evidence.append(record)
+            record["pointer"] = self._role_evidence(
+                pointer_observation,
+                accepted=False,
+                reason="existence_not_supported",
+                question_id=f"pointer:{kind.value}",
+                family="pointer",
+                event_mapping={"selected_correctness": True},
+                criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+            )
+
+            existence = (
+                existence_observation.decision
+                if existence_observation is not None
+                else None
+            )
+            existence_policy = None
+            existence_threshold = rubric.existence_threshold_for(kind)
+            if (
+                isinstance(existence, NoulDecision)
+                and existence_observation is not None
+            ):
+                existence_policy = self._policy_decision(
+                    question_id=f"existence:{kind.value}",
+                    request=existence_observation.request,
+                    observation=existence_observation,
+                    family="existence",
+                )
+                if (
+                    existence_policy is not None
+                    and existence_policy.threshold is not None
+                ):
+                    existence_threshold = existence_policy.threshold
+            existence_calibrated = (
+                existence_policy is None
+                or existence_policy.is_legacy
+                or existence_policy.may_gate
+            )
+            existence_supported = (
+                isinstance(existence, NoulDecision)
+                and existence.probability >= existence_threshold
+                and existence_calibrated
+            )
+            record["existence"] = self._role_evidence(
+                existence_observation,
+                threshold=existence_threshold,
+                accepted=existence_supported,
+                reason=(
+                    "supported"
+                    if existence_supported
+                    else "below_threshold"
+                    if isinstance(existence, NoulDecision)
+                    else "missing_or_malformed_answer"
+                ),
+                question_id=f"existence:{kind.value}",
+                family="existence",
+            )
+            record["existence"]["question_version"] = (
+                SENTENCE_EXISTENCE_QUESTION_VERSION
+            )
+            record["existence"]["rubric_threshold_version"] = (
+                rubric.existence_threshold_version
+            )
+            if existence_policy is not None:
+                record["existence"]["calibration"] = self._policy_evidence(
+                    existence_policy
+                )
+            if not existence_supported:
+                continue
+            record["confirmation"] = {
+                "requested": False,
+                "accepted": False,
+                "reason": "pointer_not_accepted",
+            }
+            if pointer_observation is None:
+                continue
+
+            pointer = pointer_observation.decision
+            if not isinstance(pointer, ChoiceDecision):
+                record["pointer"] = self._role_evidence(
+                    pointer_observation,
+                    accepted=False,
+                    reason="missing_or_malformed_answer",
+                    question_id=f"pointer:{kind.value}",
+                    family="pointer",
+                    event_mapping={"selected_correctness": True},
+                    criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                )
+                continue
+            if pointer.selected == "none":
+                record["pointer"] = self._role_evidence(
+                    pointer_observation,
+                    accepted=False,
+                    reason="none_selected",
+                    question_id=f"pointer:{kind.value}",
+                    family="pointer",
+                    event_mapping={"selected_correctness": True},
+                    criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                )
+                continue
+            window_ids = set(pair["candidate_sentence_ids"])
+            if pointer.selected not in window_ids:
+                record["pointer"] = self._role_evidence(
+                    pointer_observation,
+                    accepted=False,
+                    reason="selected_id_outside_window",
+                    question_id=f"pointer:{kind.value}",
+                    family="pointer",
+                    event_mapping={"selected_correctness": True},
+                    criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                )
+                continue
+
+            pointer_policy = self._policy_decision(
+                question_id=f"pointer:{kind.value}",
+                request=pointer_observation.request,
+                observation=pointer_observation,
+                family="pointer",
+                event_mapping={"selected_correctness": True},
+                criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+            )
+            pointer_supported = (
+                pointer_policy is None
+                or pointer_policy.is_legacy
+                or pointer_policy.disposition != "abstain"
+            )
+            if pointer_policy is not None and pointer_policy.disposition == "abstain":
+                pointer_supported = False
+            if (
+                pointer_policy is None or not pointer_policy.may_gate
+            ) and pointer.confidence < rubric.pointer_threshold:
+                pointer_supported = False
+            sentence = next(
+                item for item in pair["window"] if item.id == pointer.selected
+            )
+            record["pointer"] = self._role_evidence(
+                pointer_observation,
+                threshold=rubric.pointer_threshold,
+                accepted=pointer_supported,
+                reason="supported" if pointer_supported else "below_threshold",
+                question_id=f"pointer:{kind.value}",
+                family="pointer",
+                event_mapping={"selected_correctness": True},
+                criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+            )
+            if pointer_policy is not None:
+                record["pointer"]["calibration"] = self._policy_evidence(pointer_policy)
+            if not pointer_supported:
+                continue
+            pair_key = (kind, sentence.id)
+            if pair_key in selected:
+                record["pointer"]["reason"] = "duplicate_pair"
+                record["pointer"]["deduplicated_to_window"] = selected[pair_key][
+                    "window_index"
+                ]
+                continue
+            selected[pair_key] = {
+                "kind": kind,
+                "sentence": sentence,
+                "window_index": pair["window_index"],
+                "evidence": record,
+            }
+            record["confirmation"] = {
+                "requested": True,
+                "accepted": False,
+                "reason": "awaiting_confirmation",
+            }
+
+        pointed: dict[ProblemKind, Sentence] = {}
+        confirmation_requests: list[Mapping[str, Any]] = []
+        confirmation_pairs: list[dict[str, Any]] = []
+        for selected_pair in selected.values():
+            kind = selected_pair["kind"]
+            sentence = selected_pair["sentence"]
+            pointed.setdefault(kind, sentence)
+            request = _request(
+                _PROBLEM_QUESTIONS[kind],
+                {
+                    **state,
+                    "sentences": [{"id": sentence.id, "text": sentence.text}],
+                    "candidate_sentence_ids": [sentence.id],
+                    "selected_sentence_id": sentence.id,
+                    "sentence_window": {
+                        "protocol_version": self.sentence_protocol_version,
+                        "index": selected_pair["window_index"],
+                    },
+                },
+                type="noul",
+                key=f"problem:{kind.value}:{sentence.id}",
+            )
+            confirmation_requests.append(request)
+            confirmation_pairs.append({**selected_pair, "request": request})
+
+        confirmations = self._observe(confirmation_requests)
+        problems: list[ProblemSentence] = []
+        for index, selected_pair in enumerate(confirmation_pairs):
+            observation = confirmations[index] if index < len(confirmations) else None
+            result = observation.decision if observation is not None else None
+            kind = selected_pair["kind"]
+            sentence = selected_pair["sentence"]
+            policy_decision = None
+            threshold = rubric.problem_threshold
+            if isinstance(result, NoulDecision) and observation is not None:
+                policy_decision = self._policy_decision(
+                    question_id=f"problem:{kind.value}",
+                    request=observation.request,
+                    observation=observation,
+                    family="problem",
+                )
+                if (
+                    policy_decision is not None
+                    and policy_decision.may_gate
+                    and policy_decision.threshold is not None
+                ):
+                    threshold = policy_decision.threshold
+            if policy_decision is not None and not policy_decision.is_legacy:
+                confident = policy_decision.may_gate
+            else:
+                confident = (
+                    isinstance(result, NoulDecision)
+                    and result.probability >= threshold
+                    and result.confidence >= rubric.confidence_threshold
+                    and abs(result.probability - 0.5) >= rubric.uncertainty_margin
+                )
+            selected_pair["evidence"]["confirmation"] = {
+                **self._role_evidence(
+                    observation,
+                    threshold=threshold,
+                    accepted=confident,
+                    reason=(
+                        "supported"
+                        if confident
+                        else "below_threshold"
+                        if isinstance(result, NoulDecision)
+                        else "missing_or_malformed_answer"
+                    ),
+                    question_id=f"problem:{kind.value}",
+                    family="problem",
+                ),
+                "requested": True,
+            }
+            if policy_decision is not None:
+                selected_pair["evidence"]["confirmation"]["calibration"] = (
+                    self._policy_evidence(policy_decision)
+                )
+            if confident and isinstance(result, NoulDecision):
+                problems.append(
+                    ProblemSentence(
+                        sentence=sentence,
+                        kind=kind,
+                        probability=result.probability,
+                        confidence=result.confidence,
+                        threshold=threshold,
+                    )
+                )
+        return tuple(problems), pointed, tuple(evidence)
+
+    def _role_evidence(
+        self,
+        observation: _DecisionObservation | None,
+        *,
+        accepted: bool,
+        reason: str,
+        question_id: str,
+        family: str,
+        threshold: float | None = None,
+        event_mapping: Mapping[str, Any] | None = None,
+        criteria_descriptor: str | None = None,
+    ) -> dict[str, Any]:
+        request = observation.request if observation is not None else {}
+        raw = observation.raw_answer if observation is not None else None
+        decision = observation.decision if observation is not None else None
+        identity: Mapping[str, Any] | None = None
+        if observation is not None:
+            from .evaluation.calibration import (
+                DEFAULT_POLICY_VERSION,
+                runtime_question_identity,
+            )
+
+            identity_value = runtime_question_identity(
+                question_id,
+                request,
+                family=family,
+                rubric_version=self.rubric_version,
+                snapshot=observation.answered_by,
+                policy_version=(
+                    self.decision_policy.policy_version
+                    if self.decision_policy is not None
+                    else DEFAULT_POLICY_VERSION
+                ),
+            )
+            if criteria_descriptor is not None:
+                identity_value = replace(identity_value, criteria=criteria_descriptor)
+            if event_mapping is not None:
+                identity_value = replace(
+                    identity_value, event_mapping=dict(event_mapping)
+                )
+            identity = identity_value.to_dict()
+        parsed: dict[str, Any] = {}
+        if isinstance(decision, NoulDecision):
+            parsed = {
+                "type": "noul",
+                "probability": decision.probability,
+                "confidence": decision.confidence,
+            }
+        elif isinstance(decision, ChoiceDecision):
+            parsed = {
+                "type": "choice",
+                "selected": decision.selected,
+                "probabilities": decision.probabilities,
+                "confidence": decision.confidence,
+            }
+        return {
+            "question_id": question_id,
+            "question": request.get("query", request.get("question")),
+            "question_schema": request.get("question_schema"),
+            "raw_answer": raw,
+            "parsed_answer": parsed or None,
+            "snapshot": observation.answered_by if observation is not None else None,
+            "identity": identity,
+            "threshold": threshold,
+            "accepted": accepted,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _policy_evidence(decision: PolicyDecision) -> dict[str, Any]:
+        return {
+            "disposition": decision.disposition,
+            "verdict": decision.verdict,
+            "reason": decision.reason,
+            "threshold": decision.threshold,
+            "predicate": dict(decision.predicate),
+            "event_probability": decision.evidence.get("event_probability"),
+            "fit": decision.evidence.get("fit"),
+        }
+
 
 def model_diagnosis(payload: Mapping[str, Any]) -> dict[str, Any]:
     """The diagnosis as sent to models: without the user-facing possible gaps.
@@ -737,7 +1221,13 @@ def model_diagnosis(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         key: value
         for key, value in payload.items()
-        if key not in {"possible_gaps", "calibration"}
+        if key
+        not in {
+            "possible_gaps",
+            "calibration",
+            "sentence_evidence",
+            "sentence_protocol_version",
+        }
     }
 
 
@@ -792,6 +1282,22 @@ def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
         problem_sentences=problems,
         possible_gaps=possible,
         calibration=calibration,
+        rubric_version=(
+            str(value["rubric_version"])
+            if value.get("rubric_version") is not None
+            else None
+        ),
+        sentence_protocol_version=int(
+            value.get(
+                "sentence_protocol_version",
+                HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            )
+        ),
+        sentence_evidence=tuple(
+            dict(item)
+            for item in value.get("sentence_evidence", ())
+            if isinstance(item, Mapping)
+        ),
     )
 
 
