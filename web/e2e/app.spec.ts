@@ -284,6 +284,122 @@ test("clarification can recover from local and server-side Other answer errors",
   });
 });
 
+test("opening another paused run resets its answers and error", async ({
+  page,
+}) => {
+  const runs = [
+    { run_id: "paused-a", prompt: "First paused prompt" },
+    { run_id: "paused-b", prompt: "Second paused prompt" },
+  ];
+  const question = {
+    id: "goal",
+    prompt: "What should the assistant do?",
+    options: [
+      { value: "summarize", label: "Summarize" },
+      { value: "review", label: "Review" },
+    ],
+    allow_other: true,
+  };
+  const results: Record<string, Json> = {
+    "paused-a": {
+      run_id: "paused-a",
+      status: "needs_input",
+      report: {},
+      questions: [{ ...question, default: "summarize" }],
+    },
+    "paused-b": {
+      run_id: "paused-b",
+      status: "needs_input",
+      report: {},
+      questions: [{ ...question, default: "review" }],
+    },
+  };
+  let submittedAnswers: Json | null = null;
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/runs?*", (route) =>
+    route.fulfill({
+      json: runs.map((run) => ({
+        ...run,
+        created_at: "2026-09-24T04:00:00Z",
+        status: "needs_input",
+        tier: "standard",
+      })),
+    })
+  );
+  await page.route("**/api/runs/paused-*", (route) => {
+    const runId = route.request().url().split("/").at(-1) ?? "";
+    const run = runs.find((item) => item.run_id === runId);
+    return route.fulfill({
+      json: { ...run, status: "needs_input", result: results[runId] },
+    });
+  });
+  await page.route("**/api/jobs/paused-a/resume", (route) =>
+    route.fulfill({
+      status: 422,
+      json: {
+        detail: {
+          code: "invalid_answer",
+          question_id: "goal",
+          message: "First run needs a different goal.",
+        },
+      },
+    })
+  );
+  await page.route("**/api/jobs/paused-b/resume", (route) => {
+    submittedAnswers = route.request().postDataJSON() as Json;
+    return route.fulfill({ status: 202, json: job("paused-b", "running") });
+  });
+
+  await page.goto("/");
+  const history = page.getByRole("list", { name: "Saved optimization runs" });
+  await history.getByRole("button", { name: /First paused prompt/ }).click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await page.getByRole("radio", { name: "Other" }).check();
+  await page
+    .getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    })
+    .fill("An answer for the first run");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    page.getByText("First run needs a different goal.")
+  ).toBeVisible();
+
+  await history.getByRole("button", { name: /Second paused prompt/ }).click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await expect(page.getByRole("radio", { name: "Review" })).toBeChecked();
+  await expect(page.getByText("First run needs a different goal.")).toHaveCount(
+    0
+  );
+
+  await page.getByRole("radio", { name: "Other" }).check();
+  await page
+    .getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    })
+    .fill("An answer for the second run");
+  results["paused-b"] = {
+    ...results["paused-b"],
+    questions: [{ ...question, default: "summarize" }],
+  };
+  await history.getByRole("button", { name: /Second paused prompt/ }).click();
+  await history.getByRole("button", { name: /Second paused prompt/ }).click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await expect(page.getByRole("radio", { name: "Summarize" })).toBeChecked();
+  await expect(
+    page.getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    })
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect
+    .poll(() => submittedAnswers)
+    .toEqual({
+      answers: { goal: "summarize" },
+    });
+});
+
 test("skip and continue still resumes the same paused run", async ({
   page,
 }) => {

@@ -508,6 +508,7 @@ export default function App() {
   function openFromHistory(opened: OptimizeResult) {
     setResult(opened);
     setCopied(false);
+    setClarificationError(null);
     changeDraft(prompt);
     setViewingHistoryResult(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -673,6 +674,7 @@ export default function App() {
 
       {questions.length > 0 ? (
         <ClarificationPanel
+          key={`${result?.run_id}:${JSON.stringify(questions)}`}
           questions={questions}
           onSubmit={(answers) =>
             begin(

@@ -68,3 +68,47 @@ it.each(["", "   \t\n"])(
     );
   }
 );
+
+it("keeps a server error until its own question changes", async () => {
+  const onValidationErrorDismiss = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ClarificationPanel
+      questions={[
+        {
+          id: "goal",
+          prompt: "What should the assistant do?",
+          options: [{ value: "summarize", label: "Summarize" }],
+          default: "other",
+        },
+        {
+          id: "audience",
+          prompt: "Who is this for?",
+          options: [{ value: "team", label: "The team" }],
+          default: "other",
+        },
+      ]}
+      onSubmit={vi.fn()}
+      onSkip={vi.fn()}
+      validationError={{ questionId: "goal", message: "Fix the goal answer." }}
+      onValidationErrorDismiss={onValidationErrorDismiss}
+    />
+  );
+
+  await user.type(
+    screen.getByRole("textbox", { name: "Other answer for Who is this for?" }),
+    "Project leads"
+  );
+  await user.click(screen.getByRole("radio", { name: "The team" }));
+
+  expect(onValidationErrorDismiss).not.toHaveBeenCalled();
+  expect(screen.getByText("Fix the goal answer.")).toBeVisible();
+
+  await user.type(
+    screen.getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    }),
+    "Compare drafts"
+  );
+  expect(onValidationErrorDismiss).toHaveBeenCalled();
+});

@@ -73,7 +73,9 @@ export function ClarificationPanel({
       delete next[id];
       return next;
     });
-    onValidationErrorDismiss?.();
+    if (validationError?.questionId === id) {
+      onValidationErrorDismiss?.();
+    }
   };
 
   const submit = async (event: FormEvent) => {
@@ -194,7 +196,9 @@ export function ClarificationPanel({
                           delete next[question.id];
                           return next;
                         });
-                        onValidationErrorDismiss?.();
+                        if (validationError?.questionId === question.id) {
+                          onValidationErrorDismiss?.();
+                        }
                       }}
                       placeholder="Enter your own answer"
                     />
