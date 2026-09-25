@@ -10,7 +10,7 @@ Use the five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, 
 
 ### Domain docs
 
-This is a single-context repository. See `docs/agents/domain.md`.
+This is a multi-context repository: start with `CONTEXT-MAP.md`, then see `docs/agents/domain.md`.
 
 ### Code quality and review
 

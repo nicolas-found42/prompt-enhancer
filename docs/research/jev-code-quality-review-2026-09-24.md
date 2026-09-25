@@ -75,7 +75,7 @@ Proposed flow:
 
 Suggested implementation boundaries are `scripts/review_quality.py` for CLI orchestration, a small development-only rule/evidence module, and labeled fixtures under `tests/fixtures/quality_review/`. These paths are proposals; no runner or fixture files were created for this research.
 
-Reuse `Gateway.decide_batch` and call `parse_decision` in that development consumer. Keep usage at the existing HTTP adapter and do not change the Gateway return contract. Also avoid importing the prompt-improvement Round just to inspect a diff. This preserves the existing [Model access boundary](../../CONTEXT.md) and [raw-answer ADR](../adr/0001-gateway-returns-raw-answers.md).
+Reuse `Gateway.decide_batch` and call `parse_decision` in that development consumer. Keep usage at the existing HTTP adapter and do not change the Gateway return contract. Also avoid importing the prompt-improvement Round just to inspect a diff. This preserves the existing [Model access boundary](../contexts/model-access/CONTEXT.md) and [raw-answer ADR](../adr/0001-gateway-returns-raw-answers.md).
 
 ## Verified SDK contract, for a standalone experiment
 
