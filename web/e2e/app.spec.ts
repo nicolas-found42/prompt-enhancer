@@ -71,6 +71,173 @@ const completedBase = {
   timing: { total_ms: 5 },
 };
 
+test("an unsent draft keeps its exact whitespace after reload", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const draft = "  Draft: Ask for a written date.\n\tKeep it friendly.  \n";
+  await page.getByLabel("Your prompt").fill(draft);
+
+  await page.reload();
+
+  await expect(page.getByLabel("Your prompt")).toHaveValue(draft);
+});
+
+test("an intentionally empty draft stays empty when an older result restores", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("prompt-enhancer.draft", "");
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "older-result", at: Date.now() })
+    );
+  });
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/runs/older-result", (route) =>
+    route.fulfill({
+      json: {
+        result: {
+          run_id: "older-result",
+          status: "failed",
+          original_prompt: "An older prompt from History.",
+          final_prompt: "An older prompt from History.",
+          original_kept: true,
+          report: {
+            failure: {
+              kind: "internal",
+              headline: "Restored older result",
+              hint: "This result was restored.",
+            },
+          },
+          cost: { total: 0 },
+          timing: { total_ms: 1 },
+        },
+      },
+    })
+  );
+
+  await page.goto("/");
+
+  await expect(
+    page.getByRole("heading", { name: "Restored older result" })
+  ).toBeVisible();
+  await expect(page.getByLabel("Your prompt")).toHaveValue("");
+});
+
+test("a late result restore does not repopulate a cleared draft", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("prompt-enhancer.draft", "Draft to clear");
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "late-result", at: Date.now() })
+    );
+  });
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  let releaseResult!: () => void;
+  const resultGate = new Promise<void>((resolve) => {
+    releaseResult = resolve;
+  });
+  await page.route("**/api/runs/late-result", async (route) => {
+    await resultGate;
+    await route.fulfill({
+      json: {
+        result: {
+          run_id: "late-result",
+          status: "failed",
+          original_prompt: "An older prompt from a slow restore.",
+          original_kept: true,
+          report: {
+            failure: {
+              kind: "internal",
+              headline: "Restored late result",
+              hint: "This result was restored.",
+            },
+          },
+          cost: { total: 0 },
+          timing: { total_ms: 1 },
+        },
+      },
+    });
+  });
+
+  await page.goto("/");
+  const prompt = page.getByLabel("Your prompt");
+  await expect(prompt).toHaveValue("Draft to clear");
+  await prompt.fill("");
+  releaseResult();
+
+  await expect(
+    page.getByRole("heading", { name: "Restored late result" })
+  ).toBeVisible();
+  await expect(prompt).toHaveValue("");
+});
+
+test("opening a saved result preserves the current draft", async ({ page }) => {
+  const olderPrompt = "Write a friendly note about the delivery delay.";
+  const result = {
+    run_id: "history-open-result",
+    status: "completed",
+    original_prompt: olderPrompt,
+    final_prompt: "Write a friendly note about the delivery delay by Friday.",
+    original_kept: false,
+    report: { status: "edited", summary: "Added a delivery date." },
+    cost: { total: 0.001 },
+    timing: { total_ms: 1 },
+  };
+  await page.route("**/api/runs?*", (route) =>
+    route.fulfill({
+      json: [
+        {
+          run_id: result.run_id,
+          created_at: "2026-09-24T04:00:00Z",
+          status: "completed",
+          prompt: olderPrompt,
+          final_prompt: result.final_prompt,
+          original_kept: false,
+          tier: "standard",
+        },
+      ],
+    })
+  );
+  await page.route(`**/api/runs/${result.run_id}`, (route) =>
+    route.fulfill({
+      json: {
+        run_id: result.run_id,
+        created_at: "2026-09-24T04:00:00Z",
+        status: "completed",
+        prompt: olderPrompt,
+        original_prompt: olderPrompt,
+        final_prompt: result.final_prompt,
+        original_kept: false,
+        tier: "standard",
+        cost: result.cost,
+        timings: { total_ms: 1 },
+        result,
+      },
+    })
+  );
+
+  await page.goto("/");
+  const draft = "Draft: Confirm the date before replying.\nKeep it warm.";
+  await page.getByLabel("Your prompt").fill(draft);
+  await page
+    .getByRole("list", { name: "Saved optimization runs" })
+    .getByRole("button", { name: new RegExp(olderPrompt) })
+    .click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+
+  await expect(page.getByLabel("Your prompt")).toHaveValue(draft);
+  await expect(
+    page.getByRole("status").filter({
+      hasText:
+        "A saved result is open below. Your current draft remains in Your prompt.",
+    })
+  ).toBeVisible();
+});
+
 test("clarification, assumption editing, history, and feedback use the local API", async ({
   page,
 }) => {

@@ -52,12 +52,31 @@ import RunReport from "./RunReport";
 
 const ACTIVE_RUN_KEY = "prompt-enhancer.active-run";
 const LAST_RESULT_KEY = "prompt-enhancer.last-result";
+const DRAFT_KEY = "prompt-enhancer.draft";
 const POLL_MS = 1000;
 // A result shown this recently comes back after a reload instead of vanishing.
 const RESTORE_RESULT_MS = 30 * 60 * 1000;
 
 type RememberedRun = { runId: string; prompt: string };
 type RememberedResult = { runId: string; at: number };
+type StoredDraft = { present: boolean; prompt: string };
+
+function readDraft(): StoredDraft {
+  try {
+    const prompt = localStorage.getItem(DRAFT_KEY);
+    return { present: prompt !== null, prompt: prompt ?? "" };
+  } catch {
+    return { present: false, prompt: "" };
+  }
+}
+
+function saveDraft(prompt: string) {
+  try {
+    localStorage.setItem(DRAFT_KEY, prompt);
+  } catch {
+    // Ignore: the draft remains available for this page session.
+  }
+}
 
 // Storage can be unavailable; reattaching then falls back to /api/jobs.
 function store(key: string, value: unknown) {
@@ -211,9 +230,11 @@ function deepOfferText(result: OptimizeResult): string {
 }
 
 export default function App() {
-  const [prompt, setPrompt] = useState("");
+  const [initialDraft] = useState(readDraft);
+  const [prompt, setPrompt] = useState(initialDraft.prompt);
   const [tier, setTier] = useState<Tier>("standard");
   const [result, setResult] = useState<OptimizeResult | null>(null);
+  const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -227,7 +248,21 @@ export default function App() {
   >({});
   const lastRequest = useRef<{ prompt: string; tier: Tier } | null>(null);
   const composer = useRef<HTMLFormElement | null>(null);
+  const draftWasSet = useRef(initialDraft.present);
   const busy = job !== null || saving;
+
+  const changeDraft = useCallback((next: string) => {
+    draftWasSet.current = true;
+    saveDraft(next);
+    setPrompt(next);
+  }, []);
+
+  const restoreDraft = useCallback((next: string) => {
+    if (draftWasSet.current) return;
+    draftWasSet.current = true;
+    saveDraft(next);
+    setPrompt(next);
+  }, []);
 
   useEffect(() => {
     void Promise.all([getCatalog(), getSettings()])
@@ -254,22 +289,25 @@ export default function App() {
       .catch(() => setEstimates({}));
   }, []);
 
-  const finish = useCallback((finished: Job) => {
-    setJob(null);
-    rememberRun(null);
-    const finishedResult = finished.result;
-    if (finishedResult) {
-      setResult(finishedResult);
-      const original = originalPromptOf(finishedResult);
-      if (original) setPrompt((current) => current || original);
-    }
-    void getEstimates()
-      .then(setEstimates)
-      .catch(() => undefined);
-    void getProviders(false)
-      .then(setProviders)
-      .catch(() => undefined);
-  }, []);
+  const finish = useCallback(
+    (finished: Job) => {
+      setJob(null);
+      rememberRun(null);
+      const finishedResult = finished.result;
+      if (finishedResult) {
+        setResult(finishedResult);
+        const original = originalPromptOf(finishedResult);
+        if (original) restoreDraft(original);
+      }
+      void getEstimates()
+        .then(setEstimates)
+        .catch(() => undefined);
+      void getProviders(false)
+        .then(setProviders)
+        .catch(() => undefined);
+    },
+    [restoreDraft]
+  );
 
   // Bring back a result shown shortly before a reload.
   const restoreLastResult = useCallback(() => {
@@ -281,16 +319,15 @@ export default function App() {
         if (!restored) return;
         setResult((current) => current ?? restored);
         const original = originalPromptOf(restored);
-        if (original) setPrompt((current) => current || original);
+        if (original) restoreDraft(original);
       })
       .catch(() => store(LAST_RESULT_KEY, null));
-  }, []);
+  }, [restoreDraft]);
 
   // Reattach to a run that was in progress before a reload or dropped connection.
   useEffect(() => {
     const remembered = rememberedRun();
-    if (remembered?.prompt)
-      setPrompt((current) => current || remembered.prompt);
+    if (remembered?.prompt) restoreDraft(remembered.prompt);
     const lookup = remembered
       ? getJob(remembered.runId).then((found) => [found])
       : getActiveJobs();
@@ -301,8 +338,7 @@ export default function App() {
           restoreLastResult();
           return;
         }
-        if (current.prompt)
-          setPrompt((existing) => existing || current.prompt || "");
+        if (current.prompt) restoreDraft(current.prompt);
         if (current.state === "done") finish(current);
         else setJob(current);
       })
@@ -310,7 +346,7 @@ export default function App() {
         rememberRun(null);
         restoreLastResult();
       });
-  }, [finish, restoreLastResult]);
+  }, [finish, restoreDraft, restoreLastResult]);
 
   useEffect(() => {
     if (!result) return;
@@ -350,6 +386,7 @@ export default function App() {
   async function begin(start: () => Promise<Job>) {
     setError(null);
     setCopied(false);
+    setViewingHistoryResult(false);
     try {
       const started = await start();
       rememberRun({ runId: started.run_id, prompt });
@@ -372,7 +409,7 @@ export default function App() {
   function retry() {
     const previous = lastRequest.current;
     if (previous) {
-      setPrompt(previous.prompt);
+      changeDraft(previous.prompt);
       setTier(previous.tier);
       void begin(() =>
         startOptimize(previous.prompt, previous.tier, selection ?? undefined)
@@ -446,8 +483,8 @@ export default function App() {
   function openFromHistory(opened: OptimizeResult) {
     setResult(opened);
     setCopied(false);
-    const original = originalPromptOf(opened);
-    if (original) setPrompt(original);
+    changeDraft(prompt);
+    setViewingHistoryResult(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -540,7 +577,7 @@ export default function App() {
         <textarea
           id="prompt"
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => changeDraft(event.target.value)}
           placeholder="Paste your prompt here. For example: Write a friendly reply to a customer whose repair was delayed."
           rows={8}
           required
@@ -582,6 +619,13 @@ export default function App() {
           />
         )}
       </form>
+
+      {viewingHistoryResult && (
+        <p className="history-result-context" role="status">
+          A saved result is open below. Your current draft remains in Your
+          prompt.
+        </p>
+      )}
 
       {error && (
         <p className="error" role="alert">
