@@ -92,10 +92,12 @@ function duration(run: RunDetail): string {
 /** A small history browser backed only by the local HTTP API. */
 export function History({ onOpen, refreshKey }: HistoryProps) {
   const [query, setQuery] = useState("");
+  const [appliedQuery, setAppliedQuery] = useState("");
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selected, setSelected] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const runsRequestId = useRef(0);
   const details = useRef<HTMLElement | null>(null);
 
   // Keep the opened details on screen; they appear under the clicked row.
@@ -104,6 +106,7 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   }, [selected?.run_id]);
 
   async function loadRuns(search = query) {
+    const requestId = ++runsRequestId.current;
     setLoading(true);
     setError(null);
     try {
@@ -112,13 +115,14 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
       const body = await requestJson<RunSummary[]>(
         `/api/runs?${params.toString()}`
       );
-      setRuns(body);
+      if (requestId === runsRequestId.current) setRuns(body);
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "Could not load history"
-      );
+      if (requestId === runsRequestId.current)
+        setError(
+          cause instanceof Error ? cause.message : "Could not load history"
+        );
     } finally {
-      setLoading(false);
+      if (requestId === runsRequestId.current) setLoading(false);
     }
   }
 
@@ -168,7 +172,7 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   }
 
   useEffect(() => {
-    void loadRuns("");
+    void loadRuns(appliedQuery);
     // Refresh when the active optimization changes, including a resumed run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshKey]);
@@ -268,7 +272,14 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void loadRuns();
+    setAppliedQuery(query);
+    void loadRuns(query);
+  }
+
+  function clearSearch() {
+    setQuery("");
+    setAppliedQuery("");
+    void loadRuns("");
   }
 
   return (
@@ -287,7 +298,20 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
       </form>
       {error ? <p role="alert">{error}</p> : null}
       {loading ? <p aria-live="polite">Loading history…</p> : null}
-      {!loading && runs.length === 0 ? <p>No saved runs yet.</p> : null}
+      {!loading && runs.length === 0 && appliedQuery.trim() ? (
+        <div>
+          <p>No runs match this search.</p>
+          <button type="button" onClick={clearSearch}>
+            Clear search
+          </button>
+        </div>
+      ) : null}
+      {!loading && runs.length === 0 && !appliedQuery.trim() ? (
+        <>
+          <p>No saved runs yet.</p>
+          <p>Start a run to see it here.</p>
+        </>
+      ) : null}
       {runs.length > 0 ? (
         <ul aria-label="Saved optimization runs">
           {runs.map((run) => {
