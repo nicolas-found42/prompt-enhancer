@@ -112,7 +112,8 @@ export type TierEstimate = {
 export class ApiError extends Error {
   constructor(
     message: string,
-    readonly status: number
+    readonly status: number,
+    readonly detail: unknown = message
   ) {
     super(message);
   }
@@ -134,9 +135,16 @@ export async function requestJson<T>(
   if (!response.ok) {
     const body = await response.text();
     let detail = body;
+    let detailValue: unknown = body;
     try {
       const parsed = JSON.parse(body) as { detail?: unknown };
-      if (typeof parsed.detail === "string") detail = parsed.detail;
+      if (typeof parsed.detail === "string") {
+        detail = parsed.detail;
+        detailValue = parsed.detail;
+      } else if (parsed.detail !== undefined) {
+        detailValue = parsed.detail;
+        detail = JSON.stringify(parsed.detail);
+      }
     } catch {
       // Not JSON; keep the raw text.
     }
@@ -144,7 +152,8 @@ export async function requestJson<T>(
       detail = connectionLostMessage;
     throw new ApiError(
       detail || `Request failed (${response.status})`,
-      response.status
+      response.status,
+      detailValue
     );
   }
   return (await response.json()) as T;
