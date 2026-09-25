@@ -49,6 +49,26 @@ const calibrationReasons: Record<string, string> = {
   invalid_calibration_predicate: "The calibrated checks could not be applied",
 };
 
+const gradingPolicyLabels: Record<string, string> = {
+  single: "One option order",
+  mean_pair: "Mean across both option orders",
+  legacy_min_pair: "Conservative minimum across both option orders",
+  noul_direct: "One direct Noul question",
+};
+
+const gradingPolicyReasons: Record<string, string> = {
+  compatible_order_bias_evidence:
+    "A compatible matched experiment supports this policy",
+  no_order_bias_artifact: "No order-bias artifact was configured",
+  incompatible_snapshot: "The artifact targets a different Jev snapshot",
+  synthetic_only_evidence: "Synthetic results cannot activate a runtime policy",
+  insufficient_evidence: "The experiment did not establish a policy",
+  incomplete_observations: "The experiment has missing or unusable answers",
+  no_matching_policy_group: "No policy matches this success test",
+  runtime_snapshot_unavailable: "The current Jev snapshot is unavailable",
+  outside_order_bias_experiment: "Order bias applies only to Choice and Score",
+};
+
 function highlightedPrompt(
   prompt: string,
   problems: Record<string, unknown>[]
@@ -91,6 +111,7 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const problems = items(diagnosis.problem_sentences);
   const gaps = items(diagnosis.confirmed_gaps);
   const tests = items(report.tests);
+  const gradingPolicies = items(report.grading_policy);
   const selection = record(report.selection_evidence);
   const originalScore = record(selection.original_score);
   const winnerScore = record(
@@ -208,6 +229,30 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
           <p>No faithful success tests were available for this run.</p>
         )}
       </section>
+      {gradingPolicies.length > 0 && (
+        <section aria-labelledby="grading-policy-heading">
+          <h3 id="grading-policy-heading">Grading policy</h3>
+          <ul>
+            {gradingPolicies.map((policy, index) => {
+              const policyName = text(policy.policy);
+              const reason = text(policy.reason);
+              const question = text(policy.question);
+              const snapshot = text(policy.snapshot);
+              return (
+                <li key={`${text(policy.test_id) || index}-${policyName}`}>
+                  {question && <strong>{question}: </strong>}
+                  {gradingPolicyLabels[policyName] ??
+                    (policyName ? humanize(policyName) : "Status unavailable")}
+                  {reason && (
+                    <>. {gradingPolicyReasons[reason] ?? humanize(reason)}</>
+                  )}
+                  {snapshot && <>. Jev snapshot: {snapshot}</>}.
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
       {Object.keys(originalRates).length > 0 && (
         <section>
           <h3>Pass rates on test models</h3>

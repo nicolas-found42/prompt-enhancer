@@ -55,6 +55,19 @@ from .harness import (
     compare_reports,
     default_engine_factory,
 )
+from .order_bias import (
+    ORDER_BIAS_POLICY_VERSION,
+    OrderBiasArtifact,
+    OrderBiasCase,
+    OrderBiasError,
+    OrderBiasManifest,
+    OrderBiasPolicy,
+    analyze_order_bias,
+    build_order_bias_requests,
+    capture_order_bias,
+    load_order_bias_manifest,
+    load_order_bias_recording,
+)
 
 __all__ = [
     "DATASET_SOURCES",
@@ -107,4 +120,15 @@ __all__ = [
     "load_dataset",
     "load_datasets",
     "normalize_gap_type",
+    "ORDER_BIAS_POLICY_VERSION",
+    "OrderBiasArtifact",
+    "OrderBiasCase",
+    "OrderBiasError",
+    "OrderBiasManifest",
+    "OrderBiasPolicy",
+    "analyze_order_bias",
+    "build_order_bias_requests",
+    "capture_order_bias",
+    "load_order_bias_manifest",
+    "load_order_bias_recording",
 ]

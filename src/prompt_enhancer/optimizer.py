@@ -8,6 +8,7 @@ and a durable run identifier.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -71,6 +72,7 @@ from .success_tests import (
 
 if TYPE_CHECKING:
     from .evaluation.calibration import CalibrationArtifact, DecisionPolicy
+    from .evaluation.order_bias import OrderBiasPolicy
 
 
 class RunNotFoundError(KeyError):
@@ -117,6 +119,7 @@ class PromptOptimizer:
         faithfulness_threshold: float = DEFAULT_FAITHFULNESS_THRESHOLD,
         decision_policy: DecisionPolicy | Mapping[str, Any] | str | Path | None = None,
         calibration: CalibrationArtifact | Mapping[str, Any] | str | Path | None = None,
+        grading_policy: OrderBiasPolicy | Mapping[str, Any] | str | Path | None = None,
         sentence_diagnosis_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     ) -> None:
         if writer_instruction_version not in WRITER_INSTRUCTION_VERSIONS:
@@ -197,6 +200,17 @@ class PromptOptimizer:
         self._clarification = ClarificationService(
             self._clarification_repository(),
             continuation=self._continue_clarification,
+        )
+        from .evaluation.order_bias import OrderBiasPolicy
+
+        if grading_policy is None:
+            configured_grading_policy = os.getenv("PROMPT_ENHANCER_ORDER_BIAS_POLICY")
+            if configured_grading_policy and configured_grading_policy.strip():
+                grading_policy = Path(configured_grading_policy.strip())
+        self.grading_policy = (
+            grading_policy
+            if grading_policy is None or isinstance(grading_policy, OrderBiasPolicy)
+            else OrderBiasPolicy(grading_policy)
         )
 
     def get_model_settings(self) -> dict[str, Any]:
@@ -481,6 +495,7 @@ class PromptOptimizer:
                 faithfulness_threshold=self.faithfulness_threshold,
                 writer_instruction_version=self.writer_instruction_version,
                 prior_failures=tuple(request.prior_failures),
+                grading_policy=self.grading_policy,
             )
             return run_round(self.gateway, plan, on_stage=self._stage)
 

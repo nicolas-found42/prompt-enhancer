@@ -141,6 +141,34 @@ it("keeps older reports readable when they contain no calibration evidence", () 
   ).not.toBeInTheDocument();
 });
 
+it("shows which option-order grading policy was used and why", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          grading_policy: [
+            {
+              primitive: "choice",
+              test_id: "format",
+              question: "Does the answer use the requested format?",
+              policy: "single",
+              reason: "compatible_order_bias_evidence",
+              snapshot: "typesafe/jev-test-snapshot",
+            },
+          ],
+        },
+      }}
+    />
+  );
+
+  const grading = screen.getByRole("region", { name: "Grading policy" });
+  expect(within(grading).getByRole("listitem")).toHaveTextContent(
+    /Does the answer use the requested format\?: One option order\. A compatible matched experiment supports this policy\. Jev snapshot: typesafe\/jev-test-snapshot\./
+  );
+});
+
 it("omits calibration decisions for an empty mapping", () => {
   render(
     <RunReport

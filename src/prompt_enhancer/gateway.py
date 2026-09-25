@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import json as json_module
 import math
 import os
 import time
@@ -238,7 +239,16 @@ class HttpTransport:
         json: Any | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        data = None if json is None else json_module_dumps(json).encode("utf-8")
+        # Preserve insertion order in Choice criteria: their declared option
+        # order is an experimental input. Replay keys use the canonical,
+        # sorted json_module_dumps helper below instead.
+        data = (
+            None
+            if json is None
+            else json_module.dumps(
+                json, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        )
         request = urllib.request.Request(url, data=data, method=method)
         for key, value in (headers or {}).items():
             request.add_header(key, value)
