@@ -14,12 +14,13 @@ import hashlib
 import json
 import math
 import random
+import uuid
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from ..jev import (
     ChoiceDecision,
@@ -28,6 +29,9 @@ from ..jev import (
     ScoreDecision,
     parse_decision,
 )
+
+if TYPE_CHECKING:
+    from ..gateway import Gateway
 
 # canonical JSON is implemented locally so artifact identities never depend on
 # mutable dataset helpers.
@@ -593,8 +597,8 @@ class VerdictPolicy:
     """Provisional, versioned defaults from issue #50.
 
     These values are deliberately explicit and are not claims about Jev's real
-    world accuracy.  Callers can provide a lower policy for a known-answer
-    fixture without changing the persisted policy version.
+    world accuracy. Changed parameters require an explicit new version so a
+    runtime artifact cannot silently reuse the default policy identity.
     """
 
     minimum_evaluation_groups: int = 30
@@ -610,6 +614,18 @@ class VerdictPolicy:
     require_brier_better_than_control: bool = True
     ranker_auc_lower_bound: float = 0.5
     policy_version: str = DEFAULT_POLICY_VERSION
+
+    def __post_init__(self) -> None:
+        if not self.policy_version.strip():
+            raise CalibrationError("policy_version must be non-empty")
+        if self.policy_version == DEFAULT_POLICY_VERSION and any(
+            getattr(self, item.name) != item.default
+            for item in fields(self)
+            if item.name != "policy_version"
+        ):
+            raise CalibrationError(
+                "changed verdict parameters require a distinct policy_version"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -831,6 +847,9 @@ class CalibrationManifest:
 def _identity_from_event(
     value: Mapping[str, Any], *, position: int
 ) -> QuestionIdentity:
+    persisted_identity = value.get("identity")
+    if isinstance(persisted_identity, Mapping):
+        return QuestionIdentity.from_dict(persisted_identity)
     nested = value.get("question")
     if isinstance(nested, Mapping):
         question_data = dict(nested)
@@ -856,6 +875,9 @@ def _identity_from_event(
             "family": _first(value, "family", "question_family", default=""),
             "schema_version": _first(value, "schema_version", default=1),
             "rubric_version": _first(value, "rubric_version", default=None),
+            "policy_version": _first(
+                value, "policy_version", default=DEFAULT_POLICY_VERSION
+            ),
             "answering_snapshot": _first(
                 value,
                 "answering_snapshot",
@@ -893,6 +915,7 @@ def _identity_from_event(
         ("family", ("family", "question_family"), ""),
         ("schema_version", ("schema_version",), 1),
         ("rubric_version", ("rubric_version",), None),
+        ("policy_version", ("policy_version",), DEFAULT_POLICY_VERSION),
         (
             "answering_snapshot",
             ("answering_snapshot", "snapshot", "answered_by", "model_snapshot"),
@@ -1299,6 +1322,22 @@ def _score_probability(decision: ScoreDecision, spec: EventSpec) -> float | None
     return total
 
 
+def _decision_margin(decision: Any, spec: EventSpec) -> float | None:
+    """Derived separation statistic, never a Noul provider confidence."""
+
+    if isinstance(decision, NoulDecision):
+        return abs(2.0 * decision.probability - 1.0)
+    if isinstance(decision, ChoiceDecision):
+        probabilities = sorted(decision.probabilities.values(), reverse=True)
+        if not probabilities:
+            return None
+        return probabilities[0] - (probabilities[1] if len(probabilities) > 1 else 0.0)
+    if isinstance(decision, ScoreDecision):
+        probability = _score_probability(decision, spec)
+        return abs(2.0 * probability - 1.0) if probability is not None else None
+    return None
+
+
 def normalize_event(
     observation: CalibrationObservation, spec: EventSpec | None = None
 ) -> NormalizedEvent:
@@ -1346,18 +1385,21 @@ def normalize_event(
     provider_confidence = _raw_confidence(observation.raw_answer)
     label, semantic_label = _label_parts(observation.label)
     expected_class = semantic_label
-    derived_margin: float | None = None
+    derived_margin = _decision_margin(decision, event_spec)
     probability: float | None = None
     predicted_class: str | None = None
 
     if isinstance(decision, NoulDecision):
+        provider_confidence = None
         probability = _noul_probability(decision, event_spec)
-        derived_margin = abs(2.0 * decision.probability - 1.0)
         predicted_class = "yes" if decision.probability >= 0.5 else "no"
-        if expected_class is None:
-            expected_class = (
-                "yes" if label is True else "no" if label is False else None
-            )
+        negative_event = event_spec.polarity in {"negative", "no", "false"} or (
+            event_spec.expected_class is not None
+            and _class_key(event_spec.expected_class).casefold()
+            in {"no", "false", "negative"}
+        )
+        if label is not None:
+            expected_class = "no" if label == negative_event else "yes"
     elif isinstance(decision, ChoiceDecision):
         predicted_class = decision.selected
         if event_spec.expected_class is not None:
@@ -1375,7 +1417,24 @@ def normalize_event(
                 derived_margin=derived_margin,
                 provider_confidence=provider_confidence,
             )
-        probability = distribution.get(expected_class)
+        if expected_class not in distribution:
+            return NormalizedEvent(
+                observation=observation,
+                usable=False,
+                probability=None,
+                distribution=distribution,
+                expected_class=expected_class,
+                predicted_class=predicted_class,
+                unavailable_reason="missing_expected_class",
+                distribution_unavailable_reason=distribution_reason,
+                derived_margin=derived_margin,
+                provider_confidence=provider_confidence,
+            )
+        probability = distribution.get(
+            predicted_class
+            if identity.event_mapping.get("selected_correctness")
+            else expected_class
+        )
         if probability is None:
             return NormalizedEvent(
                 observation=observation,
@@ -1405,7 +1464,6 @@ def normalize_event(
                 derived_margin=derived_margin,
                 provider_confidence=provider_confidence,
             )
-        derived_margin = abs(2.0 * probability - 1.0)
         if expected_class is None and event_spec.expected_class is not None:
             expected_class = _class_key(event_spec.expected_class)
     else:
@@ -1550,14 +1608,16 @@ def _reliability(
 
 
 def _repeat_noise(events: Sequence[NormalizedEvent]) -> dict[str, Any]:
-    grouped: dict[str, list[NormalizedEvent]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[NormalizedEvent]] = defaultdict(list)
     for event in events:
         if (
             not event.observation.control
             and event.usable
             and event.probability is not None
         ):
-            grouped[event.observation.example_id].append(event)
+            grouped[
+                (event.observation.source_group, event.observation.example_id)
+            ].append(event)
     ranges: list[float] = []
     brier_ranges: list[float] = []
     for group in grouped.values():
@@ -1598,6 +1658,31 @@ def _distribution_brier(
             or event.expected_class not in event.distribution
         ):
             return None, "missing_expected_class_for_distribution_brier"
+        if event.observation.identity.primitive == "score":
+            criteria = event.observation.identity.criteria
+            if isinstance(criteria, Sequence) and not isinstance(
+                criteria, (str, bytes)
+            ):
+                ordered_classes = [_class_key(value) for value in criteria]
+            else:
+                try:
+                    ordered_classes = sorted(event.distribution, key=float)
+                except ValueError:
+                    return None, "missing_ordinal_order"
+            if len(ordered_classes) < 2 or set(ordered_classes) != set(
+                event.distribution
+            ):
+                return None, "missing_class_coverage"
+            cumulative = 0.0
+            squared_errors: list[float] = []
+            expected_index = ordered_classes.index(event.expected_class)
+            for index, class_name in enumerate(ordered_classes[:-1]):
+                cumulative += event.distribution[class_name]
+                squared_errors.append(
+                    (cumulative - (1.0 if expected_index <= index else 0.0)) ** 2
+                )
+            losses.append(math.fsum(squared_errors) / len(squared_errors))
+            continue
         classes = set(event.distribution) | {event.expected_class}
         losses.append(
             math.fsum(
@@ -1675,7 +1760,12 @@ def compute_metrics(
             "events": total,
             "usable_labeled_events": len(valid),
             "source_groups": len({event.observation.source_group for event in events}),
-            "examples": len({event.observation.example_id for event in events}),
+            "examples": len(
+                {
+                    (event.observation.source_group, event.observation.example_id)
+                    for event in events
+                }
+            ),
             "positive_examples": positive,
             "negative_examples": negative,
             "controls": sum(event.observation.control for event in events),
@@ -1688,7 +1778,11 @@ def compute_metrics(
         "brier": brier,
         "distribution_brier": distribution_brier,
         "brier_distribution": distribution_brier,
-        "distribution_brier_convention": "sum_over_declared_classes",
+        "distribution_brier_convention": (
+            "ranked_probability_score_mean_over_boundaries"
+            if events and events[0].observation.identity.primitive == "score"
+            else "sum_over_declared_classes"
+        ),
         "distribution_brier_reason": distribution_brier_reason,
         "roc_auc": auc,
         "ece": ece,
@@ -1851,26 +1945,30 @@ def _gate_components(
     policy: VerdictPolicy,
     events: Sequence[NormalizedEvent],
     threshold: float | None,
+    total_events: int | None = None,
 ) -> dict[str, Any]:
     precision = metrics.get("precision")
     recall = metrics.get("recall")
     coverage = (
-        metrics["support"]["usable_labeled_events"] / metrics["support"]["events"]
-        if metrics["support"]["events"]
+        metrics["support"]["usable_labeled_events"]
+        / (total_events if total_events is not None else metrics["support"]["events"])
+        if (total_events if total_events is not None else metrics["support"]["events"])
         else 0.0
     )
     brier = metrics.get("brier")
     control_brier = control_metrics.get("brier")
     straddle = False
     if threshold is not None:
-        grouped: dict[str, list[float]] = defaultdict(list)
+        grouped: dict[tuple[str, str], list[float]] = defaultdict(list)
         for event in events:
             if (
                 not event.observation.control
                 and event.usable
                 and event.probability is not None
             ):
-                grouped[event.observation.example_id].append(event.probability)
+                grouped[
+                    (event.observation.source_group, event.observation.example_id)
+                ].append(event.probability)
         straddle = any(
             min(values) < threshold <= max(values)
             for values in grouped.values()
@@ -1905,7 +2003,8 @@ def _gate_components(
         )
         and (
             not policy.require_control
-            or metrics["support"]["controls"] >= policy.minimum_control_groups
+            or metrics["support"].get("control_source_groups", 0)
+            >= policy.minimum_control_groups
         )
         and (
             not policy.require_repeats or components["no_repeat_range_straddles_cutoff"]
@@ -1922,29 +2021,42 @@ def _select_confidence_predicate(
     policy: VerdictPolicy,
 ) -> dict[str, Any] | None:
     candidates: list[dict[str, Any]] = []
+    primary = [event for event in calibration_events if not event.observation.control]
     for margin in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9):
         subset = [
             event
-            for event in calibration_events
+            for event in primary
             if event.usable
-            and event.probability is not None
-            and event.probability >= threshold
-            and (event.derived_margin or 0.0) >= margin
-            and event.label is not None
+            and event.derived_margin is not None
+            and event.derived_margin >= margin
         ]
         if not subset:
             continue
-        controls = [event for event in calibration_events if event.observation.control]
+        selected_examples = {
+            (event.observation.source_group, event.observation.example_id)
+            for event in subset
+        }
+        controls = [
+            event
+            for event in calibration_events
+            if event.observation.control
+            and (event.observation.source_group, event.observation.example_id)
+            in selected_examples
+        ]
         metrics = compute_metrics(subset, threshold)
         metrics = dict(metrics)
         metrics["support"] = dict(metrics["support"])
         metrics["support"]["controls"] = len(controls)
+        metrics["support"]["control_source_groups"] = len(
+            {event.observation.source_group for event in controls}
+        )
         components = _gate_components(
             metrics,
             compute_metrics(controls, threshold),
             policy=policy,
             events=subset,
             threshold=threshold,
+            total_events=len(primary),
         )
         if components["passes"]:
             candidates.append(
@@ -1952,8 +2064,7 @@ def _select_confidence_predicate(
                     "probability_gte": threshold,
                     "margin_gte": margin,
                     "support": metrics["support"],
-                    "coverage": metrics["support"]["usable_labeled_events"]
-                    / max(1, metrics["support"]["events"]),
+                    "coverage": components["coverage"],
                 }
             )
     if not candidates:
@@ -1977,13 +2088,19 @@ def _fit_events(events: Sequence[NormalizedEvent], *, mode: str) -> dict[str, An
     if normalized_mode not in {"temperature", "scalar-temperature"}:
         raise CalibrationError(f"unsupported calibration fit mode {mode!r}")
     temperature = fit_temperature(events)
+    if temperature is None:
+        return {
+            "mode": "none",
+            "temperature": 1.0,
+            "requested_mode": "temperature",
+            "objective": None,
+            "unavailable_reason": "no_usable_fit_events",
+        }
     return {
         "mode": "temperature",
         "temperature": temperature,
         "objective": "binary_brier_on_fit_partition",
-        "unavailable_reason": None
-        if temperature is not None
-        else "no_usable_fit_events",
+        "unavailable_reason": None,
     }
 
 
@@ -2028,6 +2145,10 @@ def calibrate_question(
 
     policy = verdict_policy or VerdictPolicy()
     threshold_policy = threshold_policy or ThresholdPolicy()
+    if identity.policy_version != policy.policy_version:
+        raise CalibrationError(
+            "question policy version must match the verdict policy version"
+        )
     raw_observations = tuple(observations)
     if not raw_observations:
         raise CalibrationError("calibration requires at least one observation")
@@ -2084,10 +2205,16 @@ def calibrate_question(
         for event in normalized
         if partition_map[event.observation.source_group] == "evaluation"
     ]
-    fit = _fit_events(fit_source, mode=fit_mode)
+    fit = _fit_events(
+        [event for event in fit_source if not event.observation.control],
+        mode=fit_mode,
+    )
     calibration_events = _apply_fit(calibration_source, fit)
     evaluation_events = _apply_fit(evaluation_source, fit)
-    threshold = select_threshold(calibration_events, threshold_policy)
+    threshold = select_threshold(
+        [event for event in calibration_events if not event.observation.control],
+        threshold_policy,
+    )
     control_events = [event for event in evaluation_events if event.observation.control]
     primary_evaluation_events = [
         event for event in evaluation_events if not event.observation.control
@@ -2149,12 +2276,51 @@ def calibrate_question(
             if threshold is not None
             else None
         )
+        subset_components: dict[str, Any] | None = None
         if subset is not None:
+            selected = [
+                event
+                for event in primary_evaluation_events
+                if event.derived_margin is not None
+                and event.derived_margin >= subset["margin_gte"]
+            ]
+            selected_examples = {
+                (event.observation.source_group, event.observation.example_id)
+                for event in selected
+            }
+            selected_controls = [
+                event
+                for event in control_events
+                if (event.observation.source_group, event.observation.example_id)
+                in selected_examples
+            ]
+            subset_metrics = compute_metrics(selected, threshold)
+            subset_metrics["support"]["controls"] = len(selected_controls)
+            subset_metrics["support"]["control_source_groups"] = len(
+                {event.observation.source_group for event in selected_controls}
+            )
+            subset_components = _gate_components(
+                subset_metrics,
+                compute_metrics(selected_controls, threshold),
+                policy=policy,
+                events=selected,
+                threshold=threshold,
+                total_events=len(primary_evaluation_events),
+            )
+            if not full_components["no_repeat_range_straddles_cutoff"]:
+                subset_components["passes"] = False
+                subset_components["no_repeat_range_straddles_cutoff"] = False
+        if (
+            subset is not None
+            and subset_components is not None
+            and subset_components["passes"]
+        ):
             verdict = Verdict.GATE_ABOVE_CONFIDENCE.value
             predicate = subset
             components = {
-                "reason": "gate_conditions_hold_on_frozen_calibration_subset",
-                "subset": subset,
+                "reason": "gate_conditions_hold_on_frozen_evaluation_subset",
+                "calibration_subset": subset,
+                "evaluation_subset": subset_components,
                 "gate_components": full_components,
             }
         else:
@@ -2169,12 +2335,14 @@ def calibrate_question(
                 components = {
                     "reason": "bootstrap_auc_lower_bound_exceeds_chance",
                     "auc_lower_95": lower_bound,
+                    "evaluation_subset": subset_components,
                     "gate_components": full_components,
                 }
             else:
                 verdict = Verdict.UNUSABLE.value
                 components = {
                     "reason": "gate_conditions_failed_and_ranker_bound_not_met",
+                    "evaluation_subset": subset_components,
                     "gate_components": full_components,
                 }
     ece_bootstrap = _bootstrap_summary(
@@ -2304,6 +2472,149 @@ def _budget_slice(
         ),
         "partial": partial,
         "stopped_reason": "bounded-input" if partial else None,
+    }
+
+
+def capture_live_manifest(
+    manifest: CalibrationManifest,
+    gateway: Gateway,
+    *,
+    budget: CalibrationBudget,
+    runs: int,
+    request_cost_ceiling: float,
+) -> tuple[CalibrationManifest, dict[str, Any]]:
+    """Capture independent answer and state-blind requests from input templates.
+
+    A request reservation is charged before every call. The provider may still
+    report a cost above the declared ceiling; that stops the experiment and is
+    reported explicitly. The Gateway is configured with retries disabled by the
+    CLI so every request identity corresponds to one provider attempt.
+    """
+
+    if budget.budget_usd is None:
+        raise CalibrationError("live calibration requires a finite dollar budget")
+    if runs < 1 or runs > budget.max_repeats:
+        raise CalibrationError("runs must be within the repeat budget")
+    if not math.isfinite(request_cost_ceiling) or request_cost_ceiling <= 0:
+        raise CalibrationError("request_cost_ceiling must be finite and positive")
+    if any(event.raw_answer is not None or event.control for event in manifest.events):
+        raise CalibrationError(
+            "live calibration needs unanswered primary templates; controls are generated"
+        )
+    snapshot = gateway.jev_model
+    if any(event.identity.answering_snapshot != snapshot for event in manifest.events):
+        raise CalibrationError("live template snapshot must match the Gateway")
+    source_groups = sorted({event.source_group for event in manifest.events})
+    selected_groups = set(source_groups[: budget.max_source_examples])
+    templates = sorted(
+        (event for event in manifest.events if event.source_group in selected_groups),
+        key=lambda event: (
+            event.identity.question_id,
+            event.source_group,
+            event.example_id,
+        ),
+    )
+    template_keys = [
+        (event.identity.question_id, event.source_group, event.example_id)
+        for event in templates
+    ]
+    if len(template_keys) != len(set(template_keys)):
+        raise CalibrationError("live input needs one template per question/example")
+    recorded: list[CalibrationObservation] = []
+    reserved_usd = 0.0
+    observed_usd = 0.0
+    attempts = 0
+    stopped_reason: str | None = None
+    expected_requests = len(templates) * runs * 2
+    capture_id = uuid.uuid4().hex
+    for template in templates:
+        for repeat_index in range(runs):
+            for control in (False, True):
+                if len(recorded) >= budget.max_question_evaluations:
+                    stopped_reason = "question-evaluation-limit"
+                    break
+                if reserved_usd + request_cost_ceiling > budget.budget_usd + 1e-12:
+                    stopped_reason = "budget-reservation"
+                    break
+                request_id = _digest(
+                    {
+                        "input_digest": manifest.input_digest,
+                        "capture_id": capture_id,
+                        "event_id": template.event_id,
+                        "repeat_index": repeat_index,
+                        "control": control,
+                    }
+                )
+                state = {} if control else template.state
+                request = {
+                    "key": template.identity.question_id,
+                    "query": template.identity.question,
+                    "type": template.identity.primitive,
+                    "criteria": _jsonable(template.identity.criteria),
+                    "state": state,
+                }
+                before = gateway.usage_report().get("total_cost", 0.0)
+                before_log_count = len(gateway.decision_log)
+                reserved_usd += request_cost_ceiling
+                attempts += 1
+                answer = None
+                try:
+                    answer = gateway.decide(request, run_id=request_id)
+                except Exception as exc:
+                    from ..gateway import ProviderError
+
+                    if not isinstance(exc, ProviderError):
+                        raise
+                    stopped_reason = "provider-error"
+                after = gateway.usage_report().get("total_cost", before)
+                actual_cost = max(0.0, float(after) - float(before))
+                observed_usd += actual_cost
+                entry = (
+                    gateway.decision_log[-1]
+                    if len(gateway.decision_log) > before_log_count
+                    else {}
+                )
+                answered_by = (
+                    entry.get("answered_by") if isinstance(entry, Mapping) else None
+                )
+                recorded.append(
+                    replace(
+                        template,
+                        event_id=f"{template.event_id}:{repeat_index}:{'control' if control else 'primary'}",
+                        raw_answer=answer,
+                        control=control,
+                        state=state,
+                        repeat_index=repeat_index,
+                        request_id=request_id,
+                        answer_id=f"answer:{request_id}",
+                        answering_snapshot=answered_by or snapshot,
+                    )
+                )
+                if actual_cost > request_cost_ceiling + 1e-12:
+                    stopped_reason = "request-cost-ceiling-exceeded"
+                if stopped_reason is not None:
+                    break
+            if stopped_reason is not None:
+                break
+        if stopped_reason is not None:
+            break
+    partial = stopped_reason is not None or len(selected_groups) < len(source_groups)
+    if partial and stopped_reason is None:
+        stopped_reason = "source-example-limit"
+    captured = replace(manifest, events=tuple(recorded), input_digest="")
+    captured = replace(captured, input_digest=captured.to_dict()["input_digest"])
+    return captured, {
+        "status": "partial" if partial else "complete",
+        "stopped_reason": stopped_reason,
+        "requests": attempts,
+        "retries": 0,
+        "expected_requests": expected_requests,
+        "observed_usd": observed_usd,
+        "reserved_usd": reserved_usd,
+        "request_cost_ceiling_usd": request_cost_ceiling,
+        "capture_id": capture_id,
+        "selected_source_groups": len(selected_groups),
+        "observed_source_groups": len(source_groups),
     }
 
 
@@ -2451,13 +2762,22 @@ class DecisionPolicy:
             if not isinstance(loaded, CalibrationArtifact):
                 raise CalibrationError("DecisionPolicy accepts calibration artifacts")
             for key, value in loaded.questions.items():
-                self._questions[str(key)].append(dict(value))
+                identity = value.get("identity")
+                question_id = (
+                    identity.get("question_id", key)
+                    if isinstance(identity, Mapping)
+                    else key
+                )
+                self._questions[str(question_id)].append(dict(value))
 
     @classmethod
     def from_artifact(
-        cls, artifact: CalibrationArtifact | Mapping[str, Any] | str | Path
+        cls,
+        artifact: CalibrationArtifact | Mapping[str, Any] | str | Path,
+        *,
+        policy_version: str = DEFAULT_POLICY_VERSION,
     ) -> DecisionPolicy:
-        return cls(artifact)
+        return cls(artifact, policy_version=policy_version)
 
     @property
     def question_ids(self) -> tuple[str, ...]:
@@ -2483,8 +2803,12 @@ class DecisionPolicy:
             return False
         actual_snapshot = snapshot or identity.answering_snapshot
         return (
-            stored.question_id == identity.question_id
+            actual_snapshot is not None
+            and stored.answering_snapshot is not None
+            and stored.question_id == identity.question_id
             and stored.answering_snapshot == actual_snapshot
+            and stored.policy_version == self.policy_version
+            and identity.policy_version == self.policy_version
             and stored.identity_digest == identity.identity_digest
         )
 
@@ -2555,6 +2879,7 @@ class DecisionPolicy:
             evidence={
                 "verdict_components": question.get("verdict_components", {}),
                 "metrics": question.get("metrics", {}),
+                "fit": question.get("fit", {"mode": "none"}),
             },
         )
 
@@ -2582,13 +2907,8 @@ class DecisionPolicy:
         return None
 
     @staticmethod
-    def _margin(decision: Any) -> float | None:
-        if isinstance(decision, NoulDecision):
-            return abs(2.0 * decision.probability - 1.0)
-        if isinstance(decision, (ChoiceDecision, ScoreDecision)):
-            probabilities = list(decision.probabilities.values())
-            return max(probabilities) if probabilities else None
-        return None
+    def _margin(decision: Any, identity: QuestionIdentity) -> float | None:
+        return _decision_margin(decision, EventSpec.from_identity(identity))
 
     def apply(
         self,
@@ -2611,6 +2931,36 @@ class DecisionPolicy:
                 disposition=Disposition.ABSTAIN.value,
                 reason="calibration_event_probability_unavailable",
             )
+        fit = resolved.evidence.get("fit", {"mode": "none"})
+        if not isinstance(fit, Mapping):
+            return replace(
+                resolved,
+                disposition=Disposition.ABSTAIN.value,
+                reason="invalid_calibration_fit",
+            )
+        mode = fit.get("mode", "none")
+        if mode == "temperature":
+            try:
+                temperature = float(fit["temperature"])
+                if not math.isfinite(temperature) or temperature <= 0:
+                    raise ValueError("temperature must be finite and positive")
+            except (KeyError, TypeError, ValueError):
+                return replace(
+                    resolved,
+                    disposition=Disposition.ABSTAIN.value,
+                    reason="invalid_calibration_fit",
+                )
+            probability = apply_temperature(probability, temperature)
+        elif mode != "none":
+            return replace(
+                resolved,
+                disposition=Disposition.ABSTAIN.value,
+                reason="invalid_calibration_fit",
+            )
+        resolved = replace(
+            resolved,
+            evidence={**resolved.evidence, "event_probability": probability},
+        )
         if resolved.threshold is not None and probability < resolved.threshold:
             return replace(
                 resolved,
@@ -2619,14 +2969,39 @@ class DecisionPolicy:
             )
         predicate = resolved.predicate
         if predicate:
+            if not set(predicate).issubset(
+                {
+                    "probability_gte",
+                    "margin_gte",
+                    "confidence_gte",
+                    "support",
+                    "coverage",
+                }
+            ):
+                return replace(
+                    resolved,
+                    disposition=Disposition.ABSTAIN.value,
+                    reason="invalid_calibration_predicate",
+                )
             checks: list[bool] = []
             for name, actual in (
                 ("probability_gte", probability),
-                ("margin_gte", self._margin(decision)),
-                ("confidence_gte", _raw_confidence(raw_answer)),
+                ("margin_gte", self._margin(decision, identity)),
+                (
+                    "confidence_gte",
+                    None
+                    if isinstance(decision, NoulDecision)
+                    else _raw_confidence(raw_answer),
+                ),
             ):
-                if name not in predicate or actual is None:
+                if name not in predicate:
                     continue
+                if actual is None:
+                    return replace(
+                        resolved,
+                        disposition=Disposition.ABSTAIN.value,
+                        reason="frozen_calibration_predicate_failed",
+                    )
                 try:
                     checks.append(actual >= float(predicate[name]))
                 except (TypeError, ValueError):
@@ -2654,6 +3029,7 @@ def runtime_question_identity(
     family: str = "",
     rubric_version: str | None = None,
     snapshot: str | None = None,
+    policy_version: str = DEFAULT_POLICY_VERSION,
 ) -> QuestionIdentity:
     """Build the runtime identity without changing the Gateway request shape."""
 
@@ -2674,8 +3050,8 @@ def runtime_question_identity(
         event_mapping=event_mapping,
         family=family,
         rubric_version=rubric_version,
-        answering_snapshot=snapshot
-        or getattr(request.get("_calibration_gateway", None), "jev_model", None),
+        answering_snapshot=snapshot,
+        policy_version=policy_version,
     )
 
 
@@ -2708,6 +3084,7 @@ __all__ = [
     "calibrate",
     "calibrate_manifest",
     "calibrate_question",
+    "capture_live_manifest",
     "compute_metrics",
     "fit_temperature",
     "group_bootstrap",

@@ -125,17 +125,37 @@ class PromptOptimizer:
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
-        from .evaluation.calibration import DecisionPolicy
+        from .evaluation.calibration import (
+            DEFAULT_POLICY_VERSION,
+            CalibrationArtifact,
+            CalibrationError,
+            DecisionPolicy,
+        )
 
         selected_policy = (
             decision_policy if decision_policy is not None else calibration
         )
-        self.decision_policy = (
-            DecisionPolicy.from_artifact(selected_policy)
-            if selected_policy is not None
-            and not isinstance(selected_policy, DecisionPolicy)
-            else selected_policy
-        )
+        if selected_policy is None or isinstance(selected_policy, DecisionPolicy):
+            self.decision_policy = selected_policy
+        else:
+            artifact = (
+                CalibrationArtifact.load(selected_policy)
+                if isinstance(selected_policy, (str, Path))
+                else CalibrationArtifact.from_dict(selected_policy)
+                if isinstance(selected_policy, Mapping)
+                else selected_policy
+            )
+            verdict_policy = artifact.metadata.get("verdict_policy")
+            policy_version = (
+                verdict_policy.get("policy_version", DEFAULT_POLICY_VERSION)
+                if isinstance(verdict_policy, Mapping)
+                else DEFAULT_POLICY_VERSION
+            )
+            if not isinstance(policy_version, str) or not policy_version.strip():
+                raise CalibrationError("artifact policy_version must be non-empty")
+            self.decision_policy = DecisionPolicy.from_artifact(
+                artifact, policy_version=policy_version
+            )
         self.settings_store = (
             SettingsStore(
                 Path(self.store.path).with_suffix(".settings.json"),
@@ -544,9 +564,10 @@ class PromptOptimizer:
                 continue
             entry = entries[index] if index < len(entries) else {}
             snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
-            if not isinstance(snapshot, str) or not snapshot:
-                snapshot = getattr(self.gateway, "jev_model", None)
-            from .evaluation.calibration import runtime_question_identity
+            from .evaluation.calibration import (
+                DEFAULT_POLICY_VERSION,
+                runtime_question_identity,
+            )
 
             identity = runtime_question_identity(
                 f"rubric:{item.question_id}",
@@ -554,6 +575,11 @@ class PromptOptimizer:
                 family="rubric",
                 rubric_version=rubric.version_id,
                 snapshot=snapshot if isinstance(snapshot, str) else None,
+                policy_version=(
+                    self.decision_policy.policy_version
+                    if self.decision_policy is not None
+                    else DEFAULT_POLICY_VERSION
+                ),
             )
             identity = replace(
                 identity,
@@ -576,6 +602,10 @@ class PromptOptimizer:
                     "reason": policy_decision.reason,
                     "threshold": policy_decision.threshold,
                     "predicate": dict(policy_decision.predicate),
+                    "event_probability": policy_decision.evidence.get(
+                        "event_probability"
+                    ),
+                    "fit": policy_decision.evidence.get("fit"),
                 }
             missing = (
                 decision.probability
@@ -588,16 +618,25 @@ class PromptOptimizer:
                 threshold = policy_decision.threshold
             else:
                 threshold = item.threshold
-            if (
-                missing >= threshold
-                and decision.confidence >= diagnosis_rubric.confidence_threshold
+            gate_probability = (
+                policy_decision.evidence.get("event_probability", missing)
+                if policy_decision is not None and policy_decision.may_gate
+                else missing
+            )
+            legacy_confident = (
+                decision.confidence >= diagnosis_rubric.confidence_threshold
+            )
+            if gate_probability >= threshold and (
+                policy_decision is not None
+                and not policy_decision.is_legacy
+                or legacy_confident
             ):
                 gaps.append(
                     ConfirmedGap(
                         item.question_id,
                         item.text,
                         default_impacts.get(item.question_id, GapImpact.MEDIUM),
-                        missing,
+                        gate_probability,
                         decision.confidence,
                         threshold,
                     )

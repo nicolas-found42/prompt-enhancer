@@ -147,10 +147,13 @@ def test_calibration_keeps_partitions_disjoint_and_persists_a_verdict() -> None:
                 repeat_index=0,
             )
         )
+    identity = replace(_identity(), policy_version="test-verdict-policy-v1")
+    observations = [replace(item, identity=identity) for item in observations]
     result = calibrate_question(
-        _identity(),
+        identity,
         observations,
         verdict_policy=VerdictPolicy(
+            policy_version="test-verdict-policy-v1",
             minimum_evaluation_groups=3,
             minimum_positive_examples=2,
             minimum_negative_examples=2,
@@ -359,6 +362,194 @@ def test_runtime_policy_gates_rankers_and_abstains_on_snapshot_mismatch() -> Non
     )
     below = optimizer.optimize("Help me plan.", {"tier": "fast"})
     assert below["report"]["diagnosis"]["confirmed_gaps"] == []
+
+
+def test_optimizer_gates_using_fitted_probability_from_artifact() -> None:
+    identity = _identity()
+    artifact = CalibrationArtifact.from_dict(
+        {
+            "kind": "calibration-artifact",
+            "name": "fitted",
+            "input_digest": "known-input",
+            "questions": {
+                identity.question_id: {
+                    "identity": identity.to_dict(),
+                    "verdict": "gate",
+                    "threshold": 0.8,
+                    "fit": {"mode": "temperature", "temperature": 0.5},
+                }
+            },
+        }
+    )
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+            }
+        return {
+            "type": "noul",
+            "probability_true": 0.7 if request.get("key") == "gap:goal" else 0.01,
+        }
+
+    optimizer = PromptOptimizer(
+        gateway=ScriptedGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        ),
+        store=RunStore(":memory:"),
+        decision_policy=DecisionPolicy.from_artifact(artifact),
+    )
+    result = optimizer.optimize("Help me plan.", {"tier": "fast"})
+
+    assert [gap["key"] for gap in result["report"]["diagnosis"]["confirmed_gaps"]] == [
+        "goal"
+    ]
+    assert result["report"]["diagnosis"]["confirmed_gaps"][0][
+        "missing_probability"
+    ] == pytest.approx(0.8448275862)
+
+
+def test_optimizer_abstains_when_answer_snapshot_is_unknown() -> None:
+    identity = _identity()
+    artifact = CalibrationArtifact.from_dict(
+        {
+            "kind": "calibration-artifact",
+            "name": "snapshot-bound",
+            "input_digest": "known-input",
+            "questions": {
+                identity.question_id: {
+                    "identity": identity.to_dict(),
+                    "verdict": "gate",
+                    "threshold": 0.8,
+                }
+            },
+        }
+    )
+
+    class UnknownSnapshotGateway(ScriptedGateway):
+        def decide_batch(self, requests, *, role="judge", run_id=None):
+            answers = super().decide_batch(requests, role=role, run_id=run_id)
+            for entry in self.decision_log[-len(requests) :]:
+                entry.pop("answered_by", None)
+            return answers
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+            }
+        return {
+            "type": "noul",
+            "probability_true": 0.95 if request.get("key") == "gap:goal" else 0.01,
+        }
+
+    optimizer = PromptOptimizer(
+        gateway=UnknownSnapshotGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        ),
+        store=RunStore(":memory:"),
+        decision_policy=DecisionPolicy.from_artifact(artifact),
+    )
+    result = optimizer.optimize("Help me plan.", {"tier": "fast"})
+
+    assert result["report"]["diagnosis"]["confirmed_gaps"] == []
+    assert result["report"]["diagnosis"]["calibration"]["gap:goal"]["reason"] == (
+        "calibration_identity_or_snapshot_mismatch"
+    )
+
+
+def test_offline_cli_reports_all_five_verdicts_on_known_answers(
+    tmp_path: Path,
+) -> None:
+    events = []
+    for verdict in (
+        "gate",
+        "gate-above-confidence",
+        "ranker",
+        "unusable",
+        "too-few-examples",
+    ):
+        for partition, count in (
+            ("fit", 2),
+            ("calibration", 30),
+            ("evaluation", 1 if verdict == "too-few-examples" else 30),
+        ):
+            for index in range(count):
+                positive = index < (1 if partition == "fit" else 5)
+                probability = 0.95 if positive else 0.05
+                if verdict == "gate-above-confidence":
+                    probability = 0.95 if index < 2 else 0.69 if index < 5 else 0.8
+                elif verdict == "ranker" and partition == "evaluation":
+                    probability = 0.8 if positive else 0.2
+                elif verdict == "unusable":
+                    probability = 0.5
+                event_id = f"{verdict}:{partition}:{index}"
+                events.append(
+                    {
+                        "id": event_id,
+                        "source_group": f"{partition}:{index}",
+                        "example_id": event_id,
+                        "partition": partition,
+                        "question_id": f"gap:{verdict}",
+                        "question": f"Is {verdict} present?",
+                        "family": "gap",
+                        "primitive": "noul",
+                        "criteria": ["no", "yes"],
+                        "event": {"positive_class": "yes"},
+                        "label": positive,
+                        "label_provenance": "synthetic_known_answer",
+                        "answering_snapshot": JEV_MODEL,
+                        "policy_version": "test-verdict-policy-v1",
+                        "request_id": f"request:{event_id}",
+                        "answer_id": f"answer:{event_id}",
+                        "answer": {"type": "noul", "probability_true": probability},
+                    }
+                )
+    source = tmp_path / "verdict-input.json"
+    output = tmp_path / "verdict-report.json"
+    source.write_text(json.dumps({"events": events}))
+
+    assert (
+        evaluation_main(
+            [
+                "calibrate",
+                str(source),
+                "--output",
+                str(output),
+                "--bootstrap-resamples",
+                "16",
+                "--calibration-policy",
+                json.dumps(
+                    {
+                        "policy_version": "test-verdict-policy-v1",
+                        "require_control": False,
+                        "require_repeats": False,
+                        "require_brier_better_than_control": False,
+                    }
+                ),
+            ]
+        )
+        == 0
+    )
+
+    report = json.loads(output.read_text())
+    assert {
+        key.removeprefix("gap:"): value["verdict"]
+        for key, value in report["questions"].items()
+    } == {
+        verdict: verdict
+        for verdict in (
+            "gate",
+            "gate-above-confidence",
+            "ranker",
+            "unusable",
+            "too-few-examples",
+        )
+    }
 
 
 def test_malformed_answers_are_unavailable_not_successful_zero() -> None:

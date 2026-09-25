@@ -294,6 +294,7 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])(?:[\"'”’\)\]]*)(?=\s+|$)|\n{2,}
 _PROBLEM_QUESTIONS = {
     ProblemKind(key): value for key, value in jev_questions.PROBLEM_QUESTIONS.items()
 }
+POINTER_CALIBRATION_CRITERIA = "sentence-id-options-with-none"
 
 
 def split_sentences(prompt: str) -> tuple[Sentence, ...]:
@@ -396,8 +397,6 @@ class Diagnoser:
             answered_by = (
                 entry.get("answered_by") if isinstance(entry, Mapping) else None
             )
-            if not isinstance(answered_by, str) or not answered_by:
-                answered_by = getattr(self.gateway, "jev_model", None)
             observations.append(
                 _DecisionObservation(
                     request=dict(request),
@@ -419,6 +418,7 @@ class Diagnoser:
         observation: _DecisionObservation,
         family: str,
         event_mapping: Mapping[str, Any] | None = None,
+        criteria_descriptor: str | None = None,
     ) -> PolicyDecision | None:
         if self.decision_policy is None:
             return None
@@ -430,7 +430,10 @@ class Diagnoser:
             family=family,
             rubric_version=self.rubric_version,
             snapshot=observation.answered_by,
+            policy_version=self.decision_policy.policy_version,
         )
+        if criteria_descriptor is not None:
+            identity = replace(identity, criteria=criteria_descriptor)
         if event_mapping is not None:
             identity = replace(identity, event_mapping=dict(event_mapping))
         decision = self.decision_policy.apply(
@@ -446,6 +449,8 @@ class Diagnoser:
             "reason": decision.reason,
             "threshold": decision.threshold,
             "predicate": dict(decision.predicate),
+            "event_probability": decision.evidence.get("event_probability"),
+            "fit": decision.evidence.get("fit"),
         }
         return decision
 
@@ -577,12 +582,19 @@ class Diagnoser:
                     and abs(response.probability - 0.5) >= rubric.uncertainty_margin
                 )
             if confident_missing:
+                reported_probability = (
+                    policy_decision.evidence.get(
+                        "event_probability", response.probability
+                    )
+                    if policy_decision is not None and policy_decision.may_gate
+                    else response.probability
+                )
                 gaps.append(
                     ConfirmedGap(
                         key=item.key,
                         label=item.label,
                         impact=item.impact,
-                        missing_probability=response.probability,
+                        missing_probability=reported_probability,
                         confidence=response.confidence,
                         threshold=threshold,
                     )
@@ -650,11 +662,13 @@ class Diagnoser:
                 observation=observation,
                 family="pointer",
                 event_mapping={"selected_correctness": True},
+                criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
             )
-            if policy_decision is not None and not policy_decision.is_legacy:
-                if policy_decision.disposition == "abstain":
-                    continue
-            elif pointer.confidence < rubric.pointer_threshold:
+            if policy_decision is not None and policy_decision.disposition == "abstain":
+                continue
+            if (
+                policy_decision is None or not policy_decision.may_gate
+            ) and pointer.confidence < rubric.pointer_threshold:
                 continue
             sentence = next(
                 (item for item in sentences if item.id == pointer.selected), None

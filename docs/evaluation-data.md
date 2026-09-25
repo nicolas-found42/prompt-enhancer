@@ -93,15 +93,24 @@ Map the labeled event to the raw answer's primitive: Noul uses its
 to target the complement); Choice answers carry `choice` and a `probabilities`
 map, with `event.expected_class` naming the labeled option, or
 `event.selected_correctness: true` when the label is the expected option and
-the event is whether the selected option was correct; Score answers carry
+the event is whether the selected option was correct. In that mode the binary
+prediction is the probability assigned to the selected option, while the
+categorical label still scores the full Choice distribution. Score answers carry
 `levels` probabilities and require `event.boundary` (numeric levels at or above
-it form the positive event). See the fixture for complete Noul, Choice, and
+it form the positive event); their full ordinal distribution is scored with
+the mean cumulative Brier loss across adjacent level boundaries. See the fixture
+for complete Noul, Choice, and
 Score examples. Keep the full question identity—question text, primitive,
 criteria/mapping, family/schema and rubric versions, policy version, and
 answering snapshot—consistent within a question. These fields bind the result
 to that exact question and Jev snapshot; do not combine labels or answers with
 different identities. Label provenance must describe its real source, such as
 source annotation, human review, delegated judgment, or synthetic fixture.
+For `pointer:*` questions, set identity `criteria` to the stable descriptor
+`"sentence-id-options-with-none"` and `event.selected_correctness` to `true`.
+The product's pointer requests still send the actual sentence IDs plus
+`"none"` in `options`; those IDs vary by prompt and do not belong in the
+reusable question identity.
 Give each independent repeat a distinct non-negative `repeat_index`; when
 present, `request_id` and `answer_id` must also be distinct. A cached response
 is not an independent repeat.
@@ -112,9 +121,44 @@ disjoint fit/calibration/evaluation partitions (60/20/20, seeded; default seed
 `evaluation`, but every event in a source group must use the same partition.
 Optional `--fit temperature` fits only on fit groups; threshold selection uses
 calibration groups, and evaluation groups are held for metrics/verdicts. The
-CLI bounds inputs by default to 100 source examples, 3 repeats per
+artifact records `mode: none` with an unavailable reason when the fit partition
+has no usable labels, so runtime and evaluation both use the raw probabilities.
+When `--calibration-policy` changes a verdict threshold or evidence requirement,
+set a distinct `policy_version` in that policy and in every matching input event.
+The runtime `DecisionPolicy` must use the same version to apply the artifact;
+version or snapshot mismatches abstain.
+The CLI bounds inputs by default to 100 source examples, 3 repeats per
 question/example/arm (`--runs`), and 5,000 question evaluations; override with
 `--max-source-examples`, `--runs`, and `--max-question-evaluations` as needed.
+For offline records, `--runs` limits the repeats already present; it never
+duplicates one answer to manufacture stability evidence.
+
+To capture live evidence, supply one unanswered primary event per
+question/example with its complete identity, label provenance, and non-empty
+state. The command makes a fresh Gateway request for every repeat and for each
+matching empty-state control, then writes the raw event manifest for offline
+replay. A live run requires an explicit finite dollar budget and a recording
+path:
+
+```sh
+uv run --env-file .env python -m prompt_enhancer.evaluation calibrate \
+  .local/evaluation/calibration-templates.json --live --runs 3 \
+  --budget 2.00 --request-cost-ceiling 0.01 \
+  --record .local/evaluation/calibration-recording.json \
+  --output .local/evaluation/calibration-live-report.json
+uv run --locked python -m prompt_enhancer.evaluation calibrate \
+  .local/evaluation/calibration-recording.json \
+  --output .local/evaluation/calibration-replayed-report.json
+```
+
+The CLI disables Gateway retries during capture, records zero retries and one
+identity per provider attempt, and reserves `--request-cost-ceiling` USD before
+each request. It stops with a partial report when the next reservation would
+exceed `--budget` or a source/request limit. Because provider charges arrive
+after a request, the ceiling must be conservative; an actual charge above it
+stops capture immediately and is reported as a ceiling overrun. The report
+keeps observed cost and reserved cost separately. Offline replay is
+deterministic; each new live capture has a new request identity.
 
 The default `issue-50-v1` verdict policy is provisional: a gate needs at least
 30 evaluation groups, 5 positive and 5 negative examples, precision at least
@@ -125,7 +169,7 @@ claims of established Jev accuracy. The known-answer fixture is synthetic and
 proves parsing, fitting, reporting, and artifact code paths—not empirical
 accuracy. Any live mode must be explicit and have a finite, positive dollar
 budget (`--budget USD`); calibration rejects `--live` without an explicit
-budget. Keep private prompts, answers, reports, and artifacts under ignored
+budget and `--record`. Keep private prompts, answers, reports, and artifacts under ignored
 `.local/evaluation/`.
 
 ## Local coding-agent sessions
