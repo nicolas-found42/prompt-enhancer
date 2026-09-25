@@ -91,7 +91,23 @@ class CandidateFailure:
         identity = self.candidate_id
         if self.strategy:
             identity = f"{identity} ({self.strategy})"
-        reasons = "; ".join(self.reasons) or "no qualifying improvement"
+        fidelity_reasons = [
+            reason
+            for reason in self.reasons
+            if reason.startswith("fidelity ")
+            or reason.startswith("whole-prompt meaning preservation")
+        ]
+        if fidelity_reasons:
+            details = [
+                _concise_fidelity_reason(reason) for reason in fidelity_reasons[:2]
+            ]
+            reasons = "prior fidelity evidence: " + "; ".join(details)
+            if len(fidelity_reasons) > len(details):
+                reasons += (
+                    f"; {len(fidelity_reasons) - len(details)} more fidelity finding(s)"
+                )
+        else:
+            reasons = "; ".join(self.reasons) or "no qualifying improvement"
         if self.weak_pass_rates:
             rates = ", ".join(
                 f"{model}={rate:.3f}"
@@ -115,6 +131,20 @@ class CandidateFailure:
             "candidate_prompt": self.candidate_prompt,
             "summary": self.summary,
         }
+
+
+def _concise_fidelity_reason(reason: str) -> str:
+    if reason.startswith("fidelity rejected "):
+        return "support was not verified for " + reason.removeprefix(
+            "fidelity rejected "
+        )
+    if reason.startswith("fidelity confinement rejected "):
+        return "edit was outside its authorized span: " + reason.removeprefix(
+            "fidelity confinement rejected "
+        )
+    if reason.startswith("whole-prompt meaning preservation"):
+        return "whole-prompt meaning preservation did not meet the policy threshold"
+    return reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -424,15 +454,17 @@ def run_round(
                     gateway,
                     working_prompt,
                     candidate.text,
-                    model_view,
-                    candidate.strategy.name,
+                    plan.diagnosis,
+                    candidate.strategy,
                     run_id=plan.run_id,
                     judge_model=settings.judge_model,
+                    assumptions=plan.assumptions,
+                    support_prompt=plan.prompt,
                 )
             ).passed,
             rejection_reasons=()
             if fidelity.passed
-            else ("candidate failed fidelity checks",),
+            else ("candidate failed fidelity checks", *fidelity.rejection_reasons),
             metadata={"fidelity": fidelity.to_dict()},
         )
         for candidate in candidates

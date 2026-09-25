@@ -14,9 +14,11 @@ from typing import Any
 from .catalog import DEFAULT_GO_WRITER
 from .gateway import Gateway, completion_text, writer_messages
 
-# Version 1 is the historical request without diagnosis; version 2 adds it.
-WRITER_INSTRUCTION_VERSIONS = (1, 2)
-CURRENT_WRITER_INSTRUCTION_VERSION = 2
+# Version 1 is the historical request without diagnosis; version 2 adds it;
+# version 3 adds explicit edit permissions and treats prior fidelity evidence as
+# an unresolved candidate check rather than a fact about user intent.
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3)
+CURRENT_WRITER_INSTRUCTION_VERSION = 3
 
 
 class CandidateWriter:
@@ -44,7 +46,7 @@ class CandidateWriter:
             "Preserve the user's language, intent, and unflagged wording. "
             "Use state.previous_failures to address prior round failures."
         )
-        current_instructions = (
+        version_two_instructions = (
             "Return JSON only: an object mapping each strategy name in state.strategies "
             "to one complete rewritten prompt. Use a distinct strategy for each. "
             "Use state.diagnosis.confirmed_gaps and problem_sentences to find the diagnosed weaknesses. "
@@ -55,13 +57,32 @@ class CandidateWriter:
             "edit, return the original prompt for that strategy. Use state.previous_failures to address "
             "prior round failures."
         )
+        current_instructions = (
+            "Return JSON only: an object mapping each strategy name in state.strategies "
+            "to one complete rewritten prompt. Use a distinct strategy for each. "
+            "Use state.diagnosis.confirmed_gaps and problem_sentences to find the diagnosed weaknesses. "
+            "Honor each strategy's explicit restructures and gap_fill_keys metadata. A gap_fill_keys "
+            "entry only permits an attempt to fill that matching confirmed gap; it does not prove a "
+            "value or sentence is supported. Preserve the user's language, intent, and every requirement. "
+            "Keep unaffected text verbatim unless the strategy explicitly restructures it. Do not invent "
+            "facts, requirements, examples, roles, output formats, or constraints. If essential information "
+            "is missing, ask for that exact information instead of supplying a value or adding optional "
+            "details. Treat state.previous_failures as evidence about prior candidates, not as facts about "
+            "the user's intent. Do not repeat an unsupported sentence unless state.prompt or a confirmed "
+            "user answer supports it. If a strategy has no safe edit, return the original prompt."
+        )
         if self.instruction_version == 1:
             state.pop("diagnosis", None)
-        instructions = (
-            original_instructions
-            if self.instruction_version == 1
-            else current_instructions
-        )
+        if self.instruction_version < 3:
+            for strategy in state.get("strategies", ()):
+                if isinstance(strategy, dict):
+                    strategy.pop("gap_fill_keys", None)
+                    strategy.pop("restructures", None)
+        instructions = {
+            1: original_instructions,
+            2: version_two_instructions,
+            3: current_instructions,
+        }[self.instruction_version]
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"
         )
