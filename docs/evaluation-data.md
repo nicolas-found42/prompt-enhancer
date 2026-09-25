@@ -93,9 +93,13 @@ Map the labeled event to the raw answer's primitive: Noul uses its
 to target the complement); Choice answers carry `choice` and a `probabilities`
 map, with `event.expected_class` naming the labeled option, or
 `event.selected_correctness: true` when the label is the expected option and
-the event is whether the selected option was correct; Score answers carry
+the event is whether the selected option was correct. In that mode the binary
+prediction is the probability assigned to the selected option, while the
+categorical label still scores the full Choice distribution. Score answers carry
 `levels` probabilities and require `event.boundary` (numeric levels at or above
-it form the positive event). See the fixture for complete Noul, Choice, and
+it form the positive event); their full ordinal distribution is scored with
+the mean cumulative Brier loss across adjacent level boundaries. See the fixture
+for complete Noul, Choice, and
 Score examples. Keep the full question identity—question text, primitive,
 criteria/mapping, family/schema and rubric versions, policy version, and
 answering snapshot—consistent within a question. These fields bind the result
@@ -112,7 +116,9 @@ disjoint fit/calibration/evaluation partitions (60/20/20, seeded; default seed
 `evaluation`, but every event in a source group must use the same partition.
 Optional `--fit temperature` fits only on fit groups; threshold selection uses
 calibration groups, and evaluation groups are held for metrics/verdicts. The
-CLI bounds inputs by default to 100 source examples, 3 repeats per
+artifact records `mode: none` with an unavailable reason when the fit partition
+has no usable labels, so runtime and evaluation both use the raw probabilities.
+The CLI bounds inputs by default to 100 source examples, 3 repeats per
 question/example/arm (`--runs`), and 5,000 question evaluations; override with
 `--max-source-examples`, `--runs`, and `--max-question-evaluations` as needed.
 For offline records, `--runs` limits the repeats already present; it never

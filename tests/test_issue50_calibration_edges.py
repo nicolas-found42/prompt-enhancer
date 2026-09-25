@@ -181,6 +181,85 @@ def test_missing_answers_and_missing_choice_classes_remain_unavailable() -> None
     assert missing_target.probability is None
 
 
+def test_choice_selected_correctness_scores_confidence_in_the_selection() -> None:
+    identity = QuestionIdentity(
+        question_id="pointer:choice",
+        question="Which option?",
+        primitive="choice",
+        criteria=("right", "wrong"),
+        event_mapping={"selected_correctness": True},
+        answering_snapshot=_SNAPSHOT,
+    )
+    event = normalize_event(
+        CalibrationObservation(
+            event_id="confidently-wrong",
+            source_group="source",
+            example_id="example",
+            identity=identity,
+            label="right",
+            raw_answer={
+                "type": "choice",
+                "choice": "wrong",
+                "probabilities": {"right": 0.1, "wrong": 0.9},
+            },
+            provenance="synthetic_known_answer",
+            answering_snapshot=_SNAPSHOT,
+        )
+    )
+
+    assert event.label is False
+    assert event.probability == pytest.approx(0.9)
+    assert compute_metrics([event], 0.5)["brier"] == pytest.approx(0.81)
+
+
+def test_negative_polarity_noul_brier_targets_the_no_class() -> None:
+    identity = replace(_noul_identity(), event_mapping={"polarity": "negative"})
+    event = normalize_event(
+        replace(
+            _noul_observation("negative", "source", "example", True, 0.05),
+            identity=identity,
+        )
+    )
+
+    metrics = compute_metrics([event], 0.5)
+    assert event.probability == pytest.approx(0.95)
+    assert metrics["brier"] == pytest.approx(0.0025)
+    assert metrics["distribution_brier"] == pytest.approx(0.005)
+
+
+def test_score_distribution_uses_ordinal_cumulative_brier() -> None:
+    identity = QuestionIdentity(
+        question_id="fidelity:score",
+        question="How faithful?",
+        primitive="score",
+        criteria=(1, 2, 3, 4),
+        event_mapping={"boundary": 3},
+        answering_snapshot=_SNAPSHOT,
+    )
+    event = normalize_event(
+        CalibrationObservation(
+            event_id="ordinal",
+            source_group="source",
+            example_id="example",
+            identity=identity,
+            label=3,
+            raw_answer={
+                "type": "score",
+                "score": 3,
+                "levels": {"1": 0.1, "2": 0.2, "3": 0.3, "4": 0.4},
+            },
+            provenance="synthetic_known_answer",
+            answering_snapshot=_SNAPSHOT,
+        )
+    )
+
+    metrics = compute_metrics([event], 0.5)
+    assert metrics["distribution_brier"] == pytest.approx(0.26 / 3)
+    assert metrics["distribution_brier_convention"] == (
+        "ranked_probability_score_mean_over_boundaries"
+    )
+
+
 def test_cached_raw_answer_without_new_identity_is_not_an_independent_repeat() -> None:
     identity = _noul_identity()
     first = _noul_observation(
@@ -192,6 +271,21 @@ def test_cached_raw_answer_without_new_identity_is_not_an_independent_repeat() -
 
     with pytest.raises(CalibrationError, match="duplicate answer identity"):
         calibrate_question(identity, [first, cached_repeat])
+
+
+def test_same_example_id_in_different_sources_is_not_repeat_evidence() -> None:
+    events = [
+        normalize_event(
+            _noul_observation("first", "source-one", "shared-id", True, 0.1)
+        ),
+        normalize_event(
+            _noul_observation("second", "source-two", "shared-id", True, 0.9)
+        ),
+    ]
+
+    metrics = compute_metrics(events, 0.5)
+    assert metrics["support"]["repeat_examples"] == 0
+    assert metrics["repeat_spread"]["largest_within_example"] is None
 
 
 def test_source_group_partitions_are_stable_and_disjoint() -> None:
@@ -572,6 +666,64 @@ def test_runtime_applies_stored_temperature_before_gating() -> None:
 
     assert decision.may_gate
     assert decision.evidence["event_probability"] == pytest.approx(0.8448275862)
+
+
+def test_unavailable_temperature_fit_freezes_an_explicit_no_fit_gate() -> None:
+    identity = _noul_identity()
+    observations = [
+        replace(
+            _noul_observation(
+                f"fit-{index}",
+                f"fit-{index}",
+                f"fit-{index}",
+                True,
+                0.9,
+                partition="fit",
+            ),
+            label=None,
+            label_present=False,
+        )
+        for index in range(2)
+    ]
+    for partition in ("calibration", "evaluation"):
+        for index in range(30):
+            positive = index < 5
+            name = f"{partition}-{index}"
+            observations.append(
+                _noul_observation(
+                    name,
+                    name,
+                    name,
+                    positive,
+                    0.95 if positive else 0.05,
+                    partition=partition,
+                )
+            )
+
+    result = calibrate_question(
+        identity,
+        observations,
+        fit_mode="temperature",
+        verdict_policy=VerdictPolicy(
+            require_control=False,
+            require_repeats=False,
+            require_brier_better_than_control=False,
+        ),
+        bootstrap_resamples=8,
+    )
+    raw = {"type": "noul", "probability_true": 0.95}
+    runtime = DecisionPolicy.from_artifact(result.artifact()).apply(
+        question_id=identity.question_id,
+        identity=identity,
+        decision=parse_decision(raw),
+        raw_answer=raw,
+        snapshot=_SNAPSHOT,
+    )
+
+    assert result.verdict == "gate"
+    assert result.fit["mode"] == "none"
+    assert result.fit["unavailable_reason"] == "no_usable_fit_events"
+    assert runtime.may_gate
 
 
 def test_runtime_finds_matching_identity_when_manifest_contains_two_versions() -> None:

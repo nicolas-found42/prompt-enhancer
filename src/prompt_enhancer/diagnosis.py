@@ -396,8 +396,6 @@ class Diagnoser:
             answered_by = (
                 entry.get("answered_by") if isinstance(entry, Mapping) else None
             )
-            if not isinstance(answered_by, str) or not answered_by:
-                answered_by = getattr(self.gateway, "jev_model", None)
             observations.append(
                 _DecisionObservation(
                     request=dict(request),

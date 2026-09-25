@@ -544,8 +544,6 @@ class PromptOptimizer:
                 continue
             entry = entries[index] if index < len(entries) else {}
             snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
-            if not isinstance(snapshot, str) or not snapshot:
-                snapshot = getattr(self.gateway, "jev_model", None)
             from .evaluation.calibration import runtime_question_identity
 
             identity = runtime_question_identity(

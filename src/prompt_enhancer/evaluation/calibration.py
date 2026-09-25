@@ -1362,10 +1362,13 @@ def normalize_event(
         probability = _noul_probability(decision, event_spec)
         derived_margin = abs(2.0 * decision.probability - 1.0)
         predicted_class = "yes" if decision.probability >= 0.5 else "no"
-        if expected_class is None:
-            expected_class = (
-                "yes" if label is True else "no" if label is False else None
-            )
+        negative_event = event_spec.polarity in {"negative", "no", "false"} or (
+            event_spec.expected_class is not None
+            and _class_key(event_spec.expected_class).casefold()
+            in {"no", "false", "negative"}
+        )
+        if label is not None:
+            expected_class = "no" if label == negative_event else "yes"
     elif isinstance(decision, ChoiceDecision):
         predicted_class = decision.selected
         if event_spec.expected_class is not None:
@@ -1383,7 +1386,24 @@ def normalize_event(
                 derived_margin=derived_margin,
                 provider_confidence=provider_confidence,
             )
-        probability = distribution.get(expected_class)
+        if expected_class not in distribution:
+            return NormalizedEvent(
+                observation=observation,
+                usable=False,
+                probability=None,
+                distribution=distribution,
+                expected_class=expected_class,
+                predicted_class=predicted_class,
+                unavailable_reason="missing_expected_class",
+                distribution_unavailable_reason=distribution_reason,
+                derived_margin=derived_margin,
+                provider_confidence=provider_confidence,
+            )
+        probability = distribution.get(
+            predicted_class
+            if identity.event_mapping.get("selected_correctness")
+            else expected_class
+        )
         if probability is None:
             return NormalizedEvent(
                 observation=observation,
@@ -1558,14 +1578,16 @@ def _reliability(
 
 
 def _repeat_noise(events: Sequence[NormalizedEvent]) -> dict[str, Any]:
-    grouped: dict[str, list[NormalizedEvent]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[NormalizedEvent]] = defaultdict(list)
     for event in events:
         if (
             not event.observation.control
             and event.usable
             and event.probability is not None
         ):
-            grouped[event.observation.example_id].append(event)
+            grouped[
+                (event.observation.source_group, event.observation.example_id)
+            ].append(event)
     ranges: list[float] = []
     brier_ranges: list[float] = []
     for group in grouped.values():
@@ -1606,6 +1628,31 @@ def _distribution_brier(
             or event.expected_class not in event.distribution
         ):
             return None, "missing_expected_class_for_distribution_brier"
+        if event.observation.identity.primitive == "score":
+            criteria = event.observation.identity.criteria
+            if isinstance(criteria, Sequence) and not isinstance(
+                criteria, (str, bytes)
+            ):
+                ordered_classes = [_class_key(value) for value in criteria]
+            else:
+                try:
+                    ordered_classes = sorted(event.distribution, key=float)
+                except ValueError:
+                    return None, "missing_ordinal_order"
+            if len(ordered_classes) < 2 or set(ordered_classes) != set(
+                event.distribution
+            ):
+                return None, "missing_class_coverage"
+            cumulative = 0.0
+            squared_errors: list[float] = []
+            expected_index = ordered_classes.index(event.expected_class)
+            for index, class_name in enumerate(ordered_classes[:-1]):
+                cumulative += event.distribution[class_name]
+                squared_errors.append(
+                    (cumulative - (1.0 if expected_index <= index else 0.0)) ** 2
+                )
+            losses.append(math.fsum(squared_errors) / len(squared_errors))
+            continue
         classes = set(event.distribution) | {event.expected_class}
         losses.append(
             math.fsum(
@@ -1683,7 +1730,12 @@ def compute_metrics(
             "events": total,
             "usable_labeled_events": len(valid),
             "source_groups": len({event.observation.source_group for event in events}),
-            "examples": len({event.observation.example_id for event in events}),
+            "examples": len(
+                {
+                    (event.observation.source_group, event.observation.example_id)
+                    for event in events
+                }
+            ),
             "positive_examples": positive,
             "negative_examples": negative,
             "controls": sum(event.observation.control for event in events),
@@ -1696,7 +1748,11 @@ def compute_metrics(
         "brier": brier,
         "distribution_brier": distribution_brier,
         "brier_distribution": distribution_brier,
-        "distribution_brier_convention": "sum_over_declared_classes",
+        "distribution_brier_convention": (
+            "ranked_probability_score_mean_over_boundaries"
+            if events and events[0].observation.identity.primitive == "score"
+            else "sum_over_declared_classes"
+        ),
         "distribution_brier_reason": distribution_brier_reason,
         "roc_auc": auc,
         "ece": ece,
@@ -1873,14 +1929,16 @@ def _gate_components(
     control_brier = control_metrics.get("brier")
     straddle = False
     if threshold is not None:
-        grouped: dict[str, list[float]] = defaultdict(list)
+        grouped: dict[tuple[str, str], list[float]] = defaultdict(list)
         for event in events:
             if (
                 not event.observation.control
                 and event.usable
                 and event.probability is not None
             ):
-                grouped[event.observation.example_id].append(event.probability)
+                grouped[
+                    (event.observation.source_group, event.observation.example_id)
+                ].append(event.probability)
         straddle = any(
             min(values) < threshold <= max(values)
             for values in grouped.values()
@@ -2000,13 +2058,19 @@ def _fit_events(events: Sequence[NormalizedEvent], *, mode: str) -> dict[str, An
     if normalized_mode not in {"temperature", "scalar-temperature"}:
         raise CalibrationError(f"unsupported calibration fit mode {mode!r}")
     temperature = fit_temperature(events)
+    if temperature is None:
+        return {
+            "mode": "none",
+            "temperature": 1.0,
+            "requested_mode": "temperature",
+            "objective": None,
+            "unavailable_reason": "no_usable_fit_events",
+        }
     return {
         "mode": "temperature",
         "temperature": temperature,
         "objective": "binary_brier_on_fit_partition",
-        "unavailable_reason": None
-        if temperature is not None
-        else "no_usable_fit_events",
+        "unavailable_reason": None,
     }
 
 
@@ -2702,7 +2766,9 @@ class DecisionPolicy:
             return False
         actual_snapshot = snapshot or identity.answering_snapshot
         return (
-            stored.question_id == identity.question_id
+            actual_snapshot is not None
+            and stored.answering_snapshot is not None
+            and stored.question_id == identity.question_id
             and stored.answering_snapshot == actual_snapshot
             and stored.identity_digest == identity.identity_digest
         )

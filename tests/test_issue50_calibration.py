@@ -408,6 +408,57 @@ def test_optimizer_gates_using_fitted_probability_from_artifact() -> None:
     ] == pytest.approx(0.8448275862)
 
 
+def test_optimizer_abstains_when_answer_snapshot_is_unknown() -> None:
+    identity = _identity()
+    artifact = CalibrationArtifact.from_dict(
+        {
+            "kind": "calibration-artifact",
+            "name": "snapshot-bound",
+            "input_digest": "known-input",
+            "questions": {
+                identity.question_id: {
+                    "identity": identity.to_dict(),
+                    "verdict": "gate",
+                    "threshold": 0.8,
+                }
+            },
+        }
+    )
+
+    class UnknownSnapshotGateway(ScriptedGateway):
+        def decide_batch(self, requests, *, role="judge", run_id=None):
+            answers = super().decide_batch(requests, role=role, run_id=run_id)
+            for entry in self.decision_log[-len(requests) :]:
+                entry.pop("answered_by", None)
+            return answers
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+            }
+        return {
+            "type": "noul",
+            "probability_true": 0.95 if request.get("key") == "gap:goal" else 0.01,
+        }
+
+    optimizer = PromptOptimizer(
+        gateway=UnknownSnapshotGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        ),
+        store=RunStore(":memory:"),
+        decision_policy=DecisionPolicy.from_artifact(artifact),
+    )
+    result = optimizer.optimize("Help me plan.", {"tier": "fast"})
+
+    assert result["report"]["diagnosis"]["confirmed_gaps"] == []
+    assert result["report"]["diagnosis"]["calibration"]["gap:goal"]["reason"] == (
+        "calibration_identity_or_snapshot_mismatch"
+    )
+
+
 def test_offline_cli_reports_all_five_verdicts_on_known_answers(
     tmp_path: Path,
 ) -> None:
