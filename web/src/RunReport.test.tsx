@@ -155,3 +155,38 @@ it("omits calibration decisions for an empty mapping", () => {
     screen.queryByRole("heading", { name: "Calibration decisions" })
   ).not.toBeInTheDocument();
 });
+
+it("names an unsupported sentence in rejected rewrite details", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          selection_evidence: {
+            rejected_candidates: [
+              {
+                candidate_id: "candidate-1",
+                strategy: "specify_output_format",
+                rejection_reasons: [
+                  "candidate failed fidelity checks",
+                  "fidelity rejected 'Respond in French.': new requirement " +
+                    "(source mapping: gap 1; probability=0.99)",
+                ],
+              },
+            ],
+          },
+        },
+      }}
+    />
+  );
+
+  const heading = screen.getByRole("heading", {
+    name: "Rewrites that were not used",
+  });
+  const section = heading.closest("section");
+  expect(section).not.toBeNull();
+  expect(within(section!).getByRole("listitem")).toHaveTextContent(
+    /Respond in French\..*new requirement.*source mapping: gap 1; probability=0\.99/
+  );
+});
