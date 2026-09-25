@@ -71,6 +71,557 @@ const completedBase = {
   timing: { total_ms: 5 },
 };
 
+test("an unsent draft keeps its exact whitespace after reload", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const draft = "  Draft: Ask for a written date.\n\tKeep it friendly.  \n";
+  await page.getByLabel("Your prompt").fill(draft);
+
+  await page.reload();
+
+  await expect(page.getByLabel("Your prompt")).toHaveValue(draft);
+});
+
+test("an active result identifies when it belongs to the earlier prompt", async ({
+  page,
+}) => {
+  const runId = "earlier-prompt-result";
+  const runPrompt = "Write a concise update about the delivery date.";
+  const currentDraft = "Draft: Ask for the confirmed arrival date by Friday.";
+  const completedResult = {
+    ...completedBase,
+    run_id: runId,
+    original_prompt: runPrompt,
+    final_prompt: `${runPrompt} Include the next steps.`,
+    original_kept: false,
+    report: {
+      status: "optimized",
+      summary: "The update has a clear deadline.",
+    },
+  };
+  let finished = false;
+
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/jobs/optimize", (route) =>
+    route.fulfill({
+      status: 202,
+      json: job(runId, "running", null, { prompt: runPrompt }),
+    })
+  );
+  await page.route(`**/api/jobs/${runId}`, (route) =>
+    route.fulfill({
+      json: finished
+        ? job(runId, "done", completedResult, { prompt: runPrompt })
+        : job(runId, "running", null, { prompt: runPrompt }),
+    })
+  );
+
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill(runPrompt);
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Your prompt" }).fill(currentDraft);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toBeVisible();
+  finished = true;
+
+  await expect(page.locator(".final-prompt")).toContainText(
+    "Include the next steps."
+  );
+  await expect(page.getByRole("textbox", { name: "Your prompt" })).toHaveValue(
+    currentDraft
+  );
+  await expect(
+    page.getByRole("status").filter({
+      hasText:
+        "A result for an earlier prompt is open below. Your current draft remains in Your prompt.",
+    })
+  ).toBeVisible();
+});
+
+test("clarification can recover from local and server-side Other answer errors", async ({
+  page,
+}) => {
+  const runId = "clarification-recovery-run";
+  const pendingResult = {
+    status: "needs_input",
+    run_id: runId,
+    report: {},
+    questions: [
+      {
+        id: "goal",
+        prompt: "What should the assistant do?",
+        options: [
+          { value: "summarize", label: "Summarize", preselected: true },
+          { value: "other", label: "Other", other: true },
+        ],
+        default_answer: "summarize",
+        allow_other: true,
+        other_value: "other",
+      },
+      {
+        id: "audience",
+        prompt: "Who is the report for?",
+        options: [
+          { value: "team", label: "The team", preselected: true },
+          { value: "other", label: "Other", other: true },
+        ],
+        default_answer: "team",
+        allow_other: true,
+        other_value: "other",
+      },
+    ],
+  };
+  const completedResult = {
+    ...completedBase,
+    status: "completed",
+    run_id: runId,
+    original_prompt: "Write a concise report.",
+    final_prompt: "Write a concise report about the supplier delivery date.",
+    report: { assumptions: [] },
+  };
+  const resumeRequests: Json[] = [];
+  let optimizationRequests = 0;
+  let rejectedOnce = false;
+  let resumed = false;
+
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/jobs/optimize", async (route) => {
+    optimizationRequests += 1;
+    await route.fulfill({
+      status: 202,
+      json: job(runId, "running"),
+    });
+  });
+  await page.route(`**/api/jobs/${runId}/resume`, async (route) => {
+    resumeRequests.push(route.request().postDataJSON() as Json);
+    if (!rejectedOnce) {
+      rejectedOnce = true;
+      await route.fulfill({
+        status: 422,
+        json: {
+          detail: {
+            code: "invalid_answer",
+            question_id: "goal",
+            message: "Answer for 'goal' requires other text",
+          },
+        },
+      });
+      return;
+    }
+    resumed = true;
+    await route.fulfill({ status: 202, json: job(runId, "running") });
+  });
+  await page.route(`**/api/jobs/${runId}`, (route) =>
+    route.fulfill({
+      json: resumed
+        ? job(runId, "done", completedResult, { kind: "resume" })
+        : job(runId, "done", pendingResult),
+    })
+  );
+
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill("Write a concise report.");
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  const heading = page.getByRole("heading", {
+    name: "A few details will improve the result",
+  });
+  await expect(heading).toBeVisible();
+  await page.getByRole("radio", { name: "Other" }).first().check();
+  await page.getByRole("radio", { name: "Other" }).nth(1).check();
+  const other = page.getByRole("textbox", {
+    name: "Other answer for What should the assistant do?",
+  });
+  const audience = page.getByRole("textbox", {
+    name: "Other answer for Who is the report for?",
+  });
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+  await expect(other).toHaveAttribute("aria-invalid", "true");
+  await expect(other).toBeFocused();
+  await expect(audience).toHaveAttribute("aria-invalid", "true");
+  await expect(page.locator("#clarification-error-goal")).toHaveText(
+    "Enter an answer for this question."
+  );
+  expect(resumeRequests).toHaveLength(0);
+
+  await other.fill("A short summary");
+  await audience.fill("Team leads");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(other).toHaveAttribute("aria-invalid", "true");
+  await expect(other).toHaveValue("A short summary");
+  await expect(audience).toHaveValue("Team leads");
+  await expect(other).toBeFocused();
+  await expect(page.locator("#clarification-error-goal")).toHaveText(
+    "Answer for 'goal' requires other text"
+  );
+  expect(resumeRequests).toHaveLength(1);
+
+  await other.fill("Summarize the supplier delivery date");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(page.locator(".final-prompt")).toContainText(
+    "Write a concise report about the supplier delivery date."
+  );
+  expect(optimizationRequests).toBe(1);
+  expect(resumeRequests).toHaveLength(2);
+  expect(resumeRequests[0]).toEqual({
+    answers: {
+      goal: { value: "other", text: "A short summary" },
+      audience: { value: "other", text: "Team leads" },
+    },
+  });
+  expect(resumeRequests[1]).toEqual({
+    answers: {
+      goal: { value: "other", text: "Summarize the supplier delivery date" },
+      audience: { value: "other", text: "Team leads" },
+    },
+  });
+});
+
+test("opening another paused run resets its answers and error", async ({
+  page,
+}) => {
+  const runs = [
+    { run_id: "paused-a", prompt: "First paused prompt" },
+    { run_id: "paused-b", prompt: "Second paused prompt" },
+  ];
+  const question = {
+    id: "goal",
+    prompt: "What should the assistant do?",
+    options: [
+      { value: "summarize", label: "Summarize" },
+      { value: "review", label: "Review" },
+    ],
+    allow_other: true,
+  };
+  const results: Record<string, Json> = {
+    "paused-a": {
+      run_id: "paused-a",
+      status: "needs_input",
+      report: {},
+      questions: [{ ...question, default: "summarize" }],
+    },
+    "paused-b": {
+      run_id: "paused-b",
+      status: "needs_input",
+      report: {},
+      questions: [{ ...question, default: "review" }],
+    },
+  };
+  let submittedAnswers: Json | null = null;
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/runs?*", (route) =>
+    route.fulfill({
+      json: runs.map((run) => ({
+        ...run,
+        created_at: "2026-09-24T04:00:00Z",
+        status: "needs_input",
+        tier: "standard",
+      })),
+    })
+  );
+  await page.route("**/api/runs/paused-*", (route) => {
+    const runId = route.request().url().split("/").at(-1) ?? "";
+    const run = runs.find((item) => item.run_id === runId);
+    return route.fulfill({
+      json: { ...run, status: "needs_input", result: results[runId] },
+    });
+  });
+  await page.route("**/api/jobs/paused-a/resume", (route) =>
+    route.fulfill({
+      status: 422,
+      json: {
+        detail: {
+          code: "invalid_answer",
+          question_id: "goal",
+          message: "First run needs a different goal.",
+        },
+      },
+    })
+  );
+  await page.route("**/api/jobs/paused-b/resume", (route) => {
+    submittedAnswers = route.request().postDataJSON() as Json;
+    return route.fulfill({ status: 202, json: job("paused-b", "running") });
+  });
+
+  await page.goto("/");
+  const history = page.getByRole("list", { name: "Saved optimization runs" });
+  await history.getByRole("button", { name: /First paused prompt/ }).click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await page.getByRole("radio", { name: "Other" }).check();
+  await page
+    .getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    })
+    .fill("An answer for the first run");
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(
+    page.getByText("First run needs a different goal.")
+  ).toBeVisible();
+
+  await history.getByRole("button", { name: /Second paused prompt/ }).click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await expect(page.getByRole("radio", { name: "Review" })).toBeChecked();
+  await expect(page.getByText("First run needs a different goal.")).toHaveCount(
+    0
+  );
+
+  await page.getByRole("radio", { name: "Other" }).check();
+  await page
+    .getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    })
+    .fill("An answer for the second run");
+  results["paused-b"] = {
+    ...results["paused-b"],
+    questions: [{ ...question, default: "summarize" }],
+  };
+  await history.getByRole("button", { name: /Second paused prompt/ }).click();
+  await history.getByRole("button", { name: /Second paused prompt/ }).click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await expect(page.getByRole("radio", { name: "Summarize" })).toBeChecked();
+  await expect(
+    page.getByRole("textbox", {
+      name: "Other answer for What should the assistant do?",
+    })
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect
+    .poll(() => submittedAnswers)
+    .toEqual({
+      answers: { goal: "summarize" },
+    });
+});
+
+test("skip and continue still resumes the same paused run", async ({
+  page,
+}) => {
+  const runId = "clarification-skip-run";
+  const pendingResult = {
+    status: "needs_input",
+    run_id: runId,
+    report: {},
+    questions: [
+      {
+        id: "goal",
+        prompt: "What should the assistant do?",
+        options: [{ value: "summarize", label: "Summarize" }],
+        default_answer: "summarize",
+      },
+    ],
+  };
+  const completedResult = {
+    ...completedBase,
+    status: "completed",
+    run_id: runId,
+    original_prompt: "Write a concise report.",
+    final_prompt: "Write a concise report.",
+    report: { assumptions: [] },
+  };
+  let optimizationRequests = 0;
+  let skipRequests = 0;
+  let skipped = false;
+
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/jobs/optimize", async (route) => {
+    optimizationRequests += 1;
+    await route.fulfill({ status: 202, json: job(runId, "running") });
+  });
+  await page.route(`**/api/jobs/${runId}/skip`, async (route) => {
+    skipRequests += 1;
+    skipped = true;
+    await route.fulfill({
+      status: 202,
+      json: job(runId, "running", null, { kind: "skip" }),
+    });
+  });
+  await page.route(`**/api/jobs/${runId}`, (route) =>
+    route.fulfill({
+      json: skipped
+        ? job(runId, "done", completedResult, { kind: "skip" })
+        : job(runId, "done", pendingResult),
+    })
+  );
+
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill("Write a concise report.");
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "A few details will improve the result",
+    })
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Skip and continue" }).click();
+
+  await expect(page.locator(".final-prompt")).toContainText(
+    "Write a concise report."
+  );
+  expect(optimizationRequests).toBe(1);
+  expect(skipRequests).toBe(1);
+});
+
+test("an intentionally empty draft stays empty when an older result restores", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("prompt-enhancer.draft", "");
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "older-result", at: Date.now() })
+    );
+  });
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/runs/older-result", (route) =>
+    route.fulfill({
+      json: {
+        result: {
+          run_id: "older-result",
+          status: "failed",
+          original_prompt: "An older prompt from History.",
+          final_prompt: "An older prompt from History.",
+          original_kept: true,
+          report: {
+            failure: {
+              kind: "internal",
+              headline: "Restored older result",
+              hint: "This result was restored.",
+            },
+          },
+          cost: { total: 0 },
+          timing: { total_ms: 1 },
+        },
+      },
+    })
+  );
+
+  await page.goto("/");
+
+  await expect(
+    page.getByRole("heading", { name: "Restored older result" })
+  ).toBeVisible();
+  await expect(page.getByLabel("Your prompt")).toHaveValue("");
+});
+
+test("a late result restore does not repopulate a cleared draft", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("prompt-enhancer.draft", "Draft to clear");
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "late-result", at: Date.now() })
+    );
+  });
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  let releaseResult!: () => void;
+  const resultGate = new Promise<void>((resolve) => {
+    releaseResult = resolve;
+  });
+  await page.route("**/api/runs/late-result", async (route) => {
+    await resultGate;
+    await route.fulfill({
+      json: {
+        result: {
+          run_id: "late-result",
+          status: "failed",
+          original_prompt: "An older prompt from a slow restore.",
+          original_kept: true,
+          report: {
+            failure: {
+              kind: "internal",
+              headline: "Restored late result",
+              hint: "This result was restored.",
+            },
+          },
+          cost: { total: 0 },
+          timing: { total_ms: 1 },
+        },
+      },
+    });
+  });
+
+  await page.goto("/");
+  const prompt = page.getByLabel("Your prompt");
+  await expect(prompt).toHaveValue("Draft to clear");
+  await prompt.fill("");
+  releaseResult();
+
+  await expect(
+    page.getByRole("heading", { name: "Restored late result" })
+  ).toBeVisible();
+  await expect(prompt).toHaveValue("");
+});
+
+test("opening a saved result preserves the current draft", async ({ page }) => {
+  const olderPrompt = "Write a friendly note about the delivery delay.";
+  const result = {
+    run_id: "history-open-result",
+    status: "completed",
+    original_prompt: olderPrompt,
+    final_prompt: "Write a friendly note about the delivery delay by Friday.",
+    original_kept: false,
+    report: { status: "edited", summary: "Added a delivery date." },
+    cost: { total: 0.001 },
+    timing: { total_ms: 1 },
+  };
+  await page.route("**/api/runs?*", (route) =>
+    route.fulfill({
+      json: [
+        {
+          run_id: result.run_id,
+          created_at: "2026-09-24T04:00:00Z",
+          status: "completed",
+          prompt: olderPrompt,
+          final_prompt: result.final_prompt,
+          original_kept: false,
+          tier: "standard",
+        },
+      ],
+    })
+  );
+  await page.route(`**/api/runs/${result.run_id}`, (route) =>
+    route.fulfill({
+      json: {
+        run_id: result.run_id,
+        created_at: "2026-09-24T04:00:00Z",
+        status: "completed",
+        prompt: olderPrompt,
+        original_prompt: olderPrompt,
+        final_prompt: result.final_prompt,
+        original_kept: false,
+        tier: "standard",
+        cost: result.cost,
+        timings: { total_ms: 1 },
+        result,
+      },
+    })
+  );
+
+  await page.goto("/");
+  const draft = "Draft: Confirm the date before replying.\nKeep it warm.";
+  await page.getByLabel("Your prompt").fill(draft);
+  await page
+    .getByRole("list", { name: "Saved optimization runs" })
+    .getByRole("button", { name: new RegExp(olderPrompt) })
+    .click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+
+  await expect(page.getByLabel("Your prompt")).toHaveValue(draft);
+  await expect(
+    page.getByRole("status").filter({
+      hasText:
+        "A saved result is open below. Your current draft remains in Your prompt.",
+    })
+  ).toBeVisible();
+});
+
 test("clarification, assumption editing, history, and feedback use the local API", async ({
   page,
 }) => {

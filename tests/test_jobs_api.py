@@ -32,6 +32,37 @@ def _client(gateway) -> tuple[TestClient, object]:
     return TestClient(app), app.state.jobs
 
 
+def _clarification_gateway() -> ScriptedGateway:
+    def chat(*_args, **_kwargs):
+        return (
+            '{"gaps":{"goal":{"question":"What should the assistant do?",'
+            '"options":[{"value":"summarize","label":"Summarize"},'
+            '{"value":"analyze","label":"Analyze"}]}},"tests":[]}'
+        )
+
+    def decide(request, **_kwargs):
+        key = request.get("key")
+        if key == "task_type":
+            choice = "general"
+        elif key == "infer:goal":
+            choice = "unknown"
+        elif request.get("type") == "choice":
+            choice = "none"
+        else:
+            choice = None
+        if choice is not None:
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        probability = 0.99 if key == "gap:goal" else 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    return ScriptedGateway(chat=chat, decision=decide)
+
+
 def test_optimize_job_returns_run_id_at_once_and_finishes_with_the_result() -> None:
     client, jobs = _client(
         ScriptedGateway(chat=lambda *_a, **_k: '{"tests":[]}', decision=_decide)
@@ -59,6 +90,35 @@ def test_optimize_job_rejects_invalid_requests_before_starting() -> None:
 
     assert client.post("/api/jobs/optimize", json={"prompt": "  "}).status_code == 422
     assert client.get("/api/jobs/unknown").status_code == 404
+
+
+def test_invalid_resume_answer_is_rejected_before_a_job_and_can_be_corrected() -> None:
+    client, jobs = _client(_clarification_gateway())
+    pending = client.post(
+        "/api/optimize", json={"prompt": "Write a concise report."}
+    ).json()
+    assert pending["status"] == "needs_input"
+    run_id = pending["run_id"]
+
+    rejected = client.post(
+        f"/api/jobs/{run_id}/resume",
+        json={"answers": {"goal": {"value": "other", "text": "  "}}},
+    )
+
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == {
+        "code": "invalid_answer",
+        "question_id": "goal",
+        "message": "Answer for 'goal' requires other text",
+    }
+    assert client.get(f"/api/jobs/{run_id}").status_code == 404
+
+    corrected = client.post(
+        f"/api/jobs/{run_id}/resume",
+        json={"answers": {"goal": {"value": "other", "text": "Summarize"}}},
+    )
+    assert corrected.status_code == 202
+    assert jobs.wait(run_id)["result"]["status"] == "completed"
 
 
 def test_refused_provider_produces_a_failed_result_with_a_plain_hint() -> None:
@@ -105,6 +165,9 @@ def test_cancel_stops_the_run_at_the_next_stage() -> None:
     assert result["status"] == "failed"
     assert result["report"]["status"] == "cancelled"
     assert result["final_prompt"] == "Write a reply."
+    summary = client.get("/api/runs").json()[0]
+    assert summary["status"] == "failed"
+    assert summary["outcome"] == "cancelled"
 
 
 def test_invalid_writer_reply_is_not_reported_as_a_network_error() -> None:

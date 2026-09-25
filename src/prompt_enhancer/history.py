@@ -124,6 +124,13 @@ def _normalise_record(
     status = pick(
         "status", default="completed" if final_prompt is not None else "needs_input"
     )
+    failure = report_map.get("failure")
+    failure_kind = failure.get("kind") if isinstance(failure, Mapping) else None
+    outcome = (
+        "cancelled"
+        if report_map.get("status") == "cancelled" or failure_kind == "cancelled"
+        else str(status)
+    )
     metadata = source.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
     # Keep provider-specific and future fields searchable/visible without a
@@ -233,6 +240,7 @@ def _normalise_record(
         "created_at": _first(source, "created_at", "createdAt", default=None),
         "updated_at": _first(source, "updated_at", "updatedAt", default=None),
         "status": str(status),
+        "outcome": outcome,
         "prompt": str(original_prompt or ""),
         "original_prompt": str(original_prompt or ""),
         "final_prompt": final_prompt,
@@ -354,6 +362,7 @@ class RunHistory:
                 "created_at",
                 "updated_at",
                 "status",
+                "outcome",
                 "prompt",
                 "original_prompt",
                 "final_prompt",

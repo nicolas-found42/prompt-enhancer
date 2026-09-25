@@ -1,4 +1,4 @@
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 export type ClarificationOption = {
   value: string;
@@ -28,6 +28,8 @@ type Props = {
   onSkip: () => void | Promise<void>;
   busy?: boolean;
   error?: string | null;
+  validationError?: { questionId: string; message: string } | null;
+  onValidationErrorDismiss?: () => void;
 };
 
 export function ClarificationPanel({
@@ -36,6 +38,8 @@ export function ClarificationPanel({
   onSkip,
   busy = false,
   error,
+  validationError = null,
+  onValidationErrorDismiss,
 }: Props) {
   const defaults = useMemo(
     () =>
@@ -52,13 +56,54 @@ export function ClarificationPanel({
   );
   const [answers, setAnswers] = useState<ClarificationAnswers>(defaults);
   const [otherText, setOtherText] = useState<Record<string, string>>({});
+  const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
+  const otherInputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    if (validationError) {
+      otherInputs.current[validationError.questionId]?.focus();
+    }
+  }, [validationError]);
 
   const setAnswer = (id: string, value: string) => {
     setAnswers((current) => ({ ...current, [id]: value }));
+    setLocalErrors((current) => {
+      if (!(id in current)) return current;
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    if (validationError?.questionId === id) {
+      onValidationErrorDismiss?.();
+    }
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    const invalidOtherQuestions = questions.filter((question) => {
+      const answer = answers[question.id];
+      const value = typeof answer === "string" ? answer : answer?.value;
+      return (
+        value === (question.other_value ?? "other") &&
+        !(otherText[question.id] ?? "").trim()
+      );
+    });
+    if (invalidOtherQuestions.length > 0) {
+      setLocalErrors(
+        Object.fromEntries(
+          invalidOtherQuestions.map((question) => [
+            question.id,
+            "Enter an answer for this question.",
+          ])
+        )
+      );
+      const firstInvalidQuestion = invalidOtherQuestions[0];
+      if (firstInvalidQuestion) {
+        otherInputs.current[firstInvalidQuestion.id]?.focus();
+      }
+      return;
+    }
+    setLocalErrors({});
     const payload: ClarificationAnswers = { ...answers };
     for (const question of questions) {
       if (payload[question.id] === (question.other_value ?? "other")) {
@@ -127,14 +172,47 @@ export function ClarificationPanel({
                     <input
                       aria-label={`Other answer for ${question.prompt}`}
                       value={otherText[question.id] ?? ""}
-                      onChange={(event) =>
+                      aria-invalid={Boolean(
+                        localErrors[question.id] ||
+                        validationError?.questionId === question.id
+                      )}
+                      aria-describedby={
+                        localErrors[question.id] ||
+                        validationError?.questionId === question.id
+                          ? `clarification-error-${question.id}`
+                          : undefined
+                      }
+                      ref={(input) => {
+                        otherInputs.current[question.id] = input;
+                      }}
+                      onChange={(event) => {
                         setOtherText((current) => ({
                           ...current,
                           [question.id]: event.target.value,
-                        }))
-                      }
+                        }));
+                        setLocalErrors((current) => {
+                          if (!(question.id in current)) return current;
+                          const next = { ...current };
+                          delete next[question.id];
+                          return next;
+                        });
+                        if (validationError?.questionId === question.id) {
+                          onValidationErrorDismiss?.();
+                        }
+                      }}
                       placeholder="Enter your own answer"
                     />
+                  )}
+                  {(localErrors[question.id] ||
+                    (validationError?.questionId === question.id &&
+                      validationError.message)) && (
+                    <p
+                      className="field-error"
+                      id={`clarification-error-${question.id}`}
+                      role="alert"
+                    >
+                      {localErrors[question.id] ?? validationError?.message}
+                    </p>
                   )}
                 </div>
               )}
