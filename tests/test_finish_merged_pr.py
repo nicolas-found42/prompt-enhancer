@@ -46,7 +46,8 @@ def repository(tmp_path: Path) -> dict[str, Path | str]:
     git(main, "config", "user.name", "Test")
     git(main, "config", "user.email", "test@example.com")
     (main / "README.md").write_text("base\n")
-    git(main, "add", "README.md")
+    (main / ".gitignore").write_text("cache/\n")
+    git(main, "add", "README.md", ".gitignore")
     git(main, "commit", "-m", "base")
     git(main, "push", "-u", "origin", "main")
 
@@ -88,7 +89,10 @@ def repository(tmp_path: Path) -> dict[str, Path | str]:
 
 
 def cleanup(
-    repository: dict[str, Path | str], **changes: object
+    repository: dict[str, Path | str],
+    *,
+    discard_ignored: bool = False,
+    **changes: object,
 ) -> subprocess.CompletedProcess[str]:
     pr: dict[str, object] = {
         "state": "MERGED",
@@ -101,8 +105,11 @@ def cleanup(
     env = clean_git_env()
     env["PATH"] = f"{repository['fake_bin']}{os.pathsep}{env['PATH']}"
     env["FAKE_PR_JSON"] = json.dumps(pr)
+    args = [sys.executable, str(SCRIPT), "7"]
+    if discard_ignored:
+        args.append("--discard-ignored")
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "7"],
+        args,
         cwd=repository["feature"],
         capture_output=True,
         text=True,
@@ -175,3 +182,24 @@ def test_dirty_worktree_stops_before_changes(repository: dict[str, Path | str]) 
     assert "uncommitted files" in result.stderr
     assert git(main, "rev-parse", "main") == old_main
     assert feature.exists()
+
+
+def test_ignored_files_need_explicit_discard(repository: dict[str, Path | str]) -> None:
+    main = repository["main"]
+    feature = repository["feature"]
+    assert isinstance(main, Path) and isinstance(feature, Path)
+    old_main = git(main, "rev-parse", "main")
+    (feature / "cache").mkdir()
+    (feature / "cache" / "local.db").write_text("private data\n")
+
+    stopped = cleanup(repository)
+
+    assert stopped.returncode == 1
+    assert "contains ignored files (cache/)" in stopped.stderr
+    assert git(main, "rev-parse", "main") == old_main
+    assert (feature / "cache" / "local.db").exists()
+
+    discarded = cleanup(repository, discard_ignored=True)
+
+    assert discarded.returncode == 0, discarded.stderr
+    assert not feature.exists()
