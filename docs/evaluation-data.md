@@ -34,6 +34,100 @@ The Muse default reflects the user's explicit selection; [OpenCode Go's model
 notes](https://opencode.ai/docs/go/) state that Contributor prompts and
 completions may be used to train Meta models.
 
+## Offline per-question Jev calibration
+
+The calibration mode consumes labeled raw Jev answers; it does not call a
+provider. Run it on the checked-in synthetic fixture or a private event
+manifest:
+
+```sh
+mkdir -p .local/evaluation
+python -m prompt_enhancer.evaluation --calibrate \
+  tests/fixtures/evaluation/calibration_known_answer.json \
+  --output .local/evaluation/calibration-report.json \
+  --artifact .local/evaluation/calibration-artifact.json
+# Equivalent subcommand form:
+python -m prompt_enhancer.evaluation calibrate \
+  tests/fixtures/evaluation/calibration_known_answer.json \
+  --output .local/evaluation/calibration-report.json \
+  --artifact .local/evaluation/calibration-artifact.json
+```
+
+The report is JSON on stdout or at `--output`; the versioned artifact is written
+to `--artifact` (or, when `--output` is set and `--artifact` is omitted, to the
+same path with `.artifact.json` as its suffix). Both retain per-question
+identity, metrics, threshold/predicate, partitions, verdict, and evidence.
+
+A manifest has an `events` array (and may include top-level `schema_version`,
+`name`, and `metadata`). Each event should explicitly record a unique `id`,
+non-empty `source_group`, `example_id`, `label_provenance`, stable `question_id`,
+exact `question`, `family`, `primitive`, `criteria`, `event` mapping, label,
+`answering_snapshot`, `rubric_version`, `repeat_index`, and raw `answer`; unique
+`request_id` and `answer_id` identify independent requests/responses. For
+example, one Noul event can be:
+
+```json
+{
+  "id": "gap-00-r0",
+  "source_group": "gap-group-00",
+  "example_id": "gap-example-00",
+  "question_id": "gap:goal",
+  "question": "Is the required piece 'goal' confidently missing from the request?",
+  "family": "gap",
+  "primitive": "noul",
+  "criteria": ["no", "yes"],
+  "event": {"positive_class": "yes"},
+  "label": true,
+  "label_provenance": "synthetic_known_answer",
+  "answering_snapshot": "typesafe/jev-1.13-20260917",
+  "rubric_version": "default-v1",
+  "repeat_index": 0,
+  "request_id": "gap-request-00-r0",
+  "answer_id": "gap-answer-00-r0",
+  "answer": {"type": "noul", "probability_true": 0.95}
+}
+```
+
+Map the labeled event to the raw answer's primitive: Noul uses its
+`probability_true` for the positive event (set `event.polarity` to `negative`
+to target the complement); Choice answers carry `choice` and a `probabilities`
+map, with `event.expected_class` naming the labeled option, or
+`event.selected_correctness: true` when the label is the expected option and
+the event is whether the selected option was correct; Score answers carry
+`levels` probabilities and require `event.boundary` (numeric levels at or above
+it form the positive event). See the fixture for complete Noul, Choice, and
+Score examples. Keep the full question identity—question text, primitive,
+criteria/mapping, family/schema and rubric versions, policy version, and
+answering snapshot—consistent within a question. These fields bind the result
+to that exact question and Jev snapshot; do not combine labels or answers with
+different identities. Label provenance must describe its real source, such as
+source annotation, human review, delegated judgment, or synthetic fixture.
+Give each independent repeat a distinct non-negative `repeat_index`; when
+present, `request_id` and `answer_id` must also be distinct. A cached response
+is not an independent repeat.
+
+By default, complete `source_group`s are assigned deterministically to
+disjoint fit/calibration/evaluation partitions (60/20/20, seeded; default seed
+1729). An explicit `partition` may instead be `fit`, `calibration`, or
+`evaluation`, but every event in a source group must use the same partition.
+Optional `--fit temperature` fits only on fit groups; threshold selection uses
+calibration groups, and evaluation groups are held for metrics/verdicts. The
+CLI bounds inputs by default to 100 source examples, 3 repeats per
+question/example/arm (`--runs`), and 5,000 question evaluations; override with
+`--max-source-examples`, `--runs`, and `--max-question-evaluations` as needed.
+
+The default `issue-50-v1` verdict policy is provisional: a gate needs at least
+30 evaluation groups, 5 positive and 5 negative examples, precision at least
+0.90, recall at least 0.50, coverage at least 0.90, independent repeats and a
+state-blind control; its Brier loss must beat the control. A ranker requires a
+bootstrap AUC lower bound above 0.5. These are explicit policy defaults, not
+claims of established Jev accuracy. The known-answer fixture is synthetic and
+proves parsing, fitting, reporting, and artifact code paths—not empirical
+accuracy. Any live mode must be explicit and have a finite, positive dollar
+budget (`--budget USD`); calibration rejects `--live` without an explicit
+budget. Keep private prompts, answers, reports, and artifacts under ignored
+`.local/evaluation/`.
+
 ## Local coding-agent sessions
 
 An inspection of the local Codex, Claude Code, and oh-my-pi histories found

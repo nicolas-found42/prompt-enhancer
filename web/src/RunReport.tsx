@@ -13,6 +13,29 @@ function score(value: unknown): string {
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
 }
 
+const calibrationDispositions: Record<string, string> = {
+  legacy: "Uses the existing policy",
+  gate: "Allows the calibrated gate",
+  "gate-above-confidence": "Allows the gate after a confidence check",
+  ranker: "Uses the ranker",
+  abstain: "Abstained from applying calibration",
+};
+
+const abstentionReasons: Record<string, string> = {
+  calibration_artifact: "The calibration did not support applying a decision",
+  calibration_identity_or_snapshot_mismatch:
+    "This calibration does not match the current question or model",
+  invalid_calibration_threshold: "The calibrated confidence threshold is invalid",
+  gate_without_threshold: "No confidence threshold was available",
+  calibration_event_probability_unavailable:
+    "The answer's confidence could not be checked",
+  probability_below_calibrated_threshold:
+    "The answer did not meet the confidence threshold",
+  frozen_calibration_predicate_failed:
+    "The answer did not meet the calibrated checks",
+  invalid_calibration_predicate: "The calibrated checks could not be applied",
+};
+
 function highlightedPrompt(
   prompt: string,
   problems: Record<string, unknown>[]
@@ -51,6 +74,7 @@ function highlightedPrompt(
 export default function RunReport({ result }: { result: OptimizeResult }) {
   const report = result.report;
   const diagnosis = record(report.diagnosis);
+  const calibration = record(diagnosis.calibration);
   const problems = items(diagnosis.problem_sentences);
   const gaps = items(diagnosis.confirmed_gaps);
   const tests = items(report.tests);
@@ -117,6 +141,33 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
           </ul>
         )}
       </section>
+      {Object.keys(calibration).length > 0 && (
+        <section>
+          <h3>Calibration decisions</h3>
+          <ul>
+            {Object.entries(calibration).map(([questionId, value]) => {
+              const evidence = record(value);
+              const disposition = text(evidence.disposition);
+              const verdict = text(evidence.verdict);
+              const reason =
+                disposition === "abstain" ? text(evidence.reason) : "";
+
+              return (
+                <li key={questionId}>
+                  <strong>Question {questionId}:</strong>{" "}
+                  {calibrationDispositions[disposition] ??
+                    humanize(disposition)}
+                  {verdict && <>. Verdict: {humanize(verdict)}</>}
+                  {reason && (
+                    <>. Reason: {abstentionReasons[reason] ?? humanize(reason)}</>
+                  )}
+                  .
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
       <section>
         <h3>Success tests</h3>
         {tests.length > 0 ? (

@@ -11,8 +11,10 @@ import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
+if TYPE_CHECKING:
+    from .evaluation.calibration import DecisionPolicy, PolicyDecision
 from . import jev_questions
 from .gateway import Gateway
 from .jev import (
@@ -107,9 +109,14 @@ class DiagnosisReport:
     problem_sentences: tuple[ProblemSentence, ...]
     rubric_version: str | None = None
     possible_gaps: tuple[PossibleGap, ...] = ()
+    calibration: Mapping[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
+        if self.calibration is None:
+            result.pop("calibration", None)
+        else:
+            result["calibration"] = dict(self.calibration)
         result["confirmed_gaps"] = [
             asdict(gap) | {"impact": gap.impact.value} for gap in self.confirmed_gaps
         ]
@@ -338,6 +345,14 @@ def _request_key(request: Mapping[str, Any]) -> str:
     return str(request.get("key", request.get("query", "")))
 
 
+@dataclass(frozen=True, slots=True)
+class _DecisionObservation:
+    request: Mapping[str, Any]
+    raw_answer: Any
+    decision: JevDecision
+    answered_by: str | None
+
+
 class Diagnoser:
     """Run diagnosis through a replaceable, deterministic-capable gateway."""
 
@@ -346,9 +361,14 @@ class Diagnoser:
         gateway: Gateway,
         *,
         rubric: DiagnosisRubric | Callable[[], DiagnosisRubric] = DEFAULT_RUBRIC,
+        decision_policy: DecisionPolicy | None = None,
+        rubric_version: str | None = "default-v1",
     ) -> None:
         self.gateway = gateway
         self._rubric = rubric
+        self.decision_policy = decision_policy
+        self.rubric_version = rubric_version
+        self._calibration_evidence: dict[str, Any] = {}
 
     @property
     def rubric(self) -> DiagnosisRubric:
@@ -356,15 +376,81 @@ class Diagnoser:
             return self._rubric
         return self._rubric()
 
-    def _decide(self, requests: Sequence[Mapping[str, Any]]) -> tuple[JevDecision, ...]:
-        raw_responses = self.gateway.decide_batch(requests)
+    def _observe(
+        self, requests: Sequence[Mapping[str, Any]]
+    ) -> tuple[_DecisionObservation, ...]:
+        log = getattr(self.gateway, "decision_log", ())
+        before = len(log) if isinstance(log, Sequence) else 0
+        raw_responses = list(self.gateway.decide_batch(requests))
+        entries = list(log)[before:] if isinstance(log, Sequence) else []
         try:
-            return tuple(parse_decision(response) for response in raw_responses)
+            decisions = tuple(parse_decision(response) for response in raw_responses)
         except JevResponseError:
             # An unusable audit is fail-open: it must not invent a defect.
             return ()
+        observations: list[_DecisionObservation] = []
+        for index, (request, raw_answer, decision) in enumerate(
+            zip(requests, raw_responses, decisions, strict=True)
+        ):
+            entry = entries[index] if index < len(entries) else {}
+            answered_by = (
+                entry.get("answered_by") if isinstance(entry, Mapping) else None
+            )
+            if not isinstance(answered_by, str) or not answered_by:
+                answered_by = getattr(self.gateway, "jev_model", None)
+            observations.append(
+                _DecisionObservation(
+                    request=dict(request),
+                    raw_answer=raw_answer,
+                    decision=decision,
+                    answered_by=answered_by if isinstance(answered_by, str) else None,
+                )
+            )
+        return tuple(observations)
+
+    def _decide(self, requests: Sequence[Mapping[str, Any]]) -> tuple[JevDecision, ...]:
+        return tuple(observation.decision for observation in self._observe(requests))
+
+    def _policy_decision(
+        self,
+        *,
+        question_id: str,
+        request: Mapping[str, Any],
+        observation: _DecisionObservation,
+        family: str,
+        event_mapping: Mapping[str, Any] | None = None,
+    ) -> PolicyDecision | None:
+        if self.decision_policy is None:
+            return None
+        from .evaluation.calibration import runtime_question_identity
+
+        identity = runtime_question_identity(
+            question_id,
+            request,
+            family=family,
+            rubric_version=self.rubric_version,
+            snapshot=observation.answered_by,
+        )
+        if event_mapping is not None:
+            identity = replace(identity, event_mapping=dict(event_mapping))
+        decision = self.decision_policy.apply(
+            question_id=question_id,
+            identity=identity,
+            decision=observation.decision,
+            raw_answer=observation.raw_answer,
+            snapshot=observation.answered_by,
+        )
+        self._calibration_evidence[question_id] = {
+            "disposition": decision.disposition,
+            "verdict": decision.verdict,
+            "reason": decision.reason,
+            "threshold": decision.threshold,
+            "predicate": dict(decision.predicate),
+        }
+        return decision
 
     def diagnose(self, prompt: str) -> DiagnosisReport:
+        self._calibration_evidence = {}
         rubric = self.rubric
         state = {"prompt": prompt}
         unknown = "unknown"
@@ -442,6 +528,7 @@ class Diagnoser:
                 replace(gap, sentence=suspect.text if suspect else None)
                 for gap in near_misses
             ),
+            calibration=dict(self._calibration_evidence) or None,
         )
 
     def _diagnose_gaps(
@@ -461,18 +548,34 @@ class Diagnoser:
             )
             for item in task.checklist
         ]
-        responses = self._decide(requests)
+        observations = self._observe(requests)
         gaps: list[ConfirmedGap] = []
         near_misses: list[PossibleGap] = []
-        for item, response in zip(task.checklist, responses, strict=False):
+        for item, observation in zip(task.checklist, observations, strict=False):
+            response = observation.decision
             if not isinstance(response, NoulDecision):
                 continue
-            threshold = rubric.gap_threshold_for(item.key)
-            confident_missing = (
-                response.probability >= threshold
-                and response.confidence >= rubric.confidence_threshold
-                and abs(response.probability - 0.5) >= rubric.uncertainty_margin
+            policy_decision = self._policy_decision(
+                question_id=f"gap:{item.key}",
+                request=observation.request,
+                observation=observation,
+                family="gap",
             )
+            threshold = (
+                policy_decision.threshold
+                if policy_decision is not None
+                and policy_decision.may_gate
+                and policy_decision.threshold is not None
+                else rubric.gap_threshold_for(item.key)
+            )
+            if policy_decision is not None and not policy_decision.is_legacy:
+                confident_missing = policy_decision.may_gate
+            else:
+                confident_missing = (
+                    response.probability >= threshold
+                    and response.confidence >= rubric.confidence_threshold
+                    and abs(response.probability - 0.5) >= rubric.uncertainty_margin
+                )
             if confident_missing:
                 gaps.append(
                     ConfirmedGap(
@@ -484,19 +587,20 @@ class Diagnoser:
                         threshold=threshold,
                     )
                 )
-            elif (
-                rubric.hint_thresholds.get(item.key, 1.0)
-                <= response.probability
-                < threshold
-            ):
-                near_misses.append(
-                    PossibleGap(
-                        key=item.key,
-                        label=item.label,
-                        missing_probability=response.probability,
-                        threshold=threshold,
+            elif policy_decision is None or policy_decision.is_legacy:
+                if (
+                    rubric.hint_thresholds.get(item.key, 1.0)
+                    <= response.probability
+                    < threshold
+                ):
+                    near_misses.append(
+                        PossibleGap(
+                            key=item.key,
+                            label=item.label,
+                            missing_probability=response.probability,
+                            threshold=threshold,
+                        )
                     )
-                )
         return tuple(gaps), tuple(near_misses), split_sentences(str(state["prompt"]))
 
     def _diagnose_sentences(
@@ -534,12 +638,23 @@ class Diagnoser:
                     )
                 )
                 pointer_kinds.append(kind)
-        pointer_results = self._decide(pointer_requests)
+        pointer_observations = self._observe(pointer_requests)
         selected: list[tuple[ProblemKind, Sentence]] = []
-        for kind, pointer in zip(pointer_kinds, pointer_results, strict=False):
+        for kind, observation in zip(pointer_kinds, pointer_observations, strict=False):
+            pointer = observation.decision
             if not isinstance(pointer, ChoiceDecision) or pointer.selected == "none":
                 continue
-            if pointer.confidence < rubric.pointer_threshold:
+            policy_decision = self._policy_decision(
+                question_id=f"pointer:{kind.value}",
+                request=observation.request,
+                observation=observation,
+                family="pointer",
+                event_mapping={"selected_correctness": True},
+            )
+            if policy_decision is not None and not policy_decision.is_legacy:
+                if policy_decision.disposition == "abstain":
+                    continue
+            elif pointer.confidence < rubric.pointer_threshold:
                 continue
             sentence = next(
                 (item for item in sentences if item.id == pointer.selected), None
@@ -559,16 +674,33 @@ class Diagnoser:
             )
             for kind, sentence in selected
         ]
-        results = self._decide(checks)
+        observations = self._observe(checks)
         problems: list[ProblemSentence] = []
-        for (kind, sentence), result in zip(selected, results, strict=False):
+        for (kind, sentence), observation in zip(selected, observations, strict=False):
+            result = observation.decision
             if not isinstance(result, NoulDecision):
                 continue
-            confident = (
-                result.probability >= rubric.problem_threshold
-                and result.confidence >= rubric.confidence_threshold
-                and abs(result.probability - 0.5) >= rubric.uncertainty_margin
+            policy_decision = self._policy_decision(
+                question_id=f"problem:{kind.value}",
+                request=observation.request,
+                observation=observation,
+                family="problem",
             )
+            threshold = (
+                policy_decision.threshold
+                if policy_decision is not None
+                and policy_decision.may_gate
+                and policy_decision.threshold is not None
+                else rubric.problem_threshold
+            )
+            if policy_decision is not None and not policy_decision.is_legacy:
+                confident = policy_decision.may_gate
+            else:
+                confident = (
+                    result.probability >= threshold
+                    and result.confidence >= rubric.confidence_threshold
+                    and abs(result.probability - 0.5) >= rubric.uncertainty_margin
+                )
             if confident:
                 problems.append(
                     ProblemSentence(
@@ -576,7 +708,7 @@ class Diagnoser:
                         kind=kind,
                         probability=result.probability,
                         confidence=result.confidence,
-                        threshold=rubric.problem_threshold,
+                        threshold=threshold,
                     )
                 )
         return tuple(problems), pointed
@@ -588,7 +720,11 @@ def model_diagnosis(payload: Mapping[str, Any]) -> dict[str, Any]:
     Near-miss hints must never steer a strategy, candidate, or fidelity decision,
     and leaving them out keeps recorded replays exact.
     """
-    return {key: value for key, value in payload.items() if key != "possible_gaps"}
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in {"possible_gaps", "calibration"}
+    }
 
 
 def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
@@ -630,6 +766,10 @@ def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
         )
         for item in value.get("possible_gaps", ())
     )
+    calibration_value = value.get("calibration")
+    calibration = (
+        dict(calibration_value) if isinstance(calibration_value, Mapping) else None
+    )
     return DiagnosisReport(
         task_type=str(value["task_type"]),
         task_type_label=str(value["task_type_label"]),
@@ -637,6 +777,7 @@ def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
         confirmed_gaps=gaps,
         problem_sentences=problems,
         possible_gaps=possible,
+        calibration=calibration,
     )
 
 

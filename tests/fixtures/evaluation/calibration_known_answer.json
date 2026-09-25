@@ -1,0 +1,289 @@
+{
+  "schema_version": 1,
+  "name": "known-answer-v1",
+  "metadata": {
+    "label_provenance": "synthetic_known_answer",
+    "policy_version": "issue-50-v1",
+    "rubric_version": "default-v1"
+  },
+  "answering_snapshot": "typesafe/jev-1.13-20260917",
+  "events": [
+    {
+      "id": "gap-00-r0",
+      "source_group": "gap-group-00",
+      "example_id": "gap-example-00",
+      "question_id": "gap:goal",
+      "question": "Is the required piece 'goal' confidently missing from the request?",
+      "family": "gap",
+      "primitive": "noul",
+      "criteria": [
+        "no",
+        "yes"
+      ],
+      "event": {
+        "positive_class": "yes"
+      },
+      "label": true,
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "repeat_index": 0,
+      "request_id": "gap-00-r0",
+      "answer_id": "gap-answer-00-r0",
+      "answer": {
+        "type": "noul",
+        "probability_true": 0.95
+      }
+    },
+    {
+      "id": "gap-00-r1",
+      "source_group": "gap-group-00",
+      "example_id": "gap-example-00",
+      "question_id": "gap:goal",
+      "question": "Is the required piece 'goal' confidently missing from the request?",
+      "family": "gap",
+      "primitive": "noul",
+      "criteria": [
+        "no",
+        "yes"
+      ],
+      "event": {
+        "positive_class": "yes"
+      },
+      "label": true,
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "repeat_index": 1,
+      "request_id": "gap-00-r1",
+      "answer_id": "gap-answer-00-r1",
+      "answer": {
+        "type": "noul",
+        "probability_true": 0.93
+      }
+    },
+    {
+      "id": "gap-01-r0",
+      "source_group": "gap-group-01",
+      "example_id": "gap-example-01",
+      "question_id": "gap:goal",
+      "question": "Is the required piece 'goal' confidently missing from the request?",
+      "family": "gap",
+      "primitive": "noul",
+      "criteria": [
+        "no",
+        "yes"
+      ],
+      "event": {
+        "positive_class": "yes"
+      },
+      "label": false,
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "repeat_index": 0,
+      "request_id": "gap-01-r0",
+      "answer_id": "gap-answer-01-r0",
+      "answer": {
+        "type": "noul",
+        "probability_true": 0.05
+      }
+    },
+    {
+      "id": "gap-01-r1",
+      "source_group": "gap-group-01",
+      "example_id": "gap-example-01",
+      "question_id": "gap:goal",
+      "question": "Is the required piece 'goal' confidently missing from the request?",
+      "family": "gap",
+      "primitive": "noul",
+      "criteria": [
+        "no",
+        "yes"
+      ],
+      "event": {
+        "positive_class": "yes"
+      },
+      "label": false,
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "repeat_index": 1,
+      "request_id": "gap-01-r1",
+      "answer_id": "gap-answer-01-r1",
+      "answer": {
+        "type": "noul",
+        "probability_true": 0.07
+      }
+    },
+    {
+      "id": "gap-control-00",
+      "source_group": "gap-group-00",
+      "example_id": "gap-example-00",
+      "question_id": "gap:goal",
+      "question": "Is the required piece 'goal' confidently missing from the request?",
+      "family": "gap",
+      "primitive": "noul",
+      "criteria": [
+        "no",
+        "yes"
+      ],
+      "event": {
+        "positive_class": "yes"
+      },
+      "label": true,
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "control": true,
+      "state": {},
+      "repeat_index": 0,
+      "request_id": "gap-control-00",
+      "answer_id": "gap-answer-control-00",
+      "answer": {
+        "type": "noul",
+        "probability_true": 0.5
+      }
+    },
+    {
+      "id": "pointer-00",
+      "source_group": "pointer-group-00",
+      "example_id": "pointer-example-00",
+      "question_id": "pointer:vagueness",
+      "question": "Which sentence best contains this problem: vagueness?",
+      "family": "pointer",
+      "primitive": "choice",
+      "criteria": [
+        "s0001",
+        "s0002",
+        "none"
+      ],
+      "event": {
+        "selected_correctness": true
+      },
+      "label": "s0001",
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "request_id": "pointer-00",
+      "answer_id": "pointer-answer-00",
+      "answer": {
+        "type": "choice",
+        "choice": "s0001",
+        "probabilities": {
+          "s0001": 0.7,
+          "s0002": 0.1,
+          "none": 0.2
+        }
+      }
+    },
+    {
+      "id": "pointer-01",
+      "source_group": "pointer-group-01",
+      "example_id": "pointer-example-01",
+      "question_id": "pointer:vagueness",
+      "question": "Which sentence best contains this problem: vagueness?",
+      "family": "pointer",
+      "primitive": "choice",
+      "criteria": [
+        "s0001",
+        "s0002",
+        "none"
+      ],
+      "event": {
+        "selected_correctness": true
+      },
+      "label": "s0002",
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "request_id": "pointer-01",
+      "answer_id": "pointer-answer-01",
+      "answer": {
+        "type": "choice",
+        "choice": "s0002",
+        "probabilities": {
+          "s0001": 0.2,
+          "s0002": 0.6,
+          "none": 0.2
+        }
+      }
+    },
+    {
+      "id": "score-00",
+      "source_group": "score-group-00",
+      "example_id": "score-example-00",
+      "question_id": "fidelity:score",
+      "question": "How faithful is the candidate?",
+      "family": "fidelity",
+      "primitive": "score",
+      "criteria": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "event": {
+        "boundary": 3,
+        "positive_classes": [
+          3,
+          4
+        ]
+      },
+      "label": "3",
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "request_id": "score-00",
+      "answer_id": "score-answer-00",
+      "answer": {
+        "type": "score",
+        "score": 3.1,
+        "levels": {
+          "1": 0.1,
+          "2": 0.2,
+          "3": 0.4,
+          "4": 0.3
+        }
+      }
+    },
+    {
+      "id": "score-01",
+      "source_group": "score-group-01",
+      "example_id": "score-example-01",
+      "question_id": "fidelity:score",
+      "question": "How faithful is the candidate?",
+      "family": "fidelity",
+      "primitive": "score",
+      "criteria": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "event": {
+        "boundary": 3,
+        "positive_classes": [
+          3,
+          4
+        ]
+      },
+      "label": "1",
+      "label_provenance": "synthetic_known_answer",
+      "answering_snapshot": "typesafe/jev-1.13-20260917",
+      "rubric_version": "default-v1",
+      "request_id": "score-01",
+      "answer_id": "score-answer-01",
+      "answer": {
+        "type": "score",
+        "score": 1.2,
+        "levels": {
+          "1": 0.7,
+          "2": 0.1,
+          "3": 0.1,
+          "4": 0.1
+        }
+      }
+    }
+  ]
+}

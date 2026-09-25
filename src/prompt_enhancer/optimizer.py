@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
 from time import perf_counter
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from . import jev_questions
 from .catalog import DEFAULT_DEEP_WEAK_PANEL, DEFAULT_WEAK_PANEL, LiveModelCatalog
@@ -67,6 +67,9 @@ from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
 )
 
+if TYPE_CHECKING:
+    from .evaluation.calibration import CalibrationArtifact, DecisionPolicy
+
 
 class RunNotFoundError(KeyError):
     """Raised when a caller resumes or edits an unknown run."""
@@ -110,6 +113,8 @@ class PromptOptimizer:
         diagnosis_rubric: DiagnosisRubric = DEFAULT_RUBRIC,
         writer_instruction_version: int = CURRENT_WRITER_INSTRUCTION_VERSION,
         faithfulness_threshold: float = DEFAULT_FAITHFULNESS_THRESHOLD,
+        decision_policy: DecisionPolicy | Mapping[str, Any] | str | Path | None = None,
+        calibration: CalibrationArtifact | Mapping[str, Any] | str | Path | None = None,
     ) -> None:
         if writer_instruction_version not in WRITER_INSTRUCTION_VERSIONS:
             raise ValueError("unknown candidate writer instruction version")
@@ -120,6 +125,17 @@ class PromptOptimizer:
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
+        from .evaluation.calibration import DecisionPolicy
+
+        selected_policy = (
+            decision_policy if decision_policy is not None else calibration
+        )
+        self.decision_policy = (
+            DecisionPolicy.from_artifact(selected_policy)
+            if selected_policy is not None
+            and not isinstance(selected_policy, DecisionPolicy)
+            else selected_policy
+        )
         self.settings_store = (
             SettingsStore(
                 Path(self.store.path).with_suffix(".settings.json"),
@@ -482,7 +498,16 @@ class PromptOptimizer:
                 for task in self.diagnosis_rubric.task_types
             ),
         )
-        report = Diagnoser(self.gateway, rubric=diagnosis_rubric).diagnose(prompt)
+        active_rubric_version = (
+            rubric.version_id if rubric is not None else "default-v1"
+        )
+        report = Diagnoser(
+            self.gateway,
+            rubric=diagnosis_rubric,
+            decision_policy=self.decision_policy,
+            rubric_version=active_rubric_version,
+        ).diagnose(prompt)
+        calibration_evidence = dict(report.calibration or {})
         if rubric is None:
             return report
         questions = [
@@ -496,25 +521,75 @@ class PromptOptimizer:
             for item in rubric.questions
         ]
         if not questions:
-            return replace(report, rubric_version=rubric.version_id)
-        responses = self.gateway.decide_batch(questions)
+            return replace(
+                report,
+                rubric_version=rubric.version_id,
+                calibration=calibration_evidence or None,
+            )
+        log = getattr(self.gateway, "decision_log", [])
+        before = len(log)
+        responses = list(self.gateway.decide_batch(questions))
+        entries = list(log)[before:]
         gaps = list(report.confirmed_gaps)
         default_impacts = {
             item.key: item.impact
             for task in DEFAULT_RUBRIC.task_types
             for item in task.checklist
         }
-        for item, response in zip(rubric.questions, responses, strict=True):
+        for index, (item, response) in enumerate(
+            zip(rubric.questions, responses, strict=True)
+        ):
             decision = parse_decision(response)
             if not isinstance(decision, NoulDecision):
                 continue
+            entry = entries[index] if index < len(entries) else {}
+            snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
+            if not isinstance(snapshot, str) or not snapshot:
+                snapshot = getattr(self.gateway, "jev_model", None)
+            from .evaluation.calibration import runtime_question_identity
+
+            identity = runtime_question_identity(
+                f"rubric:{item.question_id}",
+                questions[index],
+                family="rubric",
+                rubric_version=rubric.version_id,
+                snapshot=snapshot if isinstance(snapshot, str) else None,
+            )
+            identity = replace(
+                identity,
+                event_mapping={
+                    "polarity": "positive" if item.missing_when == "yes" else "negative"
+                },
+            )
+            policy_decision = None
+            if self.decision_policy is not None:
+                policy_decision = self.decision_policy.apply(
+                    question_id=f"rubric:{item.question_id}",
+                    identity=identity,
+                    decision=decision,
+                    raw_answer=response,
+                    snapshot=snapshot if isinstance(snapshot, str) else None,
+                )
+                calibration_evidence[f"rubric:{item.question_id}"] = {
+                    "disposition": policy_decision.disposition,
+                    "verdict": policy_decision.verdict,
+                    "reason": policy_decision.reason,
+                    "threshold": policy_decision.threshold,
+                    "predicate": dict(policy_decision.predicate),
+                }
             missing = (
                 decision.probability
                 if item.missing_when == "yes"
                 else 1.0 - decision.probability
             )
+            if policy_decision is not None and not policy_decision.is_legacy:
+                if not policy_decision.may_gate or policy_decision.threshold is None:
+                    continue
+                threshold = policy_decision.threshold
+            else:
+                threshold = item.threshold
             if (
-                missing >= item.threshold
+                missing >= threshold
                 and decision.confidence >= diagnosis_rubric.confidence_threshold
             ):
                 gaps.append(
@@ -524,11 +599,14 @@ class PromptOptimizer:
                         default_impacts.get(item.question_id, GapImpact.MEDIUM),
                         missing,
                         decision.confidence,
-                        item.threshold,
+                        threshold,
                     )
                 )
         return replace(
-            report, confirmed_gaps=tuple(gaps), rubric_version=rubric.version_id
+            report,
+            confirmed_gaps=tuple(gaps),
+            rubric_version=rubric.version_id,
+            calibration=calibration_evidence or None,
         )
 
     def _assumption_meaning_check(

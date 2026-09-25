@@ -12,8 +12,16 @@ import sys
 from collections.abc import Sequence
 from importlib import import_module
 from pathlib import Path
-from typing import TextIO
+from typing import Any, TextIO, cast
 
+from .calibration import (
+    CalibrationBudget,
+    CalibrationError,
+    CalibrationManifest,
+    VerdictPolicy,
+    calibrate_manifest,
+    load_calibration_manifest,
+)
 from .datasets import DatasetError, load_datasets
 from .harness import (
     EngineFactory,
@@ -22,6 +30,96 @@ from .harness import (
     HarnessOptions,
 )
 from .recording import RecordingGateway
+
+
+def _json_object(raw: str) -> dict[str, object]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        try:
+            value = json.loads(Path(raw).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise argparse.ArgumentTypeError(f"invalid JSON object: {exc}") from exc
+    if not isinstance(value, dict):
+        raise argparse.ArgumentTypeError("calibration policy must be a JSON object")
+    return value
+
+
+def _verdict_policy(raw: str | None) -> VerdictPolicy:
+    if raw is None:
+        return VerdictPolicy()
+    values = _json_object(raw)
+    try:
+        return VerdictPolicy(**cast(dict[str, Any], values))
+    except TypeError as exc:
+        raise EvaluationError(f"invalid calibration policy: {exc}") from exc
+
+
+def _calibration_manifests(paths: Sequence[str]) -> CalibrationManifest:
+    manifests = [load_calibration_manifest(path) for path in paths]
+    if len(manifests) == 1:
+        return manifests[0]
+    combined = CalibrationManifest(
+        name=" + ".join(manifest.name for manifest in manifests),
+        events=tuple(event for manifest in manifests for event in manifest.events),
+        metadata={"inputs": [manifest.to_dict() for manifest in manifests]},
+    )
+    return CalibrationManifest(
+        name=combined.name,
+        events=combined.events,
+        metadata=combined.metadata,
+        input_digest=combined.to_dict()["input_digest"],
+    )
+
+
+def _run_calibration(
+    args: argparse.Namespace,
+    *,
+    out: TextIO,
+) -> int:
+    if args.record:
+        raise EvaluationError(
+            "--record is not supported for offline calibration events"
+        )
+    if args.allow_snapshot_mismatch:
+        raise EvaluationError("--allow-snapshot-mismatch is not a calibration override")
+    if args.live and args.budget is None:
+        raise EvaluationError("--calibrate --live requires an explicit finite --budget")
+    policy = _verdict_policy(args.calibration_policy)
+    budget = CalibrationBudget(
+        max_source_examples=args.max_source_examples,
+        max_repeats=args.runs,
+        max_question_evaluations=args.max_question_evaluations,
+        budget_usd=args.budget,
+    )
+    manifest = _calibration_manifests(args.datasets)
+    artifact, report = calibrate_manifest(
+        manifest,
+        verdict_policy=policy,
+        fit_mode=args.fit,
+        seed=args.seed or 1729,
+        bootstrap_seed=args.bootstrap_seed,
+        bootstrap_resamples=args.bootstrap_resamples,
+        budget=budget,
+    )
+    rendered = json.dumps(
+        report,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2 if args.pretty else None,
+        separators=None if args.pretty else (",", ":"),
+    )
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        print(rendered, file=out)
+    artifact_path = args.artifact
+    if artifact_path is None and args.output is not None:
+        artifact_path = args.output.with_suffix(".artifact.json")
+    if artifact_path is not None:
+        artifact.save(artifact_path)
+    return 0
 
 
 def _json_assignment(raw: str) -> tuple[str, object]:
@@ -65,10 +163,12 @@ def _factory(reference: str) -> EngineFactory:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m prompt_enhancer.evaluation",
-        description="Evaluate prompt optimization over maintainer datasets.",
+        description="Evaluate prompt optimization or calibrate Jev questions.",
     )
-    parser.add_argument("datasets", nargs="+", help="one or more JSON dataset files")
-    mode = parser.add_mutually_exclusive_group(required=True)
+    parser.add_argument(
+        "datasets", nargs="+", help="JSON dataset or calibration event files"
+    )
+    mode = parser.add_mutually_exclusive_group()
     mode.add_argument(
         "--replay",
         type=Path,
@@ -79,6 +179,29 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly allow the product's configured live provider gateway",
     )
+    parser.add_argument(
+        "--calibrate",
+        action="store_true",
+        help="calibrate per-question Jev events and write a versioned artifact",
+    )
+    parser.add_argument(
+        "--artifact", type=Path, help="write the calibration artifact here"
+    )
+    parser.add_argument(
+        "--calibration-policy",
+        help="JSON object or path overriding the versioned verdict policy",
+    )
+    parser.add_argument(
+        "--fit", choices=("none", "temperature"), default="none", help="fit mode"
+    )
+    parser.add_argument("--bootstrap-resamples", type=int, default=1000)
+    parser.add_argument("--bootstrap-seed", type=int, default=1729)
+    parser.add_argument(
+        "--runs", type=int, default=3, help="maximum independent repeats"
+    )
+    parser.add_argument("--max-source-examples", type=int, default=100)
+    parser.add_argument("--max-question-evaluations", type=int, default=5000)
+    parser.add_argument("--budget", type=float, help="finite live budget in USD")
     parser.add_argument("--output", type=Path, help="write JSON here instead of stdout")
     parser.add_argument(
         "--record",
@@ -135,10 +258,17 @@ def main(
     stderr: TextIO | None = None,
 ) -> int:
     parser = _parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    if raw_argv and raw_argv[0] == "calibrate":
+        raw_argv = ["--calibrate", *raw_argv[1:]]
+    args = parser.parse_args(raw_argv)
     out = stdout or sys.stdout
     err = stderr or sys.stderr
     try:
+        if args.calibrate:
+            return _run_calibration(args, out=out)
+        if not (args.replay or args.live):
+            raise EvaluationError("one of --replay, --live, or --calibrate is required")
         overrides: dict[str, object] = {}
         if args.writer_model:
             overrides["writer"] = args.writer_model
@@ -205,7 +335,7 @@ def main(
             )
             return 2
         return 0
-    except (DatasetError, EvaluationError, OSError) as exc:
+    except (CalibrationError, DatasetError, EvaluationError, OSError) as exc:
         print(f"evaluation error: {exc}", file=err)
         return 2
 
