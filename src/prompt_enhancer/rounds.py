@@ -19,6 +19,7 @@ from typing import Any
 from . import jev_questions
 from .config import Settings
 from .diagnosis import model_diagnosis
+from .evaluation.order_bias import OrderBiasPolicy
 from .fidelity import check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
@@ -134,6 +135,7 @@ class RoundPlan:
     writer_instruction_version: int
     prior_failures: tuple[str, ...] = ()
     """Summaries of the previous round's losing candidates."""
+    grading_policy: OrderBiasPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +178,11 @@ class RoundOutcome:
         """The run report for this round, in the shape the web app and history read."""
         plan = self.plan
         models = plan.settings.model_roles()
+        grading_policies: list[dict[str, Any]] = []
+        for answer in self.grading_answers:
+            policy = answer.get("grading_policy")
+            if isinstance(policy, Mapping) and dict(policy) not in grading_policies:
+                grading_policies.append(dict(policy))
         if self.ranking is None:
             # Without a confirmed gap no strategy can run, so a Deep pass would
             # only repeat the diagnosis; it is not offered.
@@ -185,6 +192,7 @@ class RoundOutcome:
                 "summary": self.summary,
                 "diagnosis": dict(plan.diagnosis),
                 "tests": list(self.tests),
+                "grading_policy": grading_policies,
                 "candidates": [],
                 "per_model": {},
                 "assumptions": list(plan.assumptions),
@@ -204,6 +212,7 @@ class RoundOutcome:
             "summary": self.summary,
             "diagnosis": plan.diagnosis,
             "tests": list(self.tests),
+            "grading_policy": grading_policies,
             "jev_answers": list(self.grading_answers),
             "candidates": list(self.candidates),
             "per_model": {
@@ -257,6 +266,7 @@ class RoundOutcome:
                 "per_model",
                 "strong_check",
                 "selection_evidence",
+                "grading_policy",
                 "strategies",
             )
             if key in report
@@ -398,6 +408,7 @@ def run_round(
         gateway,
         judge_model=settings.judge_model,
         run_id=plan.run_id,
+        grading_policy=plan.grading_policy,
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
@@ -522,6 +533,7 @@ def _strong_score(gateway: Gateway, prompt: str, tests: Any, plan: RoundPlan) ->
         gateway,
         judge_model=settings.judge_model,
         run_id=plan.run_id,
+        grading_policy=plan.grading_policy,
     )
     return grades["strong"].sample_scores[0]
 

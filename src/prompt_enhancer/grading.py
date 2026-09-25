@@ -8,6 +8,7 @@ from statistics import fmean
 from typing import Any
 
 from . import jev_questions
+from .evaluation.order_bias import LEGACY_GRADING_POLICY, OrderBiasPolicy
 from .gateway import Gateway
 from .jev import (
     ChoiceDecision,
@@ -161,10 +162,18 @@ def grade_panel_with_jev(
     *,
     judge_model: str,
     run_id: str,
+    grading_policy: OrderBiasPolicy | None = None,
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
-    """Batch one Noul decision or two order variants for each other test."""
+    """Grade panel outputs using a compatible persisted order-bias policy.
+
+    Noul remains a single direct ask. Choice and Score use one order only when
+    a compatible artifact recommends ``single``; ``mean_pair`` averages the
+    two semantically aligned asks. Missing or incompatible artifacts preserve
+    the historical conservative ``legacy_min_pair`` behavior.
+    """
     requests: list[dict[str, Any]] = []
-    response_indices: dict[tuple[int, int], int] = {}
+    response_indices: dict[tuple[int, int], list[int]] = {}
+    policy_evidence: dict[tuple[int, int], dict[str, Any]] = {}
     for output_index, run in enumerate(panel):
         for test_index, test in enumerate(tests):
             state = {"prompt": run.prompt, "output": run.output, "test": dict(test)}
@@ -179,8 +188,36 @@ def grade_panel_with_jev(
             descriptions = test.get("option_descriptions")
             if not isinstance(descriptions, Mapping):
                 descriptions = {}
-            response_indices[(output_index, test_index)] = len(requests)
-            for second in (False,) if kind == "noul" else (False, True):
+            if kind == "noul":
+                resolution = {
+                    "policy": "noul_direct",
+                    "reason": "outside_order_bias_experiment",
+                    "snapshot": gateway.jev_model,
+                }
+            elif grading_policy is None:
+                resolution = {
+                    "policy": LEGACY_GRADING_POLICY,
+                    "reason": "no_order_bias_artifact",
+                    "snapshot": gateway.jev_model,
+                }
+            else:
+                resolution = grading_policy.resolve(test, snapshot=gateway.jev_model)
+            resolution = {
+                **resolution,
+                "primitive": kind,
+                "test_id": str(test.get("id", f"test-{test_index + 1:03d}")),
+                "question": str(test.get("question", "")),
+            }
+            selected_policy = str(resolution.get("policy", LEGACY_GRADING_POLICY))
+            policy_evidence[(output_index, test_index)] = resolution
+            request_indexes: list[int] = []
+            orders = (
+                (False,)
+                if kind == "noul" or selected_policy == "single"
+                else (False, True)
+            )
+            for second in orders:
+                request_indexes.append(len(requests))
                 requests.append(
                     {
                         "key": f"grade_{output_index}_{test_index}_{'second' if second else 'first'}",
@@ -209,6 +246,7 @@ def grade_panel_with_jev(
                         ),
                     }
                 )
+            response_indices[(output_index, test_index)] = request_indexes
     responses: list[Any] = []
     for offset in range(0, len(requests), 40):
         responses.extend(
@@ -219,19 +257,31 @@ def grade_panel_with_jev(
     if len(responses) != len(requests):
         raise ValueError("Jev returned an incomplete grading batch")
     evidence = [
-        {"question": request, "answer": response}
-        for request, response in zip(requests, responses, strict=True)
+        {
+            "question": request,
+            "answer": response,
+            "grading_policy": policy_evidence[
+                next(
+                    pair
+                    for pair, indexes in response_indices.items()
+                    if request_index in indexes
+                )
+            ],
+        }
+        for request_index, (request, response) in enumerate(
+            zip(requests, responses, strict=True)
+        )
     ]
     scores: dict[tuple[str, str, int, int], float] = {}
     for output_index, run in enumerate(panel):
         test_scores = []
         for test_index in range(len(tests)):
-            pair_index = response_indices[(output_index, test_index)]
+            indexes = response_indices[(output_index, test_index)]
             test = tests[test_index]
             kind = str(test.get("kind", "noul"))
             expected = str(test.get("expected", "yes"))
             if kind == "noul":
-                direct = _noul_probability(responses[pair_index])
+                direct = _noul_probability(responses[indexes[0]])
                 test_scores.append(
                     0.0
                     if direct is None
@@ -241,48 +291,40 @@ def grade_panel_with_jev(
                 )
             else:
                 try:
-                    first = parse_decision(responses[pair_index])
-                    second = parse_decision(responses[pair_index + 1])
-                    if (
-                        kind == "choice"
-                        and isinstance(first, ChoiceDecision)
-                        and isinstance(second, ChoiceDecision)
-                    ):
-                        test_scores.append(
-                            min(
-                                first.probabilities.get(expected, 0.0),
-                                second.probabilities.get(expected, 0.0),
-                            )
+                    first = parse_decision(responses[indexes[0]])
+                    second = (
+                        parse_decision(responses[indexes[1]])
+                        if len(indexes) > 1
+                        else None
+                    )
+                    if kind == "choice" and isinstance(first, ChoiceDecision):
+                        masses = [first.probabilities.get(expected, 0.0)]
+                        if isinstance(second, ChoiceDecision):
+                            masses.append(second.probabilities.get(expected, 0.0))
+                        selected_policy = str(
+                            policy_evidence[(output_index, test_index)]["policy"]
                         )
-                    elif (
-                        kind == "score"
-                        and isinstance(first, ScoreDecision)
-                        and isinstance(second, ScoreDecision)
-                    ):
+                        test_scores.append(
+                            _combine_order_masses(masses, selected_policy)
+                        )
+                    elif kind == "score" and isinstance(first, ScoreDecision):
                         levels = tuple(str(level) for level in test.get("levels", ()))
-                        if expected not in levels:
-                            test_scores.append(0.0)
-                        else:
-                            first_index = levels.index(expected)
-                            second_index = len(levels) - 1 - first_index
-                            # Score answers use level indexes; the score is their weighted mean.
-                            # A test passes to the extent Jev assigns mass at or above the
-                            # expected semantic level. The reversed ask puts higher
-                            # levels at lower indexes.
-                            test_scores.append(
-                                min(
-                                    sum(
-                                        probability
-                                        for index, probability in first.probabilities.items()
-                                        if int(index) >= first_index
-                                    ),
-                                    sum(
-                                        probability
-                                        for index, probability in second.probabilities.items()
-                                        if int(index) <= second_index
-                                    ),
+                        first_mass = _score_expected_mass(
+                            first, levels, expected, reverse=False
+                        )
+                        masses = [first_mass]
+                        if isinstance(second, ScoreDecision):
+                            masses.append(
+                                _score_expected_mass(
+                                    second, levels, expected, reverse=True
                                 )
                             )
+                        selected_policy = str(
+                            policy_evidence[(output_index, test_index)]["policy"]
+                        )
+                        test_scores.append(
+                            _combine_order_masses(masses, selected_policy)
+                        )
                     else:
                         test_scores.append(0.0)
                 except ValueError:
@@ -299,6 +341,34 @@ def grade_panel_with_jev(
         for candidate_id in dict.fromkeys(run.candidate_id for run in panel)
     }
     return grades, evidence
+
+
+def _score_expected_mass(
+    decision: ScoreDecision,
+    levels: Sequence[str],
+    expected: str,
+    *,
+    reverse: bool,
+) -> float:
+    if expected not in levels:
+        return 0.0
+    probabilities = decision.probabilities
+    semantic_mass: dict[str, float] = {}
+    for index in range(len(levels)):
+        semantic_index = len(levels) - 1 - index if reverse else index
+        semantic_mass[levels[semantic_index]] = probabilities.get(str(index), 0.0)
+    expected_index = levels.index(expected)
+    return sum(semantic_mass.get(level, 0.0) for level in levels[expected_index:])
+
+
+def _combine_order_masses(masses: Sequence[float], policy: str) -> float:
+    if not masses:
+        return 0.0
+    if policy == "single" or len(masses) == 1:
+        return masses[0]
+    if policy == "mean_pair":
+        return fmean(masses)
+    return min(masses)
 
 
 __all__ = [

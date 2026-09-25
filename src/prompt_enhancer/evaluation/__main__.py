@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -15,7 +16,7 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, TextIO, cast
 
-from ..gateway import GatewayConfig, HttpGateway
+from ..gateway import GatewayConfig, HttpGateway, ProviderError
 from .calibration import (
     CalibrationBudget,
     CalibrationError,
@@ -31,6 +32,17 @@ from .harness import (
     EvaluationError,
     EvaluationHarness,
     HarnessOptions,
+)
+from .order_bias import (
+    MAX_QUESTION_EVALUATIONS as ORDER_BIAS_MAX_QUESTION_EVALUATIONS,
+)
+from .order_bias import (
+    OrderBiasError,
+    analyze_order_bias,
+    build_order_bias_requests,
+    capture_order_bias,
+    load_order_bias_manifest,
+    load_order_bias_recording,
 )
 from .recording import RecordingGateway
 
@@ -151,6 +163,126 @@ def _run_calibration(
     return 0
 
 
+def _run_order_bias(args: argparse.Namespace, *, out: TextIO) -> int:
+    if len(args.datasets) != 1:
+        raise OrderBiasError("order-bias requires exactly one experiment manifest")
+    if args.engine_factory:
+        raise OrderBiasError(
+            "order-bias uses a strict recording format, not --engine-factory"
+        )
+    if args.allow_snapshot_mismatch:
+        raise OrderBiasError("order-bias replay never allows snapshot mismatches")
+    if args.record and not args.live:
+        raise OrderBiasError("--record requires --live")
+    if args.live and args.budget is None:
+        raise OrderBiasError("--order-bias --live requires an explicit finite --budget")
+    if args.live and args.record is None:
+        raise OrderBiasError("--order-bias --live requires --record for raw evidence")
+    if args.live and (not math.isfinite(args.budget) or args.budget <= 0):
+        raise OrderBiasError("--budget must be a finite positive amount")
+    if args.max_order_cases < 1 or args.max_order_cases > 100:
+        raise OrderBiasError("--max-order-cases must be between 1 and 100")
+    if (
+        args.max_order_question_evaluations < 1
+        or args.max_order_question_evaluations > ORDER_BIAS_MAX_QUESTION_EVALUATIONS
+    ):
+        raise OrderBiasError(
+            "--max-order-question-evaluations must be between 1 and 1000"
+        )
+    manifest = load_order_bias_manifest(args.datasets[0])
+    if len(manifest.cases) > args.max_order_cases:
+        raise OrderBiasError(
+            f"order-bias manifest has {len(manifest.cases)} cases; configured maximum is {args.max_order_cases}"
+        )
+    requests = build_order_bias_requests(manifest, repetitions=args.runs)
+    if len(requests) > args.max_order_question_evaluations:
+        raise OrderBiasError(
+            f"order-bias experiment requires {len(requests)} questions; configured maximum is {args.max_order_question_evaluations}"
+        )
+    if args.live:
+        from dataclasses import replace as dataclass_replace
+
+        gateway = HttpGateway(
+            config=dataclass_replace(GatewayConfig.from_env(), max_retries=0)
+        )
+        capture_error = None
+        try:
+            events = capture_order_bias(
+                manifest,
+                gateway,
+                repetitions=args.runs,
+                budget_usd=args.budget,
+                request_cost_ceiling=args.request_cost_ceiling,
+                recording_path=args.record,
+            )
+        except ProviderError as exc:
+            capture_error = str(exc)
+            try:
+                partial_recording = json.loads(args.record.read_text(encoding="utf-8"))
+                events = partial_recording.get("events", ())
+            except (OSError, json.JSONDecodeError, AttributeError) as read_error:
+                raise OrderBiasError(
+                    f"provider request failed and partial recording could not be read: {read_error}"
+                ) from exc
+    else:
+        if not args.replay:
+            raise OrderBiasError("one of --replay or --live is required for order-bias")
+        events = load_order_bias_recording(args.replay, manifest, repetitions=args.runs)
+    report, artifact = analyze_order_bias(
+        manifest,
+        events,
+        repetitions=args.runs,
+        bootstrap_seed=args.bootstrap_seed,
+        bootstrap_resamples=args.bootstrap_resamples,
+        request_cost_ceiling=args.request_cost_ceiling,
+    )
+    report["collection"]["mode"] = "live" if args.live else "replay"
+    if args.live:
+        report["collection"]["budget_usd"] = args.budget
+        report["collection"]["configured_request_cost_ceiling_usd"] = (
+            args.request_cost_ceiling
+        )
+        if len(events) < len(requests):
+            report["status"] = "partial"
+            report["collection"]["uncollected_question_evaluations"] = len(
+                requests
+            ) - len(events)
+            if capture_error is not None:
+                report["collection"]["capture_error"] = capture_error
+            for group in report["groups"]:
+                group["runtime_eligible"] = False
+                group["activation_block"] = "partial_live_collection"
+            artifact = dataclass_replace(
+                artifact,
+                groups=tuple(
+                    {
+                        **dict(group),
+                        "runtime_eligible": False,
+                        "activation_block": "partial_live_collection",
+                    }
+                    for group in artifact.groups
+                ),
+            )
+    rendered = json.dumps(
+        report,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2 if args.pretty else None,
+        separators=None if args.pretty else (",", ":"),
+    )
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered + "\n", encoding="utf-8")
+    else:
+        print(rendered, file=out)
+    artifact_path = args.artifact
+    if artifact_path is None and args.output is not None:
+        artifact_path = args.output.with_suffix(".artifact.json")
+    if artifact_path is not None:
+        artifact.save(artifact_path)
+    return 0
+
+
 def _json_assignment(raw: str) -> tuple[str, object]:
     key, separator, value = raw.partition("=")
     if not separator or not key:
@@ -214,6 +346,11 @@ def _parser() -> argparse.ArgumentParser:
         help="calibrate per-question Jev events and write a versioned artifact",
     )
     parser.add_argument(
+        "--order-bias",
+        action="store_true",
+        help="measure Choice/Score option-order effects against repeat variation",
+    )
+    parser.add_argument(
         "--artifact", type=Path, help="write the calibration artifact here"
     )
     parser.add_argument(
@@ -225,6 +362,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--bootstrap-resamples", type=int, default=1000)
     parser.add_argument("--bootstrap-seed", type=int, default=1729)
+    parser.add_argument("--max-order-cases", type=int, default=100)
+    parser.add_argument("--max-order-question-evaluations", type=int, default=1000)
     parser.add_argument(
         "--runs", type=int, default=3, help="maximum independent repeats"
     )
@@ -296,12 +435,16 @@ def main(
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     if raw_argv and raw_argv[0] == "calibrate":
         raw_argv = ["--calibrate", *raw_argv[1:]]
+    elif raw_argv and raw_argv[0] == "order-bias":
+        raw_argv = ["--order-bias", *raw_argv[1:]]
     args = parser.parse_args(raw_argv)
     out = stdout or sys.stdout
     err = stderr or sys.stderr
     try:
         if args.calibrate:
             return _run_calibration(args, out=out)
+        if args.order_bias:
+            return _run_order_bias(args, out=out)
         if not (args.replay or args.live):
             raise EvaluationError("one of --replay, --live, or --calibrate is required")
         overrides: dict[str, object] = {}
@@ -370,7 +513,13 @@ def main(
             )
             return 2
         return 0
-    except (CalibrationError, DatasetError, EvaluationError, OSError) as exc:
+    except (
+        CalibrationError,
+        DatasetError,
+        EvaluationError,
+        OrderBiasError,
+        OSError,
+    ) as exc:
         print(f"evaluation error: {exc}", file=err)
         return 2
 
