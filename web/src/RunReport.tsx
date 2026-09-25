@@ -14,24 +14,36 @@ function score(value: unknown): string {
 }
 
 const calibrationDispositions: Record<string, string> = {
-  legacy: "Uses the existing policy",
-  gate: "Allows the calibrated gate",
-  "gate-above-confidence": "Allows the gate after a confidence check",
-  ranker: "Uses the ranker",
-  abstain: "Abstained from applying calibration",
+  legacy: "Existing policy remains in use",
+  gate: "Calibration permits this question to gate decisions",
+  "gate-above-confidence":
+    "Calibration permits gating after an additional confidence check",
+  ranker:
+    "Calibration marked this question as ranking-only; it does not gate decisions",
+  abstain: "Calibration abstained; no calibrated decision was applied",
 };
 
-const abstentionReasons: Record<string, string> = {
-  calibration_artifact: "The calibration did not support applying a decision",
+const calibrationVerdicts: Record<string, string> = {
+  gate: "Supports a calibrated gate",
+  "gate-above-confidence": "Supports a calibrated gate with a confidence check",
+  ranker: "Supports ranking-only use",
+  unusable: "Did not meet the requirements for calibrated use",
+  "too-few-examples": "Too few examples to establish a policy",
+};
+
+const calibrationReasons: Record<string, string> = {
+  no_calibration_artifact: "No calibration artifact was available",
+  calibration_artifact:
+    "The calibration verdict did not clear the requirements for applying a decision",
   calibration_identity_or_snapshot_mismatch:
     "This calibration does not match the current question or model",
   invalid_calibration_threshold:
     "The calibrated confidence threshold is invalid",
   gate_without_threshold: "No confidence threshold was available",
   calibration_event_probability_unavailable:
-    "The answer's confidence could not be checked",
+    "The answer's event probability could not be checked",
   probability_below_calibrated_threshold:
-    "The answer did not meet the confidence threshold",
+    "The answer's event probability was below the calibrated threshold",
   frozen_calibration_predicate_failed:
     "The answer did not meet the calibrated checks",
   invalid_calibration_predicate: "The calibrated checks could not be applied",
@@ -143,27 +155,40 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
         )}
       </section>
       {Object.keys(calibration).length > 0 && (
-        <section>
-          <h3>Calibration decisions</h3>
+        <section aria-labelledby="calibration-decisions-heading">
+          <h3 id="calibration-decisions-heading">Calibration decisions</h3>
           <ul>
             {Object.entries(calibration).map(([questionId, value]) => {
               const evidence = record(value);
               const disposition = text(evidence.disposition);
               const verdict = text(evidence.verdict);
-              const reason =
-                disposition === "abstain" ? text(evidence.reason) : "";
+              const reason = text(evidence.reason);
+              const threshold =
+                typeof evidence.threshold === "number"
+                  ? score(evidence.threshold)
+                  : "";
 
               return (
                 <li key={questionId}>
                   <strong>Question {questionId}:</strong>{" "}
                   {calibrationDispositions[disposition] ??
-                    humanize(disposition)}
-                  {verdict && <>. Verdict: {humanize(verdict)}</>}
-                  {reason && (
+                    (disposition
+                      ? humanize(disposition)
+                      : "Status unavailable")}
+                  {verdict && (
                     <>
-                      . Reason: {abstentionReasons[reason] ?? humanize(reason)}
+                      . Verdict:{" "}
+                      {calibrationVerdicts[verdict] ?? humanize(verdict)}
                     </>
                   )}
+                  {threshold && <>. Minimum event probability: {threshold}</>}
+                  {reason &&
+                    (disposition === "abstain" || disposition === "legacy") && (
+                      <>
+                        . Reason:{" "}
+                        {calibrationReasons[reason] ?? humanize(reason)}
+                      </>
+                    )}
                   .
                 </li>
               );
