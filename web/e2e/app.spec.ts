@@ -83,6 +83,68 @@ test("an unsent draft keeps its exact whitespace after reload", async ({
   await expect(page.getByLabel("Your prompt")).toHaveValue(draft);
 });
 
+test("an active result identifies when it belongs to the earlier prompt", async ({
+  page,
+}) => {
+  const runId = "earlier-prompt-result";
+  const runPrompt = "Write a concise update about the delivery date.";
+  const currentDraft = "Draft: Ask for the confirmed arrival date by Friday.";
+  const completedResult = {
+    ...completedBase,
+    run_id: runId,
+    original_prompt: runPrompt,
+    final_prompt: `${runPrompt} Include the next steps.`,
+    original_kept: false,
+    report: {
+      status: "optimized",
+      summary: "The update has a clear deadline.",
+    },
+  };
+  let finished = false;
+
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/jobs/optimize", (route) =>
+    route.fulfill({
+      status: 202,
+      json: job(runId, "running", null, { prompt: runPrompt }),
+    })
+  );
+  await page.route(`**/api/jobs/${runId}`, (route) =>
+    route.fulfill({
+      json: finished
+        ? job(runId, "done", completedResult, { prompt: runPrompt })
+        : job(runId, "running", null, { prompt: runPrompt }),
+    })
+  );
+
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill(runPrompt);
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toBeVisible();
+
+  await page.getByRole("textbox", { name: "Your prompt" }).fill(currentDraft);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toBeVisible();
+  finished = true;
+
+  await expect(page.locator(".final-prompt")).toContainText(
+    "Include the next steps."
+  );
+  await expect(page.getByRole("textbox", { name: "Your prompt" })).toHaveValue(
+    currentDraft
+  );
+  await expect(
+    page.getByRole("status").filter({
+      hasText:
+        "A result for an earlier prompt is open below. Your current draft remains in Your prompt.",
+    })
+  ).toBeVisible();
+});
+
 test("clarification can recover from local and server-side Other answer errors", async ({
   page,
 }) => {

@@ -566,6 +566,9 @@ export default function App() {
     result?.status === "completed" && result.original_kept
       ? possibleGapHints(result)
       : [];
+  const resultPrompt = result ? originalPromptOf(result) : undefined;
+  const resultForEarlierPrompt =
+    resultPrompt !== undefined && resultPrompt !== prompt;
   // Deep only rewrites against a confirmed gap; without one it cannot do more.
   const offerDeep = Boolean(result?.report.offer_deep) && gaps.length > 0;
 
@@ -645,10 +648,12 @@ export default function App() {
         )}
       </form>
 
-      {viewingHistoryResult && (
+      {(viewingHistoryResult || resultForEarlierPrompt) && (
         <p className="history-result-context" role="status">
-          A saved result is open below. Your current draft remains in Your
-          prompt.
+          {viewingHistoryResult
+            ? "A saved result is open below."
+            : "A result for an earlier prompt is open below."}{" "}
+          Your current draft remains in Your prompt.
         </p>
       )}
 
