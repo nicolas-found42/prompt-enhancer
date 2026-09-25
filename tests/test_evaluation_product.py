@@ -535,15 +535,33 @@ def _candidate_gateway() -> ScriptedGateway:
         }
 
     def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            if key == "task_type":
+                choice = "general"
+            elif key.startswith("pointer:vagueness:"):
+                choice = "s0001"
+            elif key.startswith("fidelity:sentence:"):
+                choice = "supported_by_original"
+            else:
+                choice = "none"
+            probabilities = {choice: 1.0}
+            if key.startswith("fidelity:sentence:"):
+                probabilities = {
+                    "supported_by_original": 0.99,
+                    "supported_by_assumption": 0.0,
+                    "new_requirement": 0.0,
+                    "unknown": 0.01,
+                }
             return {
                 "type": "choice",
                 "choice": choice,
-                "probabilities": {choice: 1.0},
+                "probabilities": probabilities,
                 "confidence": 1.0,
             }
-        if "output" in request.get("state", {}):
+        if key == "fidelity:meaning":
+            probability = 0.99
+        elif "output" in request.get("state", {}):
             passed = request["state"]["output"] == "pass"
             probability = (
                 float(not passed)
@@ -616,6 +634,17 @@ def test_versioned_recording_selects_current_writer_request(tmp_path: Path) -> N
     bundle["writer_instruction_version"] = 1
     path.write_text(json.dumps(bundle))
     assert _replay(path)["status"] == "failed"
+
+
+def test_version_three_recording_replays_the_edit_permission_request(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sentence-fidelity.json"
+    original = _record_candidate_run(path, 3)
+
+    assert json.loads(path.read_text())["writer_instruction_version"] == 3
+    assert original["final_prompt"] != "Original request"
+    assert _replay(path)["final_prompt"] == original["final_prompt"]
 
 
 def _context_impact(path: Path) -> str:

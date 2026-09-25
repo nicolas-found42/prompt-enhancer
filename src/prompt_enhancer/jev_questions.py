@@ -42,6 +42,15 @@ def sentence_pointer_question(problem: str) -> str:
     return f"Which sentence best contains this problem: {problem}?"
 
 
+FIDELITY_MEANING_QUESTION = "Does the candidate preserve the original prompt's meaning and all stated constraints?"
+FIDELITY_SUPPORT_OPTIONS = {
+    "supported_by_original": "The original prompt states or clearly entails this sentence.",
+    "supported_by_assumption": "A confirmed user answer in state.confirmed_assumptions supports this sentence.",
+    "new_requirement": "This sentence adds a fact or requirement not supported by the prompt or a confirmed answer.",
+    "unknown": "The available prompt and confirmed answers do not establish whether this sentence is supported.",
+}
+
+
 def sentence_existence_question(problem: str) -> str:
     return (
         f"Does the problem '{problem}' exist in at least one sentence in this exact candidate window? "
@@ -50,11 +59,11 @@ def sentence_existence_question(problem: str) -> str:
     )
 
 
-FIDELITY_CHECKS = {
-    "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
-    "no_invention": "Does the candidate avoid facts or requirements not given by the user?",
-    "edits_confined": "Are edits limited to diagnosed problems or changes required by the named rewrite strategy?",
-}
+def fidelity_sentence_support_question(change_id: str) -> str:
+    return (
+        f"Does the candidate sentence recorded at state.changed_sentences[{change_id!r}] "
+        "follow from state.original_prompt or a confirmed user answer?"
+    )
 
 
 def infer_gap_question(label: str) -> str:

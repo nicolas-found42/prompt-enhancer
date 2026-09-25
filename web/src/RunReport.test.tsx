@@ -141,6 +141,34 @@ it("keeps older reports readable when they contain no calibration evidence", () 
   ).not.toBeInTheDocument();
 });
 
+it("shows which option-order grading policy was used and why", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          grading_policy: [
+            {
+              primitive: "choice",
+              test_id: "format",
+              question: "Does the answer use the requested format?",
+              policy: "single",
+              reason: "compatible_order_bias_evidence",
+              snapshot: "typesafe/jev-test-snapshot",
+            },
+          ],
+        },
+      }}
+    />
+  );
+
+  const grading = screen.getByRole("region", { name: "Grading policy" });
+  expect(within(grading).getByRole("listitem")).toHaveTextContent(
+    /Does the answer use the requested format\?: One option order\. A compatible matched experiment supports this policy\. Jev snapshot: typesafe\/jev-test-snapshot\./
+  );
+});
+
 it("omits calibration decisions for an empty mapping", () => {
   render(
     <RunReport
@@ -154,4 +182,39 @@ it("omits calibration decisions for an empty mapping", () => {
   expect(
     screen.queryByRole("heading", { name: "Calibration decisions" })
   ).not.toBeInTheDocument();
+});
+
+it("names an unsupported sentence in rejected rewrite details", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          selection_evidence: {
+            rejected_candidates: [
+              {
+                candidate_id: "candidate-1",
+                strategy: "specify_output_format",
+                rejection_reasons: [
+                  "candidate failed fidelity checks",
+                  "fidelity rejected 'Respond in French.': new requirement " +
+                    "(source mapping: gap 1; probability=0.99)",
+                ],
+              },
+            ],
+          },
+        },
+      }}
+    />
+  );
+
+  const heading = screen.getByRole("heading", {
+    name: "Rewrites that were not used",
+  });
+  const section = heading.closest("section");
+  expect(section).not.toBeNull();
+  expect(within(section!).getByRole("listitem")).toHaveTextContent(
+    /Respond in French\..*new requirement.*source mapping: gap 1; probability=0\.99/
+  );
 });
