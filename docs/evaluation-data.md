@@ -106,6 +106,11 @@ answering snapshot—consistent within a question. These fields bind the result
 to that exact question and Jev snapshot; do not combine labels or answers with
 different identities. Label provenance must describe its real source, such as
 source annotation, human review, delegated judgment, or synthetic fixture.
+For `pointer:*` questions, set identity `criteria` to the stable descriptor
+`"sentence-id-options-with-none"` and `event.selected_correctness` to `true`.
+The product's pointer requests still send the actual sentence IDs plus
+`"none"` in `options`; those IDs vary by prompt and do not belong in the
+reusable question identity.
 Give each independent repeat a distinct non-negative `repeat_index`; when
 present, `request_id` and `answer_id` must also be distinct. A cached response
 is not an independent repeat.

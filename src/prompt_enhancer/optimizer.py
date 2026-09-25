@@ -125,17 +125,37 @@ class PromptOptimizer:
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
-        from .evaluation.calibration import DecisionPolicy
+        from .evaluation.calibration import (
+            DEFAULT_POLICY_VERSION,
+            CalibrationArtifact,
+            CalibrationError,
+            DecisionPolicy,
+        )
 
         selected_policy = (
             decision_policy if decision_policy is not None else calibration
         )
-        self.decision_policy = (
-            DecisionPolicy.from_artifact(selected_policy)
-            if selected_policy is not None
-            and not isinstance(selected_policy, DecisionPolicy)
-            else selected_policy
-        )
+        if selected_policy is None or isinstance(selected_policy, DecisionPolicy):
+            self.decision_policy = selected_policy
+        else:
+            artifact = (
+                CalibrationArtifact.load(selected_policy)
+                if isinstance(selected_policy, (str, Path))
+                else CalibrationArtifact.from_dict(selected_policy)
+                if isinstance(selected_policy, Mapping)
+                else selected_policy
+            )
+            verdict_policy = artifact.metadata.get("verdict_policy")
+            policy_version = (
+                verdict_policy.get("policy_version", DEFAULT_POLICY_VERSION)
+                if isinstance(verdict_policy, Mapping)
+                else DEFAULT_POLICY_VERSION
+            )
+            if not isinstance(policy_version, str) or not policy_version.strip():
+                raise CalibrationError("artifact policy_version must be non-empty")
+            self.decision_policy = DecisionPolicy.from_artifact(
+                artifact, policy_version=policy_version
+            )
         self.settings_store = (
             SettingsStore(
                 Path(self.store.path).with_suffix(".settings.json"),

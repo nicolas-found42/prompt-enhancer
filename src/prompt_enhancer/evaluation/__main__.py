@@ -42,9 +42,9 @@ def _json_object(raw: str) -> dict[str, object]:
         try:
             value = json.loads(Path(raw).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
-            raise argparse.ArgumentTypeError(f"invalid JSON object: {exc}") from exc
+            raise EvaluationError(f"invalid calibration policy JSON: {exc}") from exc
     if not isinstance(value, dict):
-        raise argparse.ArgumentTypeError("calibration policy must be a JSON object")
+        raise EvaluationError("calibration policy must be a JSON object")
     return value
 
 
