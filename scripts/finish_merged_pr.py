@@ -84,7 +84,7 @@ def branch_tip(repo: Path, ref: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def finish(repo: Path, number: int) -> None:
+def finish(repo: Path, number: int, *, discard_ignored: bool = False) -> None:
     pr = checked_pr(repo, number)
     branch = pr["headRefName"]
     expected = pr["headRefOid"]
@@ -114,6 +114,24 @@ def finish(repo: Path, number: int) -> None:
         ).strip()
     ):
         raise CleanupError(f"Branch worktree has uncommitted files: {branch_worktree}")
+    if branch_worktree is not None and not discard_ignored:
+        ignored = [
+            line[3:]
+            for line in git(
+                "status",
+                "--porcelain",
+                "--ignored",
+                "--untracked-files=normal",
+                cwd=branch_worktree,
+            ).splitlines()
+            if line.startswith("!! ")
+        ]
+        if ignored:
+            sample = ", ".join(ignored[:5])
+            raise CleanupError(
+                f"Branch worktree contains ignored files ({sample}); move them or "
+                "rerun with --discard-ignored if disposable"
+            )
 
     if subprocess.run(
         ["git", "merge-base", "--is-ancestor", "main", "origin/main"],
@@ -149,10 +167,15 @@ def finish(repo: Path, number: int) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("number", type=int, help="merged pull request number")
+    parser.add_argument(
+        "--discard-ignored",
+        action="store_true",
+        help="also remove ignored files in the branch worktree",
+    )
     args = parser.parse_args()
     try:
         repo = Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()).strip())
-        finish(repo, args.number)
+        finish(repo, args.number, discard_ignored=args.discard_ignored)
     except CleanupError as exc:
         print(f"Cleanup stopped: {exc}", file=sys.stderr)
         return 1

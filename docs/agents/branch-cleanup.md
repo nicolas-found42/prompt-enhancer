@@ -21,5 +21,8 @@ and prunes, fast-forwards the local `main` worktree, deletes the matching remote
 branch if it predates automatic deletion, then removes a clean branch worktree
 and local branch. It works with squash merges because it checks the PR's head
 commit rather than Git ancestry. If `main` diverged or a branch worktree has
-uncommitted files, the helper stops and reports what needs attention. Untracked
-files in the `main` worktree are preserved unless they conflict with the merge.
+uncommitted or ignored files, the helper stops and reports what needs attention.
+Move ignored data you want to retain, such as `.env`, local databases, and
+`.local/` reports. If all ignored files in that worktree are disposable, rerun
+with `--discard-ignored`. Untracked files in the `main` worktree are preserved
+unless they conflict with the merge.
