@@ -1,5 +1,9 @@
 ## Agent skills
 
+### Branches
+
+When creating, naming, or checking a Git branch, use the `conventional-branch` skill.
+
 ### Issue tracker
 
 Issues live in GitHub Issues for `nicolas-found42/prompt-enhancer`; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
