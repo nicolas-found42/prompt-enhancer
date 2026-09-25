@@ -1,0 +1,55 @@
+{
+  "description": "Hand-authored synthetic seed labels for a small pilot, not human-reviewed repository accuracy.",
+  "cases": [
+    {
+      "id": "c03",
+      "rule_family": "name",
+      "split": "holdout",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c03",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def get_first(values):\n    return values.pop(0)",
+          "claim": "The name promises a read, but this function mutates the supplied list.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def get_first(values):\n    return values.pop(0)",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c09",
+      "rule_family": "finding",
+      "split": "tune",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c09",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 6,
+          "quote": "def save(store, item):\n    try:\n        store.write(item)\n    except OSError:\n        return {\"ok\": True}\n    return {\"ok\": True}",
+          "claim": "This change silently converts a failed operation to a successful result.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def save(store, item):\n    try:\n        store.write(item)\n    except OSError:\n        return {\"ok\": True}\n    return {\"ok\": True}",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    }
+  ]
+}

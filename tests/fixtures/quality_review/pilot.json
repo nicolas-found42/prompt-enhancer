@@ -1,0 +1,309 @@
+{
+  "description": "Hand-authored synthetic seed labels for a small pilot, not human-reviewed repository accuracy.",
+  "cases": [
+    {
+      "id": "c01",
+      "rule_family": "comment",
+      "split": "tune",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c01",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 3,
+          "quote": "def lookup(values, key):\n    \"\"\"Returns None for an absent key.\"\"\"\n    return values[key]",
+          "claim": "The docstring promises None for a missing key but this function raises.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def lookup(values, key):\n    \"\"\"Returns None for an absent key.\"\"\"\n    return values[key]",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c02",
+      "rule_family": "comment",
+      "split": "holdout",
+      "expected": "contradicted",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c02",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 3,
+          "quote": "def lookup(values, key):\n    \"\"\"Returns None for an absent key.\"\"\"\n    return values.get(key)",
+          "claim": "The docstring promises None for a missing key but this function raises.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def lookup(values, key):\n    \"\"\"Returns None for an absent key.\"\"\"\n    return values.get(key)",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c03",
+      "rule_family": "name",
+      "split": "holdout",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c03",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def get_first(values):\n    return values.pop(0)",
+          "claim": "The name promises a read, but this function mutates the supplied list.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def get_first(values):\n    return values.pop(0)",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c04",
+      "rule_family": "name",
+      "split": "tune",
+      "expected": "contradicted",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c04",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def get_first(values):\n    return values[0]",
+          "claim": "The name promises a read, but this function mutates the supplied list.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def get_first(values):\n    return values[0]",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c05",
+      "rule_family": "test",
+      "split": "tune",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c05",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 3,
+          "quote": "def test_sorts_ascending():\n    result = sorted([3, 1, 2])\n    assert len(result) == 3",
+          "claim": "The test claims to check ordering but its assertion only checks length.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def test_sorts_ascending():\n    result = sorted([3, 1, 2])\n    assert len(result) == 3",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c06",
+      "rule_family": "test",
+      "split": "holdout",
+      "expected": "contradicted",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c06",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 3,
+          "quote": "def test_sorts_ascending():\n    result = sorted([3, 1, 2])\n    assert result == [1, 2, 3]",
+          "claim": "The test claims to check ordering but its assertion only checks length.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def test_sorts_ascending():\n    result = sorted([3, 1, 2])\n    assert result == [1, 2, 3]",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c07",
+      "rule_family": "gateway",
+      "split": "holdout",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Gateway methods return raw answers. Parsing into typed decisions belongs to their callers."
+        },
+        "finding": {
+          "id": "c07",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def decide(self, payload):\n    return parse_decision(self.transport(payload))",
+          "claim": "The Gateway parses the decision instead of returning a raw answer.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def decide(self, payload):\n    return parse_decision(self.transport(payload))",
+        "related_sources": {},
+        "related_contracts": {
+          "ADR-0001": "The Gateway gives callers raw Jev and writer answers. It does not parse them."
+        },
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c08",
+      "rule_family": "gateway",
+      "split": "tune",
+      "expected": "contradicted",
+      "state": {
+        "rule": {
+          "text": "Gateway methods return raw answers. Parsing into typed decisions belongs to their callers."
+        },
+        "finding": {
+          "id": "c08",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def decide(self, payload):\n    return self.transport(payload)",
+          "claim": "The Gateway parses the decision instead of returning a raw answer.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def decide(self, payload):\n    return self.transport(payload)",
+        "related_sources": {},
+        "related_contracts": {
+          "ADR-0001": "The Gateway gives callers raw Jev and writer answers. It does not parse them."
+        },
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c09",
+      "rule_family": "finding",
+      "split": "tune",
+      "expected": "supported",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c09",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 6,
+          "quote": "def save(store, item):\n    try:\n        store.write(item)\n    except OSError:\n        return {\"ok\": True}\n    return {\"ok\": True}",
+          "claim": "This change silently converts a failed operation to a successful result.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def save(store, item):\n    try:\n        store.write(item)\n    except OSError:\n        return {\"ok\": True}\n    return {\"ok\": True}",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c10",
+      "rule_family": "finding",
+      "split": "holdout",
+      "expected": "contradicted",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c10",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 3,
+          "quote": "def save(store, item):\n    store.write(item)\n    return {\"ok\": True}",
+          "claim": "This change silently converts a failed operation to a successful result.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def save(store, item):\n    store.write(item)\n    return {\"ok\": True}",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c11",
+      "rule_family": "missing-context",
+      "split": "holdout",
+      "expected": "insufficient_evidence",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c11",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def fetch():\n    return external_helper()",
+          "claim": "The hidden helper retries exactly five times.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def fetch():\n    return external_helper()",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    },
+    {
+      "id": "c12",
+      "rule_family": "missing-context",
+      "split": "tune",
+      "expected": "insufficient_evidence",
+      "state": {
+        "rule": {
+          "text": "Review findings must be established by the supplied implementation and explicit contract; do not infer hidden behavior."
+        },
+        "finding": {
+          "id": "c12",
+          "path": "src/example.py",
+          "line": 1,
+          "end_line": 2,
+          "quote": "def save(value):\n    return external_cache.put(value)",
+          "claim": "The external cache encrypts all data before storing it.",
+          "rule_id": "finding-support"
+        },
+        "before": "",
+        "after": "def save(value):\n    return external_cache.put(value)",
+        "related_sources": {},
+        "related_contracts": {},
+        "context_complete": true
+      }
+    }
+  ]
+}

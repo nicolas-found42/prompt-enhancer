@@ -1,0 +1,10 @@
+# Advisory pilot; upstream cutoffs are not calibrated on this repository.
+files: [src, tests, scripts, web/src, web/e2e]
+exclude: [tests/fixtures]
+rules:
+  python/comment-describes-declaration: { severity: warning }
+  python/fn-name-promises: { severity: warning }
+  python-test-verifies-claim: { severity: warning }
+  typescript/comment-describes-declaration: { severity: warning }
+  typescript/fn-name-promises: { severity: warning }
+  typescript/test-name-verifies-claim: { severity: warning }

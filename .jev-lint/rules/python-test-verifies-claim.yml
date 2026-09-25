@@ -1,0 +1,12 @@
+id: python-test-verifies-claim
+extends: python/test-name-describes-code
+state: located
+kind: noul
+severity: warning
+# Provisional display threshold, never a merge gate. Evaluate before tuning.
+threshold: 0.8
+ask: This test's assertions would still pass if the specific behavior claimed by its name were broken.
+note: Judge the test body and visible fixture/helper definitions. Do not infer hidden helper behavior. A test may correctly use pytest.raises, a snapshot, or a helper assertion; their mere presence is not a defect.
+criteria:
+  "true": The visible test asserts something weaker or unrelated to its named behavioral claim, so breaking that claimed behavior would not make these assertions fail.
+  "false": The visible assertions establish the named behavior, including through visible helper assertions or an expected exception.

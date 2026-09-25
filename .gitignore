@@ -15,3 +15,5 @@ web/playwright-report/
 web/coverage/
 .env
 .local/
+tools/quality/node_modules/
+.jev-lint/baseline.json

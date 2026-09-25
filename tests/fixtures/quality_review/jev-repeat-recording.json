@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "question_version": "1",
+  "requested_model": "typesafe/jev-1.13",
+  "plan_digest": "0dc59858366298b4f3e6484bcf4c7abd6c7e3b5bccc0aef3895b1380d96048b8",
+  "head_sha": "synthetic",
+  "status": "complete",
+  "mode": "live",
+  "results": [
+    {
+      "id": "c03",
+      "finding": {
+        "id": "c03",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 2,
+        "quote": "def get_first(values):\n    return values.pop(0)",
+        "claim": "The name promises a read, but this function mutates the supplied list.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "d7914b3833286463ae372c1ae3afc101d2f2efa25fd1f7c45d7e843a5f0a4d44",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "contradicted": 0,
+            "supported": 0.81,
+            "insufficient_evidence": 0.19
+          },
+          "confidence": 0.71
+        },
+        {
+          "type": "choice",
+          "choice": "introduced",
+          "probabilities": {
+            "preexisting": 0,
+            "introduced": 0.95,
+            "insufficient_evidence": 0.05
+          },
+          "confidence": 0.92
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 1.2260268749960233,
+      "disposition": "review",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "contradicted": 0.0,
+          "supported": 0.81,
+          "insufficient_evidence": 0.19
+        },
+        "confidence": 0.71
+      },
+      "introduced": {
+        "choice": "introduced",
+        "probabilities": {
+          "preexisting": 0.0,
+          "introduced": 0.95,
+          "insufficient_evidence": 0.05
+        },
+        "confidence": 0.92
+      }
+    },
+    {
+      "id": "c09",
+      "finding": {
+        "id": "c09",
+        "path": "src/example.py",
+        "line": 1,
+        "end_line": 6,
+        "quote": "def save(store, item):\n    try:\n        store.write(item)\n    except OSError:\n        return {\"ok\": True}\n    return {\"ok\": True}",
+        "claim": "This change silently converts a failed operation to a successful result.",
+        "rule_id": "finding-support"
+      },
+      "status": "judged",
+      "request_digest": "c26f7f7036c07aa6256add43c99f6128d5dba9c8a4e8852810e4c06307a3a822",
+      "raw_answers": [
+        {
+          "type": "choice",
+          "choice": "supported",
+          "probabilities": {
+            "contradicted": 0.01,
+            "insufficient_evidence": 0.39,
+            "supported": 0.6
+          },
+          "confidence": 0.4
+        },
+        {
+          "type": "choice",
+          "choice": "insufficient_evidence",
+          "probabilities": {
+            "preexisting": 0,
+            "insufficient_evidence": 0.54,
+            "introduced": 0.46
+          },
+          "confidence": 0.3
+        }
+      ],
+      "served_models": [
+        "typesafe/jev-1.13-20260917"
+      ],
+      "elapsed_seconds": 0.2634127920027822,
+      "disposition": "needs_context",
+      "support": {
+        "choice": "supported",
+        "probabilities": {
+          "contradicted": 0.01,
+          "insufficient_evidence": 0.39,
+          "supported": 0.6
+        },
+        "confidence": 0.4
+      },
+      "introduced": {
+        "choice": "insufficient_evidence",
+        "probabilities": {
+          "preexisting": 0.0,
+          "insufficient_evidence": 0.54,
+          "introduced": 0.46
+        },
+        "confidence": 0.3
+      }
+    }
+  ],
+  "omitted": [],
+  "usage": {
+    "total": 6.111e-05,
+    "total_cost": 6.111e-05,
+    "cost_by_role": {
+      "quality-review": 6.111e-05
+    },
+    "tokens": {
+      "input_tokens": 1455,
+      "output_tokens": 196,
+      "total_tokens": 1651
+    },
+    "calls": 2,
+    "by_role": {
+      "quality-review": [
+        {
+          "role": "quality-review",
+          "provider": "openrouter",
+          "model": "typesafe/jev-1.13",
+          "input_tokens": 1455,
+          "output_tokens": 196,
+          "total_tokens": 1651,
+          "cost": 6.111e-05,
+          "calls": 2
+        }
+      ]
+    }
+  },
+  "recorded_usage": null
+}

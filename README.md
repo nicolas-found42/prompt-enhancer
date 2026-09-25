@@ -97,6 +97,10 @@ protection are enabled for this repository. Accessibility automation covers
 common detectable issues; keyboard and task-flow review still requires a
 person.
 
+Optional [Jev semantic review](docs/quality-review.md) checks changed code against
+comments, names, test claims, and explicit repository contracts. It runs separately
+from commit hooks, defaults to offline planning, and reports advisory findings.
+
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
 [delegated-review follow-up](docs/delegated-evaluation-2026-09-23.md) state
