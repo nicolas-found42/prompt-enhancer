@@ -449,6 +449,12 @@ def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(
                 "probabilities": {"s0001": 0.9},
                 "confidence": 0.9,
             }
+        if key.startswith("existence:"):
+            return {
+                "type": "noul",
+                "probability_true": 0.95,
+                "confidence": 1.0,
+            }
         if request.get("type") == "choice":
             return {
                 "type": "choice",

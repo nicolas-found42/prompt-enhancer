@@ -51,6 +51,14 @@ FIDELITY_SUPPORT_OPTIONS = {
 }
 
 
+def sentence_existence_question(problem: str) -> str:
+    return (
+        f"Does the problem '{problem}' exist in at least one sentence in this exact candidate window? "
+        "Use the full prompt to understand references or conflicts, but consider only the listed candidate sentence IDs. "
+        "Answer no when the problem is absent from every sentence in this window."
+    )
+
+
 def fidelity_sentence_support_question(change_id: str) -> str:
     return (
         f"Does the candidate sentence recorded at state.changed_sentences[{change_id!r}] "

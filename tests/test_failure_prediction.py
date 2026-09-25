@@ -6,6 +6,7 @@ from pathlib import Path
 from prompt_enhancer.failure_prediction import (
     FailurePredictionModel,
     TrainingConfig,
+    extract_failure_features,
     load_logged_runs,
     train_and_save,
     train_failure_predictor,
@@ -13,6 +14,39 @@ from prompt_enhancer.failure_prediction import (
 from prompt_enhancer.training import main
 
 FIXTURE = Path(__file__).parent / "fixtures" / "failure_prediction_runs.json"
+
+
+def test_sentence_existence_feature_is_absent_for_old_runs_and_measured_when_present() -> (
+    None
+):
+    historical = {
+        "result": {
+            "report": {
+                "jev_answers": [
+                    {
+                        "question": {"key": "pointer:vagueness:0"},
+                        "answer": {"type": "choice", "choice": "none"},
+                    }
+                ]
+            }
+        }
+    }
+    current = {
+        "report": {
+            "jev_answers": [
+                {
+                    "question": {"key": "existence:vagueness:0"},
+                    "answer": {"type": "noul", "probability_true": 0.1},
+                }
+            ]
+        }
+    }
+
+    old_features = extract_failure_features(historical)
+    current_features = extract_failure_features(current)
+
+    assert not any("existence" in name for name in old_features)
+    assert current_features["jev/noul/existence:vagueness:0/probability"] == 0.1
 
 
 def test_trains_from_jev_scores_and_weak_outcomes_with_held_out_report() -> None:

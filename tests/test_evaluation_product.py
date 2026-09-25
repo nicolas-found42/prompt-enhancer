@@ -34,6 +34,60 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     report = json.loads(output.read_text())
     assert [case["status"] for case in report["cases"]] == ["completed"] * 3
     assert report["diagnosis"]["excluded_failed_cases"] == 0
+    assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
+    assert report["diagnosis"]["problem_sentences"]["precision"] is None
+
+
+def test_harness_compares_problem_sentence_predictions_with_explicit_labels() -> None:
+    dataset = Dataset.from_dict(
+        {
+            "name": "sentence-labels",
+            "cases": [
+                {
+                    "id": "labeled",
+                    "prompt": "A vague request.",
+                    "source": "synthetic",
+                    "expected_problem_sentences": [
+                        {"kind": "vagueness", "sentence_id": "s0001"}
+                    ],
+                },
+                {
+                    "id": "unlabeled",
+                    "prompt": "No sentence labels.",
+                    "source": "real",
+                },
+            ],
+        }
+    )
+
+    class SentenceLabelEngine:
+        def optimize(self, prompt, _options):
+            return {
+                "status": "completed",
+                "final_prompt": prompt,
+                "original_kept": True,
+                "report": {
+                    "diagnosis": {
+                        "confirmed_gaps": [],
+                        "problem_sentences": [
+                            {"kind": "vagueness", "sentence_id": "s0001"},
+                            {"kind": "contradiction", "sentence_id": "s0002"},
+                        ],
+                    }
+                },
+            }
+
+    report = EvaluationHarness(SentenceLabelEngine()).run(dataset)
+
+    metrics = report.to_dict()["diagnosis"]["problem_sentences"]
+    assert metrics["status"] == "available"
+    assert metrics["labeled_cases"] == 1
+    assert metrics["true_positives"] == 1
+    assert metrics["false_positives"] == 1
+    assert metrics["false_negatives"] == 0
+    assert metrics["precision"] == 0.5
+    assert metrics["recall"] == 1.0
+    assert metrics["false_flags"] == 1
 
 
 def test_replay_restores_recorded_case_cost_and_latency(tmp_path: Path) -> None:
@@ -118,6 +172,64 @@ def test_recorded_live_gateway_replays_the_same_public_run(tmp_path: Path) -> No
     assert all(
         answer["answered_by"] == JEV_MODEL
         for answer in store.get_run(original["run_id"])["jev_answers"]
+    )
+
+
+def test_versioned_legacy_recording_replays_without_existence_questions(
+    tmp_path: Path,
+) -> None:
+    def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        if key == "task_type":
+            return {
+                "type": "choice",
+                "choice": "general",
+                "probabilities": {"general": 1.0},
+                "confidence": 1.0,
+            }
+        if key.startswith("pointer:vagueness:"):
+            return {
+                "type": "choice",
+                "choice": "s0001",
+                "probabilities": {"s0001": 0.95, "none": 0.05},
+                "confidence": 0.95,
+            }
+        if key.startswith("pointer:"):
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+                "confidence": 1.0,
+            }
+        probability = 0.95 if key.startswith("problem:vagueness:") else 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    prompt = "The answer should fit in a tweet."
+    path = tmp_path / "legacy-sentence-protocol.json"
+    gateway = RecordingGateway(
+        ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide),
+        path,
+    )
+    gateway.sentence_diagnosis_version = 1
+    original = PromptOptimizer(
+        gateway=gateway,
+        store=RunStore(":memory:"),
+        sentence_diagnosis_version=1,
+    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+
+    replay = default_engine_factory(path)
+    result = replay.optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+
+    assert json.loads(path.read_text())["sentence_diagnosis_version"] == 1
+    assert replay.sentence_diagnosis_version == 1
+    assert (
+        original["report"]["diagnosis"]["problem_sentences"]
+        == result["report"]["diagnosis"]["problem_sentences"]
+    )
+    assert result["report"]["diagnosis"]["sentence_evidence"] == []
+    assert not any(
+        str(answer["question"].get("key", "")).startswith("existence:")
+        for answer in result["report"]["jev_answers"]
     )
 
 

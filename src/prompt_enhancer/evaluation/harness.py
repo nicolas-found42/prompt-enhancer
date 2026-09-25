@@ -12,7 +12,11 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol, cast
 
-from ..diagnosis import GapImpact
+from ..diagnosis import (
+    HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    GapImpact,
+)
 from ..rewrite import WRITER_INSTRUCTION_VERSIONS
 from .datasets import (
     Dataset,
@@ -106,12 +110,49 @@ class GapMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class ProblemSentenceMetrics:
+    status: str
+    metric: str
+    labeled_cases: int
+    excluded_failed_cases: int
+    true_positives: int | None
+    false_positives: int | None
+    false_negatives: int | None
+    precision: float | None
+    recall: float | None
+    f1: float | None
+    false_flags: int | None
+    reason: str | None = None
+    per_kind: Mapping[str, GapMetrics] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "metric": self.metric,
+            "labeled_cases": self.labeled_cases,
+            "excluded_failed_cases": self.excluded_failed_cases,
+            "true_positives": self.true_positives,
+            "false_positives": self.false_positives,
+            "false_negatives": self.false_negatives,
+            "precision": self.precision,
+            "recall": self.recall,
+            "f1": self.f1,
+            "false_flags": self.false_flags,
+            "reason": self.reason,
+            "per_kind": {
+                name: metric.to_dict() for name, metric in sorted(self.per_kind.items())
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class DiagnosisSummary:
     labeled_cases: int
     predicted_gap_occurrences: int
     expected_gap_occurrences: int
     micro: GapMetrics
     per_gap: Mapping[str, GapMetrics]
+    problem_sentences: ProblemSentenceMetrics
     excluded_failed_cases: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -124,6 +165,7 @@ class DiagnosisSummary:
             "per_gap": {
                 name: metric.to_dict() for name, metric in sorted(self.per_gap.items())
             },
+            "problem_sentences": self.problem_sentences.to_dict(),
         }
 
 
@@ -195,6 +237,9 @@ class CaseEvaluation:
     latency_ms: float | None
     error: str | None = None
     labels_present: bool = False
+    expected_problem_sentences: tuple[tuple[str, str], ...] = ()
+    problem_sentence_labels_present: bool = False
+    predicted_problem_sentences: tuple[tuple[str, str], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -214,6 +259,15 @@ class CaseEvaluation:
             "latency_ms": self.latency_ms,
             "error": self.error,
             "labels_present": self.labels_present,
+            "problem_sentence_labels_present": self.problem_sentence_labels_present,
+            "expected_problem_sentences": [
+                {"kind": kind, "sentence_id": sentence_id}
+                for kind, sentence_id in self.expected_problem_sentences
+            ],
+            "predicted_problem_sentences": [
+                {"kind": kind, "sentence_id": sentence_id}
+                for kind, sentence_id in self.predicted_problem_sentences
+            ],
         }
 
 
@@ -270,6 +324,7 @@ class _ReplayBundle:
     faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
     checklist_keys: tuple[str, ...] | None = None
     checklist_impacts: Mapping[str, str] | None = None
+    sentence_diagnosis_version: int = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
 
 
 @dataclass(slots=True)
@@ -280,6 +335,9 @@ class _CaseObservation:
     expected_gaps: tuple[str, ...]
     labels_present: bool = False
     predicted_gaps: tuple[str, ...] = ()
+    expected_problem_sentences: tuple[tuple[str, str], ...] = ()
+    problem_sentence_labels_present: bool = False
+    predicted_problem_sentences: tuple[tuple[str, str], ...] = ()
     original_kept: bool | None = None
     final_prompt: str | None = None
     original_score: float | None = None
@@ -320,6 +378,9 @@ class _CaseObservation:
             cost_by_role=dict(self.cost_by_role),
             latency_ms=self.latency_ms,
             error=self.error,
+            expected_problem_sentences=self.expected_problem_sentences,
+            problem_sentence_labels_present=self.problem_sentence_labels_present,
+            predicted_problem_sentences=self.predicted_problem_sentences,
         )
 
 
@@ -397,6 +458,8 @@ class EvaluationHarness:
             status="error",
             expected_gaps=case.expected_gaps,
             labels_present=case.labels_present,
+            expected_problem_sentences=case.expected_problem_sentences,
+            problem_sentence_labels_present=case.problem_sentence_labels_present,
         )
         started = perf_counter()
         try:
@@ -430,6 +493,9 @@ class EvaluationHarness:
                 resumed = True
             report = _as_mapping(result.get("report", {}))
             observation.predicted_gaps = _predicted_gaps(result, report)
+            observation.predicted_problem_sentences = _predicted_problem_sentences(
+                report
+            )
             if requested_clarification:
                 observation.predicted_gaps = tuple(
                     sorted({*observation.predicted_gaps, "clarification_need"})
@@ -536,6 +602,7 @@ def default_engine_factory(
         diagnosis_rubric=rubric,
         writer_instruction_version=bundle.writer_instruction_version,
         faithfulness_threshold=bundle.faithfulness_threshold,
+        sentence_diagnosis_version=bundle.sentence_diagnosis_version,
     )
 
 
@@ -564,6 +631,10 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         )
         raw_checklist = raw.get("checklist_keys")
         raw_impacts = raw.get("checklist_impacts")
+        sentence_diagnosis_version = raw.get(
+            "sentence_diagnosis_version",
+            HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        )
     else:
         recordings = replay_path
         provenance = {}
@@ -575,6 +646,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         faithfulness = HISTORICAL_FAITHFULNESS_THRESHOLD
         raw_checklist = None
         raw_impacts = None
+        sentence_diagnosis_version = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
     if raw_impacts is not None and (
         not isinstance(raw_impacts, Mapping)
         or any(
@@ -604,6 +676,13 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         or any(not isinstance(key, str) or not key for key in raw_checklist)
     ):
         raise EvaluationError("replay checklist_keys must be a list of question ids")
+    if isinstance(
+        sentence_diagnosis_version, bool
+    ) or sentence_diagnosis_version not in {
+        HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    }:
+        raise EvaluationError("replay sentence_diagnosis_version is not supported")
     if (
         isinstance(writer_version, bool)
         or writer_version not in WRITER_INSTRUCTION_VERSIONS
@@ -679,6 +758,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         faithfulness_threshold=float(faithfulness),
         checklist_keys=tuple(raw_checklist) if raw_checklist is not None else None,
         checklist_impacts=dict(raw_impacts) if raw_impacts is not None else None,
+        sentence_diagnosis_version=sentence_diagnosis_version,
     )
 
 
@@ -765,6 +845,68 @@ def _diagnosis_summary(cases: Sequence[CaseEvaluation]) -> DiagnosisSummary:
         excluded_failed_cases=excluded_failed_cases,
         micro=micro,
         per_gap=per_gap,
+        problem_sentences=_problem_sentence_metrics(cases),
+    )
+
+
+def _problem_sentence_metrics(
+    cases: Sequence[CaseEvaluation],
+) -> ProblemSentenceMetrics:
+    labeled_cases = 0
+    excluded_failed_cases = 0
+    counts: dict[str, Counter[str]] = {}
+    for case in cases:
+        if not case.problem_sentence_labels_present:
+            continue
+        if case.status in {"failed", "error"}:
+            excluded_failed_cases += 1
+            continue
+        labeled_cases += 1
+        expected = set(case.expected_problem_sentences)
+        predicted = set(case.predicted_problem_sentences)
+        for kind in {item[0] for item in expected | predicted}:
+            expected_kind = {item for item in expected if item[0] == kind}
+            predicted_kind = {item for item in predicted if item[0] == kind}
+            counter = counts.setdefault(kind, Counter())
+            counter["tp"] += len(expected_kind & predicted_kind)
+            counter["fp"] += len(predicted_kind - expected_kind)
+            counter["fn"] += len(expected_kind - predicted_kind)
+    if labeled_cases == 0:
+        return ProblemSentenceMetrics(
+            status="unavailable",
+            metric="problem_sentence_kind_and_id",
+            labeled_cases=0,
+            excluded_failed_cases=excluded_failed_cases,
+            true_positives=None,
+            false_positives=None,
+            false_negatives=None,
+            precision=None,
+            recall=None,
+            f1=None,
+            false_flags=None,
+            reason="No evaluation cases include expected_problem_sentences labels.",
+        )
+    per_kind = {
+        kind: _gap_metrics(counter["tp"], counter["fp"], counter["fn"])
+        for kind, counter in counts.items()
+    }
+    true_positives = sum(metric.true_positives for metric in per_kind.values())
+    false_positives = sum(metric.false_positives for metric in per_kind.values())
+    false_negatives = sum(metric.false_negatives for metric in per_kind.values())
+    aggregate = _gap_metrics(true_positives, false_positives, false_negatives)
+    return ProblemSentenceMetrics(
+        status="available",
+        metric="problem_sentence_kind_and_id",
+        labeled_cases=labeled_cases,
+        excluded_failed_cases=excluded_failed_cases,
+        true_positives=true_positives,
+        false_positives=false_positives,
+        false_negatives=false_negatives,
+        precision=aggregate.precision,
+        recall=aggregate.recall,
+        f1=aggregate.f1,
+        false_flags=false_positives,
+        per_kind=per_kind,
     )
 
 
@@ -888,6 +1030,34 @@ def _predicted_gaps(
             if gap_type:
                 gaps.add(gap_type)
     return tuple(sorted(gaps))
+
+
+def _predicted_problem_sentences(
+    report: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    diagnosis = report.get("diagnosis", {})
+    if not isinstance(diagnosis, Mapping):
+        return ()
+    problems = diagnosis.get("problem_sentences", ())
+    if not isinstance(problems, Sequence) or isinstance(problems, (str, bytes)):
+        return ()
+    pairs: set[tuple[str, str]] = set()
+    for item in problems:
+        if not isinstance(item, Mapping):
+            continue
+        kind = item.get("kind")
+        sentence_id = item.get("sentence_id")
+        sentence = item.get("sentence")
+        if sentence_id is None and isinstance(sentence, Mapping):
+            sentence_id = sentence.get("id")
+        if (
+            isinstance(kind, str)
+            and kind.strip()
+            and isinstance(sentence_id, str)
+            and sentence_id.strip()
+        ):
+            pairs.add((kind.strip().lower(), sentence_id.strip()))
+    return tuple(sorted(pairs))
 
 
 def _mapping_gap_type(value: Mapping[str, Any]) -> str | None:
@@ -1118,6 +1288,23 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             cost_by_role=item.get("cost_by_role", {}),
             latency_ms=item.get("latency_ms"),
             error=item.get("error"),
+            expected_problem_sentences=tuple(
+                (str(label["kind"]), str(label["sentence_id"]))
+                for label in item.get("expected_problem_sentences", [])
+                if isinstance(label, Mapping)
+                and label.get("kind") is not None
+                and label.get("sentence_id") is not None
+            ),
+            problem_sentence_labels_present=bool(
+                item.get("problem_sentence_labels_present", False)
+            ),
+            predicted_problem_sentences=tuple(
+                (str(label["kind"]), str(label["sentence_id"]))
+                for label in item.get("predicted_problem_sentences", [])
+                if isinstance(label, Mapping)
+                and label.get("kind") is not None
+                and label.get("sentence_id") is not None
+            ),
         )
         for item in value.get("cases", [])
         if isinstance(item, Mapping)
@@ -1158,6 +1345,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             excluded_failed_cases=int(diagnosis_data.get("excluded_failed_cases", 0)),
             micro=micro,
             per_gap=gap_metrics,
+            problem_sentences=_problem_sentence_metrics(cases),
         ),
         improvement=ImprovementSummary(
             comparable_cases=int(improvement_data.get("comparable_cases", 0)),
