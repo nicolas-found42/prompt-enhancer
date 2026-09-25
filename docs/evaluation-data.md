@@ -115,6 +115,35 @@ calibration groups, and evaluation groups are held for metrics/verdicts. The
 CLI bounds inputs by default to 100 source examples, 3 repeats per
 question/example/arm (`--runs`), and 5,000 question evaluations; override with
 `--max-source-examples`, `--runs`, and `--max-question-evaluations` as needed.
+For offline records, `--runs` limits the repeats already present; it never
+duplicates one answer to manufacture stability evidence.
+
+To capture live evidence, supply one unanswered primary event per
+question/example with its complete identity, label provenance, and non-empty
+state. The command makes a fresh Gateway request for every repeat and for each
+matching empty-state control, then writes the raw event manifest for offline
+replay. A live run requires an explicit finite dollar budget and a recording
+path:
+
+```sh
+uv run --env-file .env python -m prompt_enhancer.evaluation calibrate \
+  .local/evaluation/calibration-templates.json --live --runs 3 \
+  --budget 2.00 --request-cost-ceiling 0.01 \
+  --record .local/evaluation/calibration-recording.json \
+  --output .local/evaluation/calibration-live-report.json
+uv run --locked python -m prompt_enhancer.evaluation calibrate \
+  .local/evaluation/calibration-recording.json \
+  --output .local/evaluation/calibration-replayed-report.json
+```
+
+The CLI disables Gateway retries during capture, records zero retries and one
+identity per provider attempt, and reserves `--request-cost-ceiling` USD before
+each request. It stops with a partial report when the next reservation would
+exceed `--budget` or a source/request limit. Because provider charges arrive
+after a request, the ceiling must be conservative; an actual charge above it
+stops capture immediately and is reported as a ceiling overrun. The report
+keeps observed cost and reserved cost separately. Offline replay is
+deterministic; each new live capture has a new request identity.
 
 The default `issue-50-v1` verdict policy is provisional: a gate needs at least
 30 evaluation groups, 5 positive and 5 negative examples, precision at least
@@ -125,7 +154,7 @@ claims of established Jev accuracy. The known-answer fixture is synthetic and
 proves parsing, fitting, reporting, and artifact code paths—not empirical
 accuracy. Any live mode must be explicit and have a finite, positive dollar
 budget (`--budget USD`); calibration rejects `--live` without an explicit
-budget. Keep private prompts, answers, reports, and artifacts under ignored
+budget and `--record`. Keep private prompts, answers, reports, and artifacts under ignored
 `.local/evaluation/`.
 
 ## Local coding-agent sessions

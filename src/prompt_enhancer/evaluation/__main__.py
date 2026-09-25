@@ -10,16 +10,19 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 from typing import Any, TextIO, cast
 
+from ..gateway import GatewayConfig, HttpGateway
 from .calibration import (
     CalibrationBudget,
     CalibrationError,
     CalibrationManifest,
     VerdictPolicy,
     calibrate_manifest,
+    capture_live_manifest,
     load_calibration_manifest,
 )
 from .datasets import DatasetError, load_datasets
@@ -77,14 +80,14 @@ def _run_calibration(
     *,
     out: TextIO,
 ) -> int:
-    if args.record:
-        raise EvaluationError(
-            "--record is not supported for offline calibration events"
-        )
+    if args.record and not args.live:
+        raise EvaluationError("--record requires --live")
     if args.allow_snapshot_mismatch:
         raise EvaluationError("--allow-snapshot-mismatch is not a calibration override")
     if args.live and args.budget is None:
         raise EvaluationError("--calibrate --live requires an explicit finite --budget")
+    if args.live and args.record is None:
+        raise EvaluationError("--calibrate --live requires --record for raw evidence")
     policy = _verdict_policy(args.calibration_policy)
     budget = CalibrationBudget(
         max_source_examples=args.max_source_examples,
@@ -93,6 +96,22 @@ def _run_calibration(
         budget_usd=args.budget,
     )
     manifest = _calibration_manifests(args.datasets)
+    live_report = None
+    if args.live:
+        gateway = HttpGateway(config=replace(GatewayConfig.from_env(), max_retries=0))
+        manifest, live_report = capture_live_manifest(
+            manifest,
+            gateway,
+            budget=budget,
+            runs=args.runs,
+            request_cost_ceiling=args.request_cost_ceiling,
+        )
+        args.record.parent.mkdir(parents=True, exist_ok=True)
+        args.record.write_text(
+            json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
     artifact, report = calibrate_manifest(
         manifest,
         verdict_policy=policy,
@@ -102,6 +121,16 @@ def _run_calibration(
         bootstrap_resamples=args.bootstrap_resamples,
         budget=budget,
     )
+    if live_report is not None:
+        report["live_capture"] = live_report
+        report["budget"]["live_capture"] = live_report
+        artifact = replace(
+            artifact,
+            metadata={**artifact.metadata, "live_capture": live_report},
+        )
+        if live_report["status"] == "partial":
+            report["status"] = "partial"
+            artifact = replace(artifact, status="partial")
     rendered = json.dumps(
         report,
         ensure_ascii=False,
@@ -202,6 +231,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-source-examples", type=int, default=100)
     parser.add_argument("--max-question-evaluations", type=int, default=5000)
     parser.add_argument("--budget", type=float, help="finite live budget in USD")
+    parser.add_argument(
+        "--request-cost-ceiling",
+        type=float,
+        default=0.01,
+        help="reserve this many USD before each live request (default: 0.01)",
+    )
     parser.add_argument("--output", type=Path, help="write JSON here instead of stdout")
     parser.add_argument(
         "--record",

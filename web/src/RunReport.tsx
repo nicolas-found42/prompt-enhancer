@@ -25,7 +25,8 @@ const abstentionReasons: Record<string, string> = {
   calibration_artifact: "The calibration did not support applying a decision",
   calibration_identity_or_snapshot_mismatch:
     "This calibration does not match the current question or model",
-  invalid_calibration_threshold: "The calibrated confidence threshold is invalid",
+  invalid_calibration_threshold:
+    "The calibrated confidence threshold is invalid",
   gate_without_threshold: "No confidence threshold was available",
   calibration_event_probability_unavailable:
     "The answer's confidence could not be checked",
@@ -159,7 +160,9 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
                     humanize(disposition)}
                   {verdict && <>. Verdict: {humanize(verdict)}</>}
                   {reason && (
-                    <>. Reason: {abstentionReasons[reason] ?? humanize(reason)}</>
+                    <>
+                      . Reason: {abstentionReasons[reason] ?? humanize(reason)}
+                    </>
                   )}
                   .
                 </li>

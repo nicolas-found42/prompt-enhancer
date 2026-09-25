@@ -446,6 +446,8 @@ class Diagnoser:
             "reason": decision.reason,
             "threshold": decision.threshold,
             "predicate": dict(decision.predicate),
+            "event_probability": decision.evidence.get("event_probability"),
+            "fit": decision.evidence.get("fit"),
         }
         return decision
 
@@ -577,12 +579,19 @@ class Diagnoser:
                     and abs(response.probability - 0.5) >= rubric.uncertainty_margin
                 )
             if confident_missing:
+                reported_probability = (
+                    policy_decision.evidence.get(
+                        "event_probability", response.probability
+                    )
+                    if policy_decision is not None and policy_decision.may_gate
+                    else response.probability
+                )
                 gaps.append(
                     ConfirmedGap(
                         key=item.key,
                         label=item.label,
                         impact=item.impact,
-                        missing_probability=response.probability,
+                        missing_probability=reported_probability,
                         confidence=response.confidence,
                         threshold=threshold,
                     )

@@ -576,6 +576,10 @@ class PromptOptimizer:
                     "reason": policy_decision.reason,
                     "threshold": policy_decision.threshold,
                     "predicate": dict(policy_decision.predicate),
+                    "event_probability": policy_decision.evidence.get(
+                        "event_probability"
+                    ),
+                    "fit": policy_decision.evidence.get("fit"),
                 }
             missing = (
                 decision.probability
@@ -588,16 +592,25 @@ class PromptOptimizer:
                 threshold = policy_decision.threshold
             else:
                 threshold = item.threshold
-            if (
-                missing >= threshold
-                and decision.confidence >= diagnosis_rubric.confidence_threshold
+            gate_probability = (
+                policy_decision.evidence.get("event_probability", missing)
+                if policy_decision is not None and policy_decision.may_gate
+                else missing
+            )
+            legacy_confident = (
+                decision.confidence >= diagnosis_rubric.confidence_threshold
+            )
+            if gate_probability >= threshold and (
+                policy_decision is not None
+                and not policy_decision.is_legacy
+                or legacy_confident
             ):
                 gaps.append(
                     ConfirmedGap(
                         item.question_id,
                         item.text,
                         default_impacts.get(item.question_id, GapImpact.MEDIUM),
-                        missing,
+                        gate_probability,
                         decision.confidence,
                         threshold,
                     )
