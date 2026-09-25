@@ -345,6 +345,15 @@ input:focus {
   margin: 0;
 }
 
+.history-result-context {
+  background: #17273b;
+  border: 1px solid #2f81f7;
+  border-radius: 8px;
+  color: #c9d1d9;
+  margin: 12px 0 0;
+  padding: 11px 14px;
+}
+
 .progress-prompt {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
