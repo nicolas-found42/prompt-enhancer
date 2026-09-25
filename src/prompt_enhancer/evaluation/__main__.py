@@ -342,6 +342,7 @@ def main(
                 )
                 recording.writer_instruction_version = engine.writer_instruction_version
                 recording.faithfulness_threshold = engine.faithfulness_threshold
+                recording.sentence_diagnosis_version = engine.sentence_diagnosis_version
                 recording.checklist_keys = list(checklist_keys(engine.diagnosis_rubric))
                 recording.checklist_impacts = checklist_impacts(engine.diagnosis_rubric)
                 engine.gateway = recording
