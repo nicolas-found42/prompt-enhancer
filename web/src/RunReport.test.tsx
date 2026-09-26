@@ -11,6 +11,35 @@ const baseResult: OptimizeResult = {
   timing: { total_ms: 0 },
 };
 
+it("shows incomplete bounded diagnosis without claiming the prompt has no gaps", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          diagnosis: {
+            task_type: "general",
+            request_evidence: {
+              complete: false,
+              mode: "bounded_sequential_fallback",
+              provider_requests: 8,
+            },
+          },
+        },
+      }}
+    />
+  );
+
+  expect(screen.getByText(/Diagnosis requests: 8/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/Diagnosis evidence is incomplete/)
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByText("No confirmed missing pieces.")
+  ).not.toBeInTheDocument();
+});
+
 it("explains unresolved weak-grade confirmation and cascade spending", () => {
   render(
     <RunReport

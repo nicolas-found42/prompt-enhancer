@@ -48,6 +48,7 @@ def test_scenario_results_are_unchanged(name: str, tmp_path: Path) -> None:
             gateway=make_gateway(),
             store=RunStore(":memory:"),
             writer_instruction_version=4,
+            speculative_diagnosis=False,
         )
     )
     rendered = json.dumps(

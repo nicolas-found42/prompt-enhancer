@@ -31,6 +31,8 @@ class RecordingGateway:
         self.faithfulness_threshold: float | None = None
         self.sentence_diagnosis_version = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
         self.task_taxonomy_version = TASK_TAXONOMY_PROTOCOL_VERSION
+        self.speculative_diagnosis = True
+        self.observe_sequential_diagnosis = False
         self.decision_policy_artifacts: list[dict[str, Any]] = []
         self.decision_policy_version: str | None = None
         self.pricing_models: list[dict[str, Any]] = []
@@ -73,6 +75,8 @@ class RecordingGateway:
             "rubric_thresholds": self.rubric_thresholds,
             "sentence_diagnosis_version": self.sentence_diagnosis_version,
             "task_taxonomy_version": self.task_taxonomy_version,
+            "speculative_diagnosis": self.speculative_diagnosis,
+            "observe_sequential_diagnosis": self.observe_sequential_diagnosis,
         }
         if self.writer_instruction_version is not None:
             bundle["writer_instruction_version"] = self.writer_instruction_version

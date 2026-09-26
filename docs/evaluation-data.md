@@ -58,6 +58,33 @@ unavailable when outputs or criteria differ; false-positive rate is unavailable
 without independent unsafe-test labels. Synthetic fixtures establish the
 comparison behavior, not live savings or screening accuracy.
 
+## Speculative diagnosis comparison
+
+Current runs record `diagnosis.request_evidence`: completeness, actual Jev
+transport attempts (including HTTP retries), the dispatch mode, fallback
+reason, and per-request timing provenance. The active rubric's questions join
+the speculative batch. Existing replay bundles without a dispatch field keep
+their sequential request protocol. A sequential baseline can opt into request
+observation with `observe_sequential_diagnosis=True` when constructing
+`PromptOptimizer`; the evaluation CLI's `--diagnosis-dispatch sequential`
+selects that measured baseline for an explicit live collection.
+
+Given two harness JSON reports over the same case IDs, compare them with:
+
+```sh
+uv run --locked python -m prompt_enhancer.evaluation.diagnosis_fanout \
+  .local/evaluation/diagnosis-sequential.json \
+  .local/evaluation/diagnosis-speculative.json \
+  --output .local/evaluation/diagnosis-comparison.json
+```
+
+The comparison reports deterministic task/gap/sentence parity, provider-call
+counts, fallback frequency, and the existing labeled gap precision and recall.
+It reports diagnosis p50/p95 only for measured provider timings; scripted and
+replay execution timings are identified as unavailable for latency claims.
+Matched scripted answers establish implementation parity, while different live
+Jev answers may reflect inference noise rather than the request schedule.
+
 ## Sentence-level diagnosis metrics
 
 The evaluation report also compares confirmed sentence problems with optional
