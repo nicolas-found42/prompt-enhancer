@@ -100,6 +100,20 @@ STRATEGY_RECHECK_QUESTION = (
     "without inventing requirements?"
 )
 
+RESTRUCTURE_ROLE_QUESTION = (
+    "Which role best describes state.target_unit_id in the user's complete prompt? "
+    "Choose only from the listed roles. Do not rewrite the source unit."
+)
+RESTRUCTURE_ROLE_DESCRIPTIONS = {
+    "context": "Background, facts, audience, or setting that frames the request.",
+    "task": "The action or deliverable the user asks for.",
+    "constraint": "A requirement, prohibition, boundary, or success criterion.",
+    "output_format": "The requested shape, structure, or ordering of the response.",
+    "example": "An example, sample, or pattern supplied to guide the response.",
+    "other": "Original content that does not clearly fit another role.",
+    "unknown": "The role cannot be determined from the available context.",
+}
+
 ASSUMPTION_MEANING_QUESTION = (
     "Does the updated prompt preserve the user's original meaning without "
     "contradictory instructions?"

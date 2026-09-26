@@ -12,6 +12,7 @@ from . import jev_questions
 from .diagnosis import split_sentences
 from .gateway import Gateway, ProviderError
 from .jev import ChoiceDecision, JevResponseError, NoulDecision, parse_decision
+from .lossless_restructuring import verify_lossless_proof
 
 FIDELITY_THRESHOLD = 0.8
 DECISION_BATCH_LIMIT = 40
@@ -317,6 +318,7 @@ def check_candidate_fidelity(
     judge_model: str,
     assumptions: Sequence[Any] = (),
     support_prompt: str | None = None,
+    preservation_proof: Mapping[str, Any] | None = None,
 ) -> FidelityResult:
     """Check deterministic edit confinement, then semantic support and meaning.
 
@@ -328,13 +330,47 @@ def check_candidate_fidelity(
     script = sentence_edit_script(original_prompt, candidate_prompt)
     edits = script["edits"]
     strategy_value = _strategy_metadata(strategy)
-    confinement = _confinement(
-        original_prompt,
-        diagnosis,
-        strategy_value,
-        edits,
-        script["correspondence_errors"],
-    )
+    is_lossless = strategy_value.get("name") == "restructure_lossless"
+    confinement: dict[str, Any]
+    if is_lossless:
+        proof_check = verify_lossless_proof(
+            original_prompt, candidate_prompt, preservation_proof
+        )
+        proof_passed = proof_check.passed and strategy_value.get("restructures") is True
+        confinement = {
+            "passed": proof_passed,
+            "restructuring_authorized": strategy_value.get("restructures") is True,
+            "source_preservation": {
+                "status": "passed" if proof_passed else "failed",
+                "proof_kind": preservation_proof.get("kind")
+                if isinstance(preservation_proof, Mapping)
+                else None,
+                "reasons": list(proof_check.reasons),
+            },
+            "failures": []
+            if proof_passed
+            else [
+                {
+                    "reason": reason,
+                    "sentence": "the restructured candidate",
+                    "source_sentence_ids": [],
+                    "source_gap": None,
+                }
+                for reason in (
+                    proof_check.reasons
+                    if proof_check.reasons
+                    else ("lossless strategy was not authorized",)
+                )
+            ],
+        }
+    else:
+        confinement = _confinement(
+            original_prompt,
+            diagnosis,
+            strategy_value,
+            edits,
+            script["correspondence_errors"],
+        )
     confirmed_assumptions = _confirmed_answers(assumptions)
     evidence: dict[str, Any] = {
         "edit_script": edits,
@@ -345,12 +381,14 @@ def check_candidate_fidelity(
         "meaning_preservation": None,
         "reasons": [],
     }
+    if is_lossless:
+        evidence["source_preservation"] = confinement["source_preservation"]
 
     if not confinement["passed"]:
         evidence["reasons"] = _confinement_reasons(confinement["failures"])
         return FidelityResult(False, False, False, evidence)
 
-    if not edits:
+    if not edits and not is_lossless:
         evidence["meaning_preservation"] = {"required": False, "accepted": True}
         return FidelityResult(True, True, True, evidence)
 
@@ -368,7 +406,7 @@ def check_candidate_fidelity(
     }
     requests: list[dict[str, Any]] = []
     support_edit_by_key: dict[str, Mapping[str, Any]] = {}
-    for edit in edits:
+    for edit in () if is_lossless else edits:
         for sentence in edit.get("candidate_sentences", ()):
             change_id = str(edit["change_id"])
             sentence_id = str(sentence["id"])

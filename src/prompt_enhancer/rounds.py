@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import difflib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from . import jev_questions
@@ -24,13 +24,18 @@ from .fidelity import check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
 from .jev import ChoiceDecision, NoulDecision, parse_decision
+from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import Tier, utc_now
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
 from .selector import RankingCandidate, RankingResult, rank_candidates
 from .strategies import (
+    CURRENT_STRATEGY_LIBRARY,
     STRATEGY_LIBRARY,
+    CandidateBatchRequest,
+    CandidateDraft,
     RewriteStrategy,
+    StrategyRejection,
     StrategySearchResult,
     search_strategies,
 )
@@ -188,6 +193,7 @@ class RoundOutcome:
     candidates: tuple[dict[str, Any], ...] = ()
     failures: tuple[CandidateFailure, ...] = ()
     """The candidates that lost this round; the next round is told why."""
+    lossless_restructuring: Mapping[str, Any] | None = None
 
     @property
     def continue_rounds(self) -> bool:
@@ -216,7 +222,7 @@ class RoundOutcome:
         if self.ranking is None:
             # Without a confirmed gap no strategy can run, so a Deep pass would
             # only repeat the diagnosis; it is not offered.
-            return {
+            report = {
                 "status": self.status,
                 "models": models,
                 "summary": self.summary,
@@ -231,6 +237,11 @@ class RoundOutcome:
                 and bool(plan.diagnosis.get("confirmed_gaps")),
                 "history": [],
             }
+            if self.strategies is not None and self.lossless_restructuring is not None:
+                report["strategies"] = self.strategies.to_dict()
+            if self.lossless_restructuring is not None:
+                report["lossless_restructuring"] = dict(self.lossless_restructuring)
+            return report
         assert (
             self.panel is not None
             and self.strong_check is not None
@@ -254,6 +265,11 @@ class RoundOutcome:
             "selection_evidence": self.ranking.to_dict(),
             "strong_check": self.strong_check.to_dict(),
             "strategies": self.strategies.to_dict(),
+            **(
+                {"lossless_restructuring": dict(self.lossless_restructuring)}
+                if self.lossless_restructuring is not None
+                else {}
+            ),
             "offer_deep": plan.tier != "deep" and self.original_kept,
             "history": [],
         }
@@ -355,6 +371,11 @@ def run_round(
         return ended("no_change" if no_gaps and tests else "unverified", summary, tests)
 
     stage("choosing_strategy")
+    strategy_library = (
+        CURRENT_STRATEGY_LIBRARY
+        if plan.writer_instruction_version >= 4
+        else STRATEGY_LIBRARY
+    )
     strategy_choice = gateway.decide(
         {
             "model": settings.judge_model,
@@ -362,7 +383,7 @@ def run_round(
             "type": "choice",
             "query": jev_questions.STRATEGY_CHOICE_QUESTION,
             "criteria": {
-                **{item.name: item.description for item in STRATEGY_LIBRARY},
+                **{item.name: item.description for item in strategy_library},
                 "none": jev_questions.STRATEGY_NONE_DESCRIPTION,
             },
             "state": {
@@ -404,22 +425,85 @@ def run_round(
         }
 
     stage("writing_candidates")
+    candidate_writer = CandidateWriter(
+        gateway,
+        writer_model=settings.writer_model,
+        instruction_version=plan.writer_instruction_version,
+    )
+    lossless_build: LosslessBuild | None = None
+
+    def write_selected(request: CandidateBatchRequest) -> Mapping[str, str]:
+        nonlocal lossless_build
+        ordinary = tuple(
+            item for item in request.strategies if item.name != "restructure_lossless"
+        )
+        generated: dict[str, str] = {}
+        if ordinary:
+            generated.update(
+                candidate_writer.generate_candidates(
+                    replace(request, strategies=ordinary)
+                )
+            )
+        if any(item.name == "restructure_lossless" for item in request.strategies):
+            lossless_build = build_lossless_candidate(
+                working_prompt,
+                gateway,
+                judge_model=settings.judge_model,
+                run_id=plan.run_id,
+            )
+            generated["restructure_lossless"] = lossless_build.text or working_prompt
+        return generated
+
     search = search_strategies(
         working_prompt,
         model_view,
         plan.tier,
-        writer=CandidateWriter(
-            gateway,
-            writer_model=settings.writer_model,
-            instruction_version=plan.writer_instruction_version,
-        ),
+        strategies=strategy_library,
+        writer=write_selected,
         previous_failures=plan.prior_failures,
         recheck=recheck_strategy,
         priority_strategy=preferred_strategy,
     )
+    if lossless_build is not None:
+        kept: list[CandidateDraft] = []
+        rejections = list(search.rejections)
+        for candidate in search.candidates:
+            if candidate.strategy.name != "restructure_lossless":
+                kept.append(candidate)
+            elif lossless_build.text is None:
+                rejections.append(
+                    StrategyRejection(
+                        candidate.strategy.name,
+                        lossless_build.decline_reason or "lossless proof unavailable",
+                        int(candidate.metadata.get("rank_score", 0)),
+                    )
+                )
+            else:
+                kept.append(
+                    replace(
+                        candidate,
+                        metadata={
+                            **candidate.metadata,
+                            "lossless_restructuring": dict(lossless_build.evidence),
+                            "lossless_proof": dict(lossless_build.proof or {}),
+                        },
+                    )
+                )
+        search = replace(
+            search,
+            candidates=tuple(kept),
+            selected_strategies=tuple(item.strategy for item in kept),
+            rejections=tuple(rejections),
+        )
     candidates = list(search.candidates)
     if not candidates:
-        return ended("no_change", "No candidate strategy was selected.", tests)
+        return replace(
+            ended("no_change", "No candidate strategy was selected.", tests),
+            strategies=search,
+            lossless_restructuring=lossless_build.evidence
+            if lossless_build is not None
+            else None,
+        )
 
     stage("running_weak_models")
     panel = run_candidates(
@@ -460,12 +544,24 @@ def run_round(
                     judge_model=settings.judge_model,
                     assumptions=plan.assumptions,
                     support_prompt=plan.prompt,
+                    preservation_proof=candidate.metadata.get("lossless_proof"),
                 )
             ).passed,
             rejection_reasons=()
             if fidelity.passed
             else ("candidate failed fidelity checks", *fidelity.rejection_reasons),
-            metadata={"fidelity": fidelity.to_dict()},
+            metadata={
+                "fidelity": fidelity.to_dict(),
+                **(
+                    {
+                        "lossless_restructuring": candidate.metadata[
+                            "lossless_restructuring"
+                        ]
+                    }
+                    if "lossless_restructuring" in candidate.metadata
+                    else {}
+                ),
+            },
         )
         for candidate in candidates
     ]
@@ -508,6 +604,17 @@ def run_round(
         strong_check=strong,
         grading_answers=tuple(grading_answers),
         candidates=tuple(item.to_dict() for item in ranking.ranked),
+        lossless_restructuring={
+            **lossless_build.evidence,
+            "selection_outcome": (
+                "selected"
+                if ranking.selected is not None
+                and ranking.selected.strategy == "restructure_lossless"
+                else "not_selected"
+            ),
+        }
+        if lossless_build is not None
+        else None,
         failures=tuple(
             CandidateFailure(
                 candidate_id=item.candidate.candidate_id,

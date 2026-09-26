@@ -219,6 +219,24 @@ class ImprovementSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class RestructuringSummary:
+    status: str
+    total_cases: int
+    selected_for_generation: int
+    built_candidates: int
+    wins: int
+    selection_rate: float | None
+    win_rate: float | None
+    strong_checked: int
+    strong_regressions: int
+    strong_rejection_rate: float | None
+    evidence_kind: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class CostSummary:
     currency: str
     total: float
@@ -278,6 +296,8 @@ class CaseEvaluation:
     task_taxonomy_provider_requests: int | None = None
     task_taxonomy_provider_request_delta_vs_legacy: int | None = None
     task_taxonomy_latency_ms: float | None = None
+    lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
+    lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -313,6 +333,8 @@ class CaseEvaluation:
             "task_taxonomy_provider_requests": self.task_taxonomy_provider_requests,
             "task_taxonomy_provider_request_delta_vs_legacy": self.task_taxonomy_provider_request_delta_vs_legacy,
             "task_taxonomy_latency_ms": self.task_taxonomy_latency_ms,
+            "lossless_restructuring": dict(self.lossless_restructuring),
+            "lossless_strong_check": dict(self.lossless_strong_check),
         }
 
 
@@ -326,6 +348,7 @@ class HarnessReport:
     cases: tuple[CaseEvaluation, ...]
     diagnosis: DiagnosisSummary
     improvement: ImprovementSummary
+    restructuring: RestructuringSummary
     cost: CostSummary
     latency_ms: LatencySummary
 
@@ -339,6 +362,7 @@ class HarnessReport:
             "cases": [case.to_dict() for case in self.cases],
             "diagnosis": self.diagnosis.to_dict(),
             "improvement": self.improvement.to_dict(),
+            "restructuring": self.restructuring.to_dict(),
             "cost": self.cost.to_dict(),
             "latency_ms": self.latency_ms.to_dict(),
         }
@@ -386,6 +410,8 @@ class _CaseObservation:
     task_taxonomy_provider_requests: int | None = None
     task_taxonomy_provider_request_delta_vs_legacy: int | None = None
     task_taxonomy_latency_ms: float | None = None
+    lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
+    lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
     labels_present: bool = False
     predicted_gaps: tuple[str, ...] = ()
     expected_problem_sentences: tuple[tuple[str, str], ...] = ()
@@ -441,6 +467,8 @@ class _CaseObservation:
             task_taxonomy_provider_requests=self.task_taxonomy_provider_requests,
             task_taxonomy_provider_request_delta_vs_legacy=self.task_taxonomy_provider_request_delta_vs_legacy,
             task_taxonomy_latency_ms=self.task_taxonomy_latency_ms,
+            lossless_restructuring=dict(self.lossless_restructuring),
+            lossless_strong_check=dict(self.lossless_strong_check),
         )
 
 
@@ -554,6 +582,19 @@ class EvaluationHarness:
                 result = _as_mapping(engine.resume(run_id, dict(answers)))
                 resumed = True
             report = _as_mapping(result.get("report", {}))
+            restructuring = report.get("lossless_restructuring")
+            if isinstance(restructuring, Mapping):
+                observation.lossless_restructuring = dict(restructuring)
+            strong = _as_mapping(report.get("strong_check", {}))
+            strong_candidates = strong.get("candidates")
+            if isinstance(strong_candidates, list):
+                for candidate in strong_candidates:
+                    if (
+                        isinstance(candidate, Mapping)
+                        and candidate.get("strategy") == "restructure_lossless"
+                    ):
+                        observation.lossless_strong_check = dict(candidate)
+                        break
             observation.predicted_gaps = _predicted_gaps(result, report)
             observation.predicted_problem_sentences = _predicted_problem_sentences(
                 report
@@ -864,6 +905,7 @@ def _build_report(
     cases = tuple(observation.finish() for observation in observations)
     diagnosis = _diagnosis_summary(cases)
     improvement = _improvement_summary(cases)
+    restructuring = _restructuring_summary(cases)
     cost = _cost_summary(cases)
     latency = _latency_summary(cases, replayed=replay is not None)
     dataset_input = dataset.to_dict()
@@ -892,8 +934,39 @@ def _build_report(
         cases=cases,
         diagnosis=diagnosis,
         improvement=improvement,
+        restructuring=restructuring,
         cost=cost,
         latency_ms=latency,
+    )
+
+
+def _restructuring_summary(cases: Sequence[CaseEvaluation]) -> RestructuringSummary:
+    usable = [case for case in cases if case.status not in {"failed", "error"}]
+    selected = sum(bool(case.lossless_restructuring) for case in usable)
+    built = sum(
+        case.lossless_restructuring.get("outcome") == "candidate_built"
+        for case in usable
+    )
+    wins = sum(
+        case.lossless_restructuring.get("selection_outcome") == "selected"
+        for case in usable
+    )
+    checked = sum(bool(case.lossless_strong_check) for case in usable)
+    regressions = sum(
+        case.lossless_strong_check.get("regression") is True for case in usable
+    )
+    return RestructuringSummary(
+        status="available" if selected else "unavailable",
+        total_cases=len(usable),
+        selected_for_generation=selected,
+        built_candidates=built,
+        wins=wins,
+        selection_rate=selected / len(usable) if usable else None,
+        win_rate=wins / built if built else None,
+        strong_checked=checked,
+        strong_regressions=regressions,
+        strong_rejection_rate=regressions / checked if checked else None,
+        evidence_kind="observed_run_outcomes" if selected else "unavailable",
     )
 
 
@@ -1546,6 +1619,8 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
                 "task_taxonomy_provider_request_delta_vs_legacy"
             ),
             task_taxonomy_latency_ms=item.get("task_taxonomy_latency_ms"),
+            lossless_restructuring=item.get("lossless_restructuring", {}),
+            lossless_strong_check=item.get("lossless_strong_check", {}),
         )
         for item in value.get("cases", [])
         if isinstance(item, Mapping)
@@ -1604,6 +1679,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
                 improvement_data.get("mean_regression_magnitude", 0.0)
             ),
         ),
+        restructuring=_restructuring_summary(cases),
         cost=CostSummary(
             currency=str(cost_data.get("currency", "USD")),
             total=float(cost_data.get("total", 0.0)),
@@ -1635,6 +1711,7 @@ __all__ = [
     "HarnessOptions",
     "HarnessReport",
     "ImprovementSummary",
+    "RestructuringSummary",
     "LatencySummary",
     "compare_reports",
     "default_engine_factory",
