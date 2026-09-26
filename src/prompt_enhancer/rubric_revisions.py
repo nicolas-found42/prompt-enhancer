@@ -1,9 +1,8 @@
-"""Offline, auditable rubric revision workflow.
+"""Auditable rubric revision workflows.
 
-The runtime does not call this module implicitly.  A maintainer creates a
-:class:`RubricRevisionService`, proposes revisions from measured errors, waits
-for the injected evaluator to produce replay-backed evidence, and explicitly
-adopts or rejects each proposal.
+The runtime does not start revisions implicitly. NEW, REVISED, and DROPPED
+proposals retain manual decisions. The explicit REWORD path uses sealed
+validation and an automatic, recorded adoption policy.
 """
 
 from __future__ import annotations
@@ -11,14 +10,14 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, is_dataclass, replace
+from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from datetime import UTC
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .catalog import DEFAULT_GO_WRITER
+from .catalog import DEFAULT_GO_WRITER, JEV_MODEL
 from .gateway import Gateway, completion_text, writer_messages
 
 
@@ -26,6 +25,7 @@ class RevisionKind(StrEnum):
     NEW = "new"
     REVISED = "revised"
     DROPPED = "dropped"
+    REWORD = "reword"
 
 
 class RecommendedDecision(StrEnum):
@@ -53,6 +53,10 @@ class RubricQuestion:
     response_type: str = "noul"
     threshold: float = 0.5
     missing_when: str = "no"
+    question_version: int = 1
+    calibration_snapshot: str | None = None
+    calibration_policy_version: str | None = None
+    calibration_artifact: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.question_id.strip():
@@ -65,6 +69,46 @@ class RubricQuestion:
             raise ValueError("threshold must be between 0 and 1")
         if self.missing_when not in {"yes", "no"}:
             raise ValueError("missing_when must be yes or no")
+        if self.question_version < 1:
+            raise ValueError("question_version must be positive")
+        if (self.calibration_snapshot is None) != (
+            self.calibration_policy_version is None
+        ):
+            raise ValueError(
+                "calibration snapshot and policy version must appear together"
+            )
+        if (
+            self.calibration_snapshot is not None
+            and self.calibration_snapshot != JEV_MODEL
+        ):
+            raise ValueError(
+                "rubric calibration snapshot differs from the pinned Jev model"
+            )
+        if self.calibration_artifact is not None:
+            questions = self.calibration_artifact.get("questions")
+            result = (
+                questions.get(f"rubric:{self.question_id}")
+                if isinstance(questions, Mapping)
+                else None
+            )
+            identity = result.get("identity") if isinstance(result, Mapping) else None
+            if (
+                not isinstance(result, Mapping)
+                or not isinstance(identity, Mapping)
+                or result.get("verdict") not in {"gate", "gate-above-confidence"}
+                or result.get("threshold") != self.threshold
+                or identity.get("question") != self.text
+                or identity.get("primitive") != self.response_type
+                or identity.get("event_mapping")
+                != {
+                    "polarity": "positive" if self.missing_when == "yes" else "negative"
+                }
+                or identity.get("answering_snapshot") != self.calibration_snapshot
+                or identity.get("policy_version") != self.calibration_policy_version
+            ):
+                raise ValueError(
+                    "rubric calibration artifact does not match its question"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +127,15 @@ class RubricVersion:
         ids = [question.question_id for question in self.questions]
         if len(ids) != len(set(ids)):
             raise ValueError("rubric question IDs must be unique")
+        for question in self.questions:
+            artifact = question.calibration_artifact
+            if artifact is None:
+                continue
+            entry = artifact["questions"][f"rubric:{question.question_id}"]
+            if entry["identity"].get("rubric_version") != self.version_id:
+                raise ValueError(
+                    "calibration artifact targets a different rubric version"
+                )
         object.__setattr__(
             self,
             "questions",
@@ -115,7 +168,7 @@ class RubricVersion:
                 raise StaleProposalError("a new question must have a new question ID")
             questions[change.after.question_id] = change.after
             disabled_defaults.discard(change.after.question_id)
-        elif change.kind is RevisionKind.REVISED:
+        elif change.kind in {RevisionKind.REVISED, RevisionKind.REWORD}:
             if (
                 change.after is None
                 or questions.get(change.question_id) != change.before
@@ -167,7 +220,7 @@ class RubricQuestionChange:
                 or self.after.question_id != self.question_id
             ):
                 raise ValueError("a new question needs only its proposed definition")
-        elif self.kind is RevisionKind.REVISED:
+        elif self.kind in {RevisionKind.REVISED, RevisionKind.REWORD}:
             if (
                 self.before is None
                 or self.after is None
@@ -178,6 +231,12 @@ class RubricQuestionChange:
                 raise ValueError(
                     "a revised question needs two different definitions with the same ID"
                 )
+            if self.kind is RevisionKind.REWORD and (
+                self.before.response_type != self.after.response_type
+                or self.before.missing_when != self.after.missing_when
+                or self.before.text == self.after.text
+            ):
+                raise ValueError("rewording must preserve the question's judgment")
         elif (
             self.before is None
             or self.after is not None
@@ -621,6 +680,8 @@ class RevisionDecision:
     proposal: RevisionProposal
     resulting_rubric: RubricVersion
     decided_at: str
+    actor_type: str = "human"
+    automatic_evidence: Mapping[str, Any] = field(default_factory=dict)
 
 
 class StaleProposalError(ValueError):
@@ -753,6 +814,8 @@ def _decision_from_dict(value: Mapping[str, Any]) -> RevisionDecision:
         proposal=_proposal_from_dict(value["proposal"]),
         resulting_rubric=_rubric_from_dict(value["resulting_rubric"]),
         decided_at=value["decided_at"],
+        actor_type=value.get("actor_type", "human"),
+        automatic_evidence=value.get("automatic_evidence", {}),
     )
 
 
@@ -830,6 +893,23 @@ class SQLiteRubricStore:
                 CREATE TABLE IF NOT EXISTS maintainer_decisions (
                     decision_id TEXT PRIMARY KEY,
                     proposal_id TEXT NOT NULL UNIQUE REFERENCES revision_proposals(proposal_id),
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reword_holdouts (
+                    digest TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reword_attempts (
+                    attempt_id TEXT PRIMARY KEY,
+                    holdout_digest TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS reword_evaluations (
+                    input_digest TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS automatic_reword_decisions (
+                    decision_id TEXT PRIMARY KEY,
                     payload TEXT NOT NULL
                 );
                 """
@@ -936,6 +1016,16 @@ class SQLiteRubricStore:
                     or adopted_rubric.version_id != decision.resulting_rubric.version_id
                 ):
                     raise ValueError("adoption requires its resulting rubric")
+                active = connection.execute(
+                    "SELECT version_id FROM active_rubric WHERE singleton = 1"
+                ).fetchone()
+                if (
+                    active is None
+                    or active[0] != decision.proposal.base_rubric_version_id
+                ):
+                    raise StaleProposalError(
+                        "the active rubric changed after evaluation"
+                    )
                 connection.execute(
                     "INSERT INTO rubric_versions VALUES (?, ?, ?)",
                     (
@@ -955,12 +1045,134 @@ class SQLiteRubricStore:
                 (decision.decision_id, decision.proposal_id, _json_dump(decision)),
             )
 
+    def get_reword_attempt(self, attempt_id: str) -> Mapping[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM reword_attempts WHERE attempt_id = ?",
+                (attempt_id,),
+            ).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
+    def get_reword_evaluation(self, input_digest: str) -> Mapping[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM reword_evaluations WHERE input_digest = ?",
+                (input_digest,),
+            ).fetchone()
+        return json.loads(row[0]) if row is not None else None
+
+    def cache_reword_evaluation(
+        self, input_digest: str, payload: Mapping[str, Any]
+    ) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR IGNORE INTO reword_evaluations VALUES (?, ?)",
+                (input_digest, _json_dump(payload)),
+            )
+
+    def holdout_consumed(self, digest: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT 1 FROM reword_holdouts WHERE digest = ?", (digest,)
+            ).fetchone()
+        return row is not None
+
+    def record_reword_attempt(
+        self,
+        attempt_id: str,
+        holdout_digest: str,
+        payload: Mapping[str, Any],
+        *,
+        adopted_rubric: RubricVersion | None = None,
+        automated_decision: RevisionDecision | None = None,
+        consume_holdout: bool = True,
+    ) -> None:
+        """Consume a sealed holdout once and compare-and-swap any adopted rubric."""
+        with self._connect() as connection:
+            if (adopted_rubric is None) != (automated_decision is None):
+                raise ValueError("automated adoption requires its decision record")
+            if consume_holdout:
+                connection.execute(
+                    "INSERT INTO reword_holdouts VALUES (?, ?)",
+                    (holdout_digest, _json_dump(payload)),
+                )
+            if adopted_rubric is not None:
+                active = connection.execute(
+                    "SELECT version_id FROM active_rubric WHERE singleton = 1"
+                ).fetchone()
+                if active is None or active[0] != adopted_rubric.parent_version_id:
+                    raise StaleProposalError(
+                        "the active rubric changed after evaluation"
+                    )
+                connection.execute(
+                    "INSERT INTO rubric_versions VALUES (?, ?, ?)",
+                    (
+                        adopted_rubric.version_id,
+                        adopted_rubric.parent_version_id,
+                        _json_dump(adopted_rubric),
+                    ),
+                )
+                connection.execute(
+                    "UPDATE active_rubric SET version_id = ? WHERE singleton = 1 AND version_id = ?",
+                    (adopted_rubric.version_id, adopted_rubric.parent_version_id),
+                )
+                assert automated_decision is not None
+                connection.execute(
+                    "INSERT INTO automatic_reword_decisions VALUES (?, ?)",
+                    (automated_decision.decision_id, _json_dump(automated_decision)),
+                )
+            connection.execute(
+                "INSERT INTO reword_attempts VALUES (?, ?, ?)",
+                (attempt_id, holdout_digest, _json_dump(payload)),
+            )
+
+    def rollback_reword(self, version_id: str) -> RubricVersion:
+        """Restore the immediate parent of the active automated version."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM rubric_versions WHERE version_id = ?",
+                (version_id,),
+            ).fetchone()
+            active = connection.execute(
+                "SELECT version_id FROM active_rubric WHERE singleton = 1"
+            ).fetchone()
+            if row is None or active is None or active[0] != version_id:
+                raise StaleProposalError("only the active version can be rolled back")
+            automated = connection.execute(
+                "SELECT 1 FROM reword_attempts WHERE json_extract(payload, '$.adopted_version_id') = ? AND json_extract(payload, '$.status') = 'adopted'",
+                (version_id,),
+            ).fetchone()
+            if automated is None:
+                raise StaleProposalError(
+                    "only an automated rewording can be rolled back"
+                )
+            current = _rubric_from_dict(json.loads(row[0]))
+            if current.parent_version_id is None:
+                raise StaleProposalError("the active rubric has no parent")
+            parent = self.get_rubric(current.parent_version_id)
+            connection.execute(
+                "UPDATE active_rubric SET version_id = ? WHERE singleton = 1 AND version_id = ?",
+                (parent.version_id, version_id),
+            )
+        return parent
+
     def list_decisions(self) -> tuple[RevisionDecision, ...]:
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM maintainer_decisions ORDER BY decision_id"
             ).fetchall()
-        return tuple(_decision_from_dict(json.loads(row[0])) for row in rows)
+            automated = connection.execute(
+                "SELECT payload FROM automatic_reword_decisions ORDER BY decision_id"
+            ).fetchall()
+        return tuple(
+            sorted(
+                (
+                    _decision_from_dict(json.loads(row[0]))
+                    for row in (*rows, *automated)
+                ),
+                key=lambda decision: decision.decision_id,
+            )
+        )
 
 
 class RubricRevisionService:
@@ -995,6 +1207,29 @@ class RubricRevisionService:
         """Runtime integration seam passed to the diagnoser factory."""
 
         return self.store.active_rubric()
+
+    def reword(
+        self,
+        gateway: Gateway,
+        question_id: str,
+        dataset: Mapping[str, Any],
+        *,
+        attempt_id: str,
+        policy: Any | None = None,
+        decision_policy: Any | None = None,
+    ) -> Mapping[str, Any]:
+        """Run one noninteractive, bounded REWORD attempt on an active question."""
+        from .reword_optimization import optimize_reword
+
+        return optimize_reword(
+            self.store,
+            gateway,
+            question_id,
+            dataset,
+            attempt_id=attempt_id,
+            policy=policy,
+            decision_policy=decision_policy,
+        )
 
     def propose(
         self,
