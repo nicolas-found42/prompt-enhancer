@@ -70,6 +70,292 @@ def test_clear_prompt_is_returned_unchanged_and_persisted() -> None:
     assert record["timing"] == result["timing"]
 
 
+def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
+    prompt = "Summarize the report in English."
+    candidate = f"{prompt} Respond in French."
+    store = RunStore(":memory:")
+    requests = []
+
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            state = json.loads(messages[1]["content"])
+            if "strategies" in state:
+                return json.dumps(
+                    {
+                        item["name"]: (
+                            candidate
+                            if item["name"] == "specify_output_format"
+                            else "Translate the report into English."
+                        )
+                        for item in state["strategies"]
+                    }
+                )
+            if "gaps" in state:
+                return '{"gaps":{}}'
+            return (
+                '{"tests":[{"question":"Does the answer summarize the report?",'
+                '"kind":"noul","expected":"yes"}]}'
+            )
+        output = (
+            "pass" if role != "weak" or messages[0]["content"] != prompt else "fail"
+        )
+        return {"choices": [{"message": {"content": output}}]}
+
+    def decide(request, **_kwargs):
+        requests.append(request)
+        key = str(request.get("key", ""))
+        if request.get("type") == "choice":
+            if key == "strategy_choice":
+                selected = "specify_output_format"
+            elif key.startswith("fidelity:sentence:"):
+                selected = "new_requirement"
+                return {
+                    "type": "choice",
+                    "choice": selected,
+                    "probabilities": {
+                        "supported_by_original": 0.01,
+                        "supported_by_assumption": 0.0,
+                        "new_requirement": 0.99,
+                        "unknown": 0.0,
+                    },
+                    "confidence": 0.99,
+                }
+            else:
+                selected = "none"
+            return {
+                "type": "choice",
+                "choice": selected,
+                "probabilities": {selected: 1.0},
+                "confidence": 1.0,
+            }
+        if key.startswith("faithful:"):
+            probability = 0.99
+        elif key == "gap:output_format":
+            probability = 0.99
+        elif key.startswith("strategy_recheck:"):
+            probability = float(
+                key.endswith("specify_output_format")
+                or key.endswith("add_done_criteria")
+            )
+        elif key.startswith("grade_"):
+            probability = float(request["state"]["output"] == "pass")
+        elif key == "fidelity:meaning":
+            probability = 0.99
+        else:
+            probability = 0.01
+        return {
+            "type": "noul",
+            "probability_true": probability,
+            "confidence": 1.0,
+        }
+
+    class BatchRecordingGateway(ScriptedGateway):
+        def __init__(self):
+            super().__init__(chat=chat, decision=decide)
+            self.batches = []
+
+        def decide_batch(self, questions, **kwargs):
+            self.batches.append(list(questions))
+            return super().decide_batch(questions, **kwargs)
+
+    gateway = BatchRecordingGateway()
+    rubric = DiagnosisRubric(
+        task_types=(
+            TaskType(
+                "general",
+                "General",
+                (ChecklistItem("output_format", "output format", GapImpact.LOW),),
+            ),
+        )
+    )
+    optimizer = PromptOptimizer(store=store, gateway=gateway, diagnosis_rubric=rubric)
+
+    result = optimizer.optimize(prompt, {"tier": "fast"})
+
+    rejected = result["report"]["selection_evidence"]["rejected_candidates"]
+    assert result["final_prompt"] == prompt
+    rejected_by_strategy = {item["strategy"]: item for item in rejected}
+    assert set(rejected_by_strategy) == {"specify_output_format", "add_done_criteria"}
+    assert rejected_by_strategy["specify_output_format"]["eligible"] is False
+    assert any(
+        "Respond in French." in reason
+        for reason in rejected_by_strategy["specify_output_format"]["rejection_reasons"]
+    )
+    fidelity = rejected_by_strategy["specify_output_format"]["metadata"]["fidelity"]
+    support = fidelity["evidence"]["sentence_support"][0]
+    assert support["sentence"] == "Respond in French."
+    assert support["selected"] == "new_requirement"
+    assert support["probability"] == 0.99
+    assert support["source_gap"] == 1
+    assert any(
+        "Translate the report into English." in reason
+        for reason in rejected_by_strategy["add_done_criteria"]["rejection_reasons"]
+    )
+    assert (
+        rejected_by_strategy["specify_output_format"]["grade"]["mean"]
+        > result["report"]["selection_evidence"]["original_score"]["mean"]
+    )
+    fidelity_requests = [
+        request
+        for request in requests
+        if str(request.get("key", "")).startswith("fidelity:")
+    ]
+    assert len(fidelity_requests) == 2
+    assert {request["type"] for request in fidelity_requests} == {"choice", "noul"}
+    assert all("diagnosis" not in request["state"] for request in fidelity_requests)
+    assert all(
+        "Respond in French." in request["state"]["candidate_prompt"]
+        for request in fidelity_requests
+    )
+    assert not any(
+        "Translate the report into English." in request["state"]["candidate_prompt"]
+        for request in fidelity_requests
+    )
+    fidelity_batches = [
+        batch
+        for batch in gateway.batches
+        if batch and all(str(item["key"]).startswith("fidelity:") for item in batch)
+    ]
+    assert len(fidelity_batches) == 1
+    assert [item["key"] for item in fidelity_batches[0]] == [
+        "fidelity:sentence:change-0001:candidate-s0002",
+        "fidelity:meaning",
+    ]
+    assert all(
+        item["state"] == fidelity_batches[0][0]["state"] for item in fidelity_batches[0]
+    )
+    persisted = store.get_run(result["run_id"])
+    assert persisted is not None
+    persisted_rejected = persisted["result"]["report"]["selection_evidence"][
+        "rejected_candidates"
+    ]
+    persisted_by_id = {item["candidate_id"]: item for item in persisted_rejected}
+    assert all(
+        persisted_by_id[item["candidate_id"]]["metadata"]["fidelity"]
+        == item["metadata"]["fidelity"]
+        for item in rejected
+    )
+
+
+def test_confirmed_answer_supports_an_authorized_gap_fill() -> None:
+    prompt = "Summarize the report."
+    candidate_sentence = "Respond in French."
+
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            state = json.loads(messages[1]["content"])
+            if "gaps" in state:
+                return json.dumps(
+                    {
+                        "gaps": {
+                            "language": {
+                                "options": [{"value": "French", "label": "French"}]
+                            }
+                        }
+                    }
+                )
+            if "strategies" in state:
+                return json.dumps(
+                    {
+                        item["name"]: f"{state['prompt']}\n\n{candidate_sentence}"
+                        for item in state["strategies"]
+                    }
+                )
+            return (
+                '{"tests":[{"question":"Does the answer summarize the report?",'
+                '"kind":"noul","expected":"yes"}]}'
+            )
+        return {"choices": [{"message": {"content": "pass"}}]}
+
+    def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        if request.get("type") == "choice":
+            if key == "task_type":
+                selected = "general"
+            elif key == "strategy_choice":
+                selected = "add_missing_context"
+            elif key == "infer:language":
+                selected = "unknown"
+            elif key.startswith("fidelity:sentence:"):
+                selected = "supported_by_assumption"
+                return {
+                    "type": "choice",
+                    "choice": selected,
+                    "probabilities": {
+                        "supported_by_original": 0.0,
+                        "supported_by_assumption": 0.99,
+                        "new_requirement": 0.0,
+                        "unknown": 0.01,
+                    },
+                    "confidence": 0.99,
+                }
+            else:
+                selected = "none"
+            options = request.get("criteria", {})
+            probabilities = {option: 0.0 for option in options}
+            probabilities[selected] = 1.0
+            return {
+                "type": "choice",
+                "choice": selected,
+                "probabilities": probabilities,
+                "confidence": 1.0,
+            }
+        if key.startswith("faithful:") or key == "fidelity:meaning":
+            probability = 0.99
+        elif key == "gap:language":
+            probability = 0.99
+        elif key.startswith("strategy_recheck:"):
+            probability = float(key.endswith("add_missing_context"))
+        else:
+            probability = 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    rubric = DiagnosisRubric(
+        task_types=(
+            TaskType(
+                "general",
+                "General",
+                (ChecklistItem("language", "response language", GapImpact.HIGH),),
+            ),
+        )
+    )
+    store = RunStore(":memory:")
+    optimizer = PromptOptimizer(
+        store=store,
+        gateway=ScriptedGateway(chat=chat, decision=decide),
+        diagnosis_rubric=rubric,
+    )
+
+    paused = optimizer.optimize(prompt, {"tier": "fast"})
+    result = optimizer.resume(paused["run_id"], {"language": "French"})
+
+    assert paused["status"] == "needs_input"
+    assert result["report"]["assumptions"][0]["source"] == "answer"
+    selected_round = result["report"]["selection_evidence"]["ranking"]
+    candidate = next(
+        item for item in selected_round if item["strategy"] == "add_missing_context"
+    )
+    assert candidate["eligible"] is True
+    fidelity = candidate["metadata"]["fidelity"]
+    assert fidelity["no_invention"] is True
+    assert fidelity["evidence"]["confirmed_assumptions"] == [
+        {
+            "key": "language",
+            "value": "French",
+            "source": "answer",
+            "label": "response language",
+        }
+    ]
+    persisted = store.get_run(result["run_id"])
+    assert persisted is not None
+    persisted_candidate = next(
+        item
+        for item in persisted["result"]["report"]["selection_evidence"]["ranking"]
+        if item["strategy"] == "add_missing_context"
+    )
+    assert persisted_candidate["metadata"]["fidelity"] == fidelity
+
+
 def test_structured_jev_question_keeps_user_prompt_in_state() -> None:
     prompt = "Summarize this article in three concise bullets."
     gateway = _no_test_gateway()
@@ -794,44 +1080,95 @@ def test_run_rejects_weak_panels_below_tier_budget(tier: str, weak: list[str]) -
         )
 
 
-def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it() -> None:
+@pytest.mark.parametrize("failing_gate", ["no_invention", "meaning"])
+def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it(
+    failing_gate: str,
+) -> None:
+    rejected_prompt = (
+        "Invented rewrite"
+        if failing_gate == "no_invention"
+        else "Meaning-changing rewrite"
+    )
+
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
-            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Invented rewrite","specify_output_format":"Safe rewrite","add_done_criteria":"Other rewrite"}'
+            return json.dumps(
+                {
+                    "tests": [
+                        {
+                            "question": "Does the output answer?",
+                            "kind": "noul",
+                            "expected": "yes",
+                        }
+                    ],
+                    "add_missing_context": rejected_prompt,
+                    "specify_output_format": "Safe rewrite",
+                    "add_done_criteria": "Other rewrite",
+                }
+            )
         prompt = messages[0]["content"]
         return {
             "choices": [
                 {
                     "message": {
-                        "content": "pass" if prompt != "Original request" else "fail"
+                        "content": "pass" if prompt != "Original request." else "fail"
                     }
                 }
             ]
         }
 
     def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        state = request.get("state", {})
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            if key == "task_type":
+                choice = "general"
+            elif key.startswith("pointer:vagueness:"):
+                choice = "s0001"
+            elif key.startswith("fidelity:sentence:"):
+                sentence = next(iter(state["changed_sentences"].values()))[
+                    "candidate_sentences"
+                ][0]["text"]
+                choice = (
+                    "new_requirement"
+                    if failing_gate == "no_invention" and sentence == rejected_prompt
+                    else "supported_by_original"
+                )
+            else:
+                choice = "none"
+            probabilities = {
+                choice: 0.99 if key.startswith("fidelity:sentence:") else 1.0
+            }
+            if key.startswith("fidelity:sentence:"):
+                probabilities.update(
+                    {
+                        "supported_by_original": 0.99
+                        if choice == "supported_by_original"
+                        else 0.0,
+                        "supported_by_assumption": 0.0,
+                        "new_requirement": 0.99 if choice == "new_requirement" else 0.0,
+                        "unknown": 0.0,
+                    }
+                )
             return {
                 "type": "choice",
                 "choice": choice,
-                "probabilities": {choice: 1.0},
+                "probabilities": probabilities,
                 "confidence": 1.0,
             }
-        if str(request.get("key", "")).startswith(("gap:goal", "faithful:")):
+        if key.startswith(("gap:goal", "faithful:")):
             probability = 1.0
-        elif "candidate_prompt" in request.get("state", {}):
+        elif key == "fidelity:meaning":
             probability = (
                 0.0
-                if request["state"]["candidate_prompt"] == "Invented rewrite"
+                if failing_gate == "meaning"
+                and state["candidate_prompt"] == rejected_prompt
                 else 1.0
             )
-        elif "output" in request.get("state", {}):
-            passed = request["state"]["output"] == "pass"
+        elif "output" in state:
+            passed = state["output"] == "pass"
             probability = (
-                float(not passed)
-                if str(request.get("key", "")).endswith("_second")
-                else float(passed)
+                float(not passed) if key.endswith("_second") else float(passed)
             )
         else:
             probability = 1.0
@@ -841,13 +1178,27 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it() -
         store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
     )
     result = optimizer.optimize(
-        "Original request", {"tier": "fast", "clarification_allowed": False}
+        "Original request.", {"tier": "fast", "clarification_allowed": False}
     )
 
     assert result["final_prompt"] == "Safe rewrite"
-    assert result["report"]["selection_evidence"]["rejection_reasons"][
+    rejection_reasons = result["report"]["selection_evidence"]["rejection_reasons"][
         "candidate-1-add_missing_context"
     ]
+    assert rejection_reasons
+    if failing_gate == "meaning":
+        assert any("whole-prompt meaning" in reason for reason in rejection_reasons)
+    else:
+        assert any(rejected_prompt in reason for reason in rejection_reasons)
+    rejected = next(
+        item
+        for item in result["report"]["selection_evidence"]["rejected_candidates"]
+        if item["candidate_id"] == "candidate-1-add_missing_context"
+    )
+    assert (
+        rejected["grade"]["mean"]
+        > result["report"]["selection_evidence"]["original_score"]["mean"]
+    )
     record = optimizer.store.get_run(result["run_id"])
     assert record["jev_answers"]
     assert record["original_weak_panel"]["mean_pass_rate"] == 0.0

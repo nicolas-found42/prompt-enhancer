@@ -30,7 +30,7 @@ def _normalized(value: Any, run_ids: set[str]) -> Any:
         return {
             key: _normalized(item, run_ids)
             for key, item in value.items()
-            if key != "timing"
+            if key not in {"timing", "classification_latency_ms"}
         }
     if isinstance(value, list):
         return [_normalized(item, run_ids) for item in value]

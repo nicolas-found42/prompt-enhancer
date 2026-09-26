@@ -30,8 +30,14 @@ def gap_question(label: str) -> str:
     return f"Is the required piece '{label}' confidently missing from the request?"
 
 
-def task_branch_description(children: Sequence[str]) -> str:
-    return "Contains " + ", ".join(children) + " requests."
+def task_branch_description(
+    *, label: str, description: str, scope: str, children: Sequence[str]
+) -> str:
+    descendants = "; ".join(children)
+    return (
+        f"{label}: {description} Intended scope: {scope} "
+        f"This subtree contains: {descendants}."
+    )
 
 
 def task_leaf_question(branch: str) -> str:
@@ -42,6 +48,15 @@ def sentence_pointer_question(problem: str) -> str:
     return f"Which sentence best contains this problem: {problem}?"
 
 
+FIDELITY_MEANING_QUESTION = "Does the candidate preserve the original prompt's meaning and all stated constraints?"
+FIDELITY_SUPPORT_OPTIONS = {
+    "supported_by_original": "The original prompt states or clearly entails this sentence.",
+    "supported_by_assumption": "A confirmed user answer in state.confirmed_assumptions supports this sentence.",
+    "new_requirement": "This sentence adds a fact or requirement not supported by the prompt or a confirmed answer.",
+    "unknown": "The available prompt and confirmed answers do not establish whether this sentence is supported.",
+}
+
+
 def sentence_existence_question(problem: str) -> str:
     return (
         f"Does the problem '{problem}' exist in at least one sentence in this exact candidate window? "
@@ -50,11 +65,11 @@ def sentence_existence_question(problem: str) -> str:
     )
 
 
-FIDELITY_CHECKS = {
-    "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
-    "no_invention": "Does the candidate avoid facts or requirements not given by the user?",
-    "edits_confined": "Are edits limited to diagnosed problems or changes required by the named rewrite strategy?",
-}
+def fidelity_sentence_support_question(change_id: str) -> str:
+    return (
+        f"Does the candidate sentence recorded at state.changed_sentences[{change_id!r}] "
+        "follow from state.original_prompt or a confirmed user answer?"
+    )
 
 
 def infer_gap_question(label: str) -> str:
@@ -84,6 +99,20 @@ STRATEGY_RECHECK_QUESTION = (
     "Is this strategy appropriate for the prompt and diagnosed weakness "
     "without inventing requirements?"
 )
+
+RESTRUCTURE_ROLE_QUESTION = (
+    "Which role best describes state.target_unit_id in the user's complete prompt? "
+    "Choose only from the listed roles. Do not rewrite the source unit."
+)
+RESTRUCTURE_ROLE_DESCRIPTIONS = {
+    "context": "Background, facts, audience, or setting that frames the request.",
+    "task": "The action or deliverable the user asks for.",
+    "constraint": "A requirement, prohibition, boundary, or success criterion.",
+    "output_format": "The requested shape, structure, or ordering of the response.",
+    "example": "An example, sample, or pattern supplied to guide the response.",
+    "other": "Original content that does not clearly fit another role.",
+    "unknown": "The role cannot be determined from the available context.",
+}
 
 ASSUMPTION_MEANING_QUESTION = (
     "Does the updated prompt preserve the user's original meaning without "

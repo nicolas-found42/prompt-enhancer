@@ -183,3 +183,76 @@ it("omits calibration decisions for an empty mapping", () => {
     screen.queryByRole("heading", { name: "Calibration decisions" })
   ).not.toBeInTheDocument();
 });
+
+it("names an unsupported sentence in rejected rewrite details", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          selection_evidence: {
+            rejected_candidates: [
+              {
+                candidate_id: "candidate-1",
+                strategy: "specify_output_format",
+                rejection_reasons: [
+                  "candidate failed fidelity checks",
+                  "fidelity rejected 'Respond in French.': new requirement " +
+                    "(source mapping: gap 1; probability=0.99)",
+                ],
+              },
+            ],
+          },
+        },
+      }}
+    />
+  );
+
+  const heading = screen.getByRole("heading", {
+    name: "Rewrites that were not used",
+  });
+  const section = heading.closest("section");
+  expect(section).not.toBeNull();
+  expect(within(section!).getByRole("listitem")).toHaveTextContent(
+    /Respond in French\..*new requirement.*source mapping: gap 1; probability=0\.99/
+  );
+});
+
+it("shows preservation, uncertain roles, and cost for a structural candidate", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          lossless_restructuring: {
+            outcome: "candidate_built",
+            selection_outcome: "selected",
+            source_preservation: { status: "passed", unit_count: 2 },
+            roles: [
+              { unit_id: "u0001", role: "task", confidence: 0.95 },
+              { unit_id: "u0002", role: "other", confidence: 0.6 },
+            ],
+            unknowns: ["u0002"],
+            role_assignment_requests: 2,
+            cost: { cost_by_role: { judge: 0.002 } },
+          },
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", {
+    name: "Content preserving structure",
+  });
+  expect(section).toHaveTextContent(
+    "Source preservation: Passed. Outcome: Selected."
+  );
+  expect(section).toHaveTextContent("u0002: Other (60% confidence)");
+  expect(section).toHaveTextContent(
+    "Uncertain source units retained in Other: u0002."
+  );
+  expect(section).toHaveTextContent("Role assignment requests: 2.");
+  expect(section).toHaveTextContent("Reported role assignment cost: $0.0020.");
+});

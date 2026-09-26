@@ -90,6 +90,87 @@ def test_harness_compares_problem_sentence_predictions_with_explicit_labels() ->
     assert metrics["false_flags"] == 1
 
 
+def test_harness_reports_leaf_parent_fallback_and_request_metrics() -> None:
+    dataset = Dataset.from_dict(
+        {
+            "name": "task-type-labels",
+            "cases": [
+                {
+                    "id": "parent-fallback",
+                    "prompt": "Implement a function.",
+                    "source": "synthetic",
+                    "expected_task_type": "coding",
+                }
+            ],
+        }
+    )
+
+    class TaskTypeEngine:
+        def optimize(self, prompt, _options):
+            return {
+                "status": "completed",
+                "final_prompt": prompt,
+                "original_kept": True,
+                "report": {
+                    "diagnosis": {
+                        "task_type": "execution",
+                        "task_type_fallback_reason": "leaf_below_confidence",
+                        "taxonomy_evidence": {
+                            "provider_requests": 2,
+                            "provider_request_delta_vs_legacy": 0,
+                            "classification_latency_ms": 3.5,
+                        },
+                    }
+                },
+            }
+
+    report = EvaluationHarness(TaskTypeEngine()).run(dataset).to_dict()
+
+    assert report["cases"][0]["expected_task_type"] == "coding"
+    metrics = report["diagnosis"]["task_classification"]
+    assert metrics["status"] == "available"
+    assert metrics["labeled_cases"] == 1
+    assert metrics["leaf_correct"] == 0
+    assert metrics["leaf_accuracy"] == 0.0
+    assert metrics["parent_correct"] == 1
+    assert metrics["parent_cases"] == 1
+    assert metrics["parent_accuracy"] == 1.0
+    assert metrics["parent_coverage"] == 1.0
+    assert metrics["fallback_count"] == 1
+    assert metrics["fallback_frequency"] == 1.0
+    assert metrics["mean_provider_requests"] == 2.0
+    assert metrics["mean_provider_request_delta_vs_legacy"] == 0.0
+    assert metrics["mean_classification_latency_ms"] == 3.5
+    assert metrics["latency_comparison_status"] == "unavailable"
+
+
+def test_task_type_accuracy_is_unavailable_without_explicit_labels() -> None:
+    dataset = Dataset.from_dict(
+        {
+            "name": "unlabeled-task-types",
+            "cases": [{"id": "one", "prompt": "Improve this.", "source": "real"}],
+        }
+    )
+
+    class UnlabeledTaskEngine:
+        def optimize(self, prompt, _options):
+            return {
+                "status": "completed",
+                "final_prompt": prompt,
+                "original_kept": True,
+                "report": {"diagnosis": {"task_type": "general"}},
+            }
+
+    report = EvaluationHarness(UnlabeledTaskEngine()).run(dataset).to_dict()
+    metrics = report["diagnosis"]["task_classification"]
+
+    assert metrics["status"] == "unavailable"
+    assert metrics["total_cases"] == 1
+    assert metrics["labeled_cases"] == 0
+    assert metrics["leaf_accuracy"] is None
+    assert metrics["reason"] == "No evaluation cases include expected_task_type labels."
+
+
 def test_replay_restores_recorded_case_cost_and_latency(tmp_path: Path) -> None:
     fixtures = Path(__file__).parent / "fixtures" / "evaluation"
     dataset = json.loads((fixtures / "mixed_dataset.json").read_text())
@@ -211,17 +292,21 @@ def test_versioned_legacy_recording_replays_without_existence_questions(
         path,
     )
     gateway.sentence_diagnosis_version = 1
+    gateway.task_taxonomy_version = 1
     original = PromptOptimizer(
         gateway=gateway,
         store=RunStore(":memory:"),
         sentence_diagnosis_version=1,
+        task_taxonomy_version=1,
     ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
 
     replay = default_engine_factory(path)
     result = replay.optimize(prompt, {"tier": "fast", "clarification_allowed": False})
 
     assert json.loads(path.read_text())["sentence_diagnosis_version"] == 1
+    assert json.loads(path.read_text())["task_taxonomy_version"] == 1
     assert replay.sentence_diagnosis_version == 1
+    assert replay.task_taxonomy_version == 1
     assert (
         original["report"]["diagnosis"]["problem_sentences"]
         == result["report"]["diagnosis"]["problem_sentences"]
@@ -535,15 +620,33 @@ def _candidate_gateway() -> ScriptedGateway:
         }
 
     def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            if key == "task_type":
+                choice = "general"
+            elif key.startswith("pointer:vagueness:"):
+                choice = "s0001"
+            elif key.startswith("fidelity:sentence:"):
+                choice = "supported_by_original"
+            else:
+                choice = "none"
+            probabilities = {choice: 1.0}
+            if key.startswith("fidelity:sentence:"):
+                probabilities = {
+                    "supported_by_original": 0.99,
+                    "supported_by_assumption": 0.0,
+                    "new_requirement": 0.0,
+                    "unknown": 0.01,
+                }
             return {
                 "type": "choice",
                 "choice": choice,
-                "probabilities": {choice: 1.0},
+                "probabilities": probabilities,
                 "confidence": 1.0,
             }
-        if "output" in request.get("state", {}):
+        if key == "fidelity:meaning":
+            probability = 0.99
+        elif "output" in request.get("state", {}):
             passed = request["state"]["output"] == "pass"
             probability = (
                 float(not passed)
@@ -616,6 +719,17 @@ def test_versioned_recording_selects_current_writer_request(tmp_path: Path) -> N
     bundle["writer_instruction_version"] = 1
     path.write_text(json.dumps(bundle))
     assert _replay(path)["status"] == "failed"
+
+
+def test_version_three_recording_replays_the_edit_permission_request(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "sentence-fidelity.json"
+    original = _record_candidate_run(path, 3)
+
+    assert json.loads(path.read_text())["writer_instruction_version"] == 3
+    assert original["final_prompt"] != "Original request"
+    assert _replay(path)["final_prompt"] == original["final_prompt"]
 
 
 def _context_impact(path: Path) -> str:
