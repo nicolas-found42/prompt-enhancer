@@ -8,7 +8,13 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from ..diagnosis import DEFAULT_RUBRIC, checklist_impacts, checklist_keys
+from ..diagnosis import (
+    DEFAULT_RUBRIC,
+    SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    TASK_TAXONOMY_PROTOCOL_VERSION,
+    checklist_impacts,
+    checklist_keys,
+)
 from ..gateway import Gateway, ReplayGateway
 
 
@@ -23,6 +29,15 @@ class RecordingGateway:
         self.rubric_thresholds: dict[str, float] | None = None
         self.writer_instruction_version: int | None = None
         self.faithfulness_threshold: float | None = None
+        self.sentence_diagnosis_version = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+        self.task_taxonomy_version = TASK_TAXONOMY_PROTOCOL_VERSION
+        self.speculative_diagnosis = True
+        self.observe_sequential_diagnosis = False
+        self.diagnosis_request_byte_limit: int | None = None
+        self.decision_policy_artifacts: list[dict[str, Any]] = []
+        self.decision_policy_version: str | None = None
+        self.pricing_models: list[dict[str, Any]] = []
+        self.cascade_settings: dict[str, Any] | None = None
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
         self.checklist_impacts: dict[str, str] | None = checklist_impacts(
@@ -59,11 +74,24 @@ class RecordingGateway:
             "case_latency_ms": self.case_latency_ms,
             "case_costs": self.case_costs,
             "rubric_thresholds": self.rubric_thresholds,
+            "sentence_diagnosis_version": self.sentence_diagnosis_version,
+            "task_taxonomy_version": self.task_taxonomy_version,
+            "speculative_diagnosis": self.speculative_diagnosis,
+            "observe_sequential_diagnosis": self.observe_sequential_diagnosis,
         }
+        if self.diagnosis_request_byte_limit is not None:
+            bundle["diagnosis_request_byte_limit"] = self.diagnosis_request_byte_limit
         if self.writer_instruction_version is not None:
             bundle["writer_instruction_version"] = self.writer_instruction_version
         if self.faithfulness_threshold is not None:
             bundle["faithfulness_threshold"] = self.faithfulness_threshold
+        if self.decision_policy_artifacts:
+            bundle["decision_policy_artifacts"] = self.decision_policy_artifacts
+            bundle["decision_policy_version"] = self.decision_policy_version
+        if self.pricing_models:
+            bundle["pricing_models"] = self.pricing_models
+        if self.cascade_settings is not None:
+            bundle["cascade_settings"] = self.cascade_settings
         if self.checklist_keys is not None:
             bundle["checklist_keys"] = self.checklist_keys
         if self.checklist_impacts is not None:
@@ -158,7 +186,18 @@ class RecordingGateway:
 
     def list_models(self, *, refresh: bool = False) -> Any:
         # The model catalog and ledger are not part of the Gateway interface.
-        return cast(Any, self.gateway).list_models(refresh=refresh)
+        snapshot = cast(Any, self.gateway).list_models(refresh=refresh)
+        self.pricing_models = [
+            {
+                "id": model.id,
+                "provider": model.provider,
+                "input_cost_per_token": model.input_cost_per_token,
+                "output_cost_per_token": model.output_cost_per_token,
+            }
+            for model in snapshot.models
+        ]
+        self.save()
+        return snapshot
 
     def usage_report(self) -> dict[str, Any]:
         return self.gateway.usage_report()

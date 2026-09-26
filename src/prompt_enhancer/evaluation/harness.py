@@ -12,7 +12,14 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Protocol, cast
 
-from ..diagnosis import GapImpact
+from ..diagnosis import (
+    DEFAULT_RUBRIC,
+    HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+    SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    TASK_TAXONOMY_PROTOCOL_VERSION,
+    GapImpact,
+)
 from ..rewrite import WRITER_INSTRUCTION_VERSIONS
 from .datasets import (
     Dataset,
@@ -106,12 +113,76 @@ class GapMetrics:
 
 
 @dataclass(frozen=True, slots=True)
+class ProblemSentenceMetrics:
+    status: str
+    metric: str
+    labeled_cases: int
+    excluded_failed_cases: int
+    true_positives: int | None
+    false_positives: int | None
+    false_negatives: int | None
+    precision: float | None
+    recall: float | None
+    f1: float | None
+    false_flags: int | None
+    reason: str | None = None
+    per_kind: Mapping[str, GapMetrics] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "metric": self.metric,
+            "labeled_cases": self.labeled_cases,
+            "excluded_failed_cases": self.excluded_failed_cases,
+            "true_positives": self.true_positives,
+            "false_positives": self.false_positives,
+            "false_negatives": self.false_negatives,
+            "precision": self.precision,
+            "recall": self.recall,
+            "f1": self.f1,
+            "false_flags": self.false_flags,
+            "reason": self.reason,
+            "per_kind": {
+                name: metric.to_dict() for name, metric in sorted(self.per_kind.items())
+            },
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class TaskClassificationMetrics:
+    status: str
+    metric: str
+    total_cases: int
+    labeled_cases: int
+    excluded_failed_cases: int
+    leaf_correct: int | None
+    leaf_accuracy: float | None
+    parent_correct: int | None
+    parent_cases: int
+    parent_accuracy: float | None
+    parent_coverage: float | None
+    fallback_count: int | None
+    fallback_frequency: float | None
+    mean_provider_requests: float | None
+    mean_provider_request_delta_vs_legacy: float | None
+    mean_classification_latency_ms: float | None
+    latency_comparison_status: str
+    latency_comparison_reason: str | None = None
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
 class DiagnosisSummary:
     labeled_cases: int
     predicted_gap_occurrences: int
     expected_gap_occurrences: int
     micro: GapMetrics
     per_gap: Mapping[str, GapMetrics]
+    problem_sentences: ProblemSentenceMetrics
+    task_classification: TaskClassificationMetrics
     excluded_failed_cases: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -124,6 +195,8 @@ class DiagnosisSummary:
             "per_gap": {
                 name: metric.to_dict() for name, metric in sorted(self.per_gap.items())
             },
+            "problem_sentences": self.problem_sentences.to_dict(),
+            "task_classification": self.task_classification.to_dict(),
         }
 
 
@@ -140,6 +213,24 @@ class ImprovementSummary:
     mean_score_delta: float
     mean_improvement: float
     mean_regression_magnitude: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class RestructuringSummary:
+    status: str
+    total_cases: int
+    selected_for_generation: int
+    built_candidates: int
+    wins: int
+    selection_rate: float | None
+    win_rate: float | None
+    strong_checked: int
+    strong_regressions: int
+    strong_rejection_rate: float | None
+    evidence_kind: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -195,6 +286,20 @@ class CaseEvaluation:
     latency_ms: float | None
     error: str | None = None
     labels_present: bool = False
+    expected_problem_sentences: tuple[tuple[str, str], ...] = ()
+    problem_sentence_labels_present: bool = False
+    predicted_problem_sentences: tuple[tuple[str, str], ...] = ()
+    expected_task_type: str | None = None
+    task_type_labels_present: bool = False
+    predicted_task_type: str | None = None
+    task_type_fallback_reason: str | None = None
+    task_taxonomy_provider_requests: int | None = None
+    task_taxonomy_provider_request_delta_vs_legacy: int | None = None
+    task_taxonomy_latency_ms: float | None = None
+    diagnosis_request_evidence: Mapping[str, Any] = field(default_factory=dict)
+    lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
+    lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
+    failure_attribution: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -214,6 +319,26 @@ class CaseEvaluation:
             "latency_ms": self.latency_ms,
             "error": self.error,
             "labels_present": self.labels_present,
+            "problem_sentence_labels_present": self.problem_sentence_labels_present,
+            "expected_problem_sentences": [
+                {"kind": kind, "sentence_id": sentence_id}
+                for kind, sentence_id in self.expected_problem_sentences
+            ],
+            "predicted_problem_sentences": [
+                {"kind": kind, "sentence_id": sentence_id}
+                for kind, sentence_id in self.predicted_problem_sentences
+            ],
+            "expected_task_type": self.expected_task_type,
+            "task_type_labels_present": self.task_type_labels_present,
+            "predicted_task_type": self.predicted_task_type,
+            "task_type_fallback_reason": self.task_type_fallback_reason,
+            "task_taxonomy_provider_requests": self.task_taxonomy_provider_requests,
+            "task_taxonomy_provider_request_delta_vs_legacy": self.task_taxonomy_provider_request_delta_vs_legacy,
+            "task_taxonomy_latency_ms": self.task_taxonomy_latency_ms,
+            "diagnosis_request_evidence": dict(self.diagnosis_request_evidence),
+            "lossless_restructuring": dict(self.lossless_restructuring),
+            "lossless_strong_check": dict(self.lossless_strong_check),
+            "failure_attribution": dict(self.failure_attribution),
         }
 
 
@@ -227,8 +352,10 @@ class HarnessReport:
     cases: tuple[CaseEvaluation, ...]
     diagnosis: DiagnosisSummary
     improvement: ImprovementSummary
+    restructuring: RestructuringSummary
     cost: CostSummary
     latency_ms: LatencySummary
+    failure_attribution: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -240,8 +367,10 @@ class HarnessReport:
             "cases": [case.to_dict() for case in self.cases],
             "diagnosis": self.diagnosis.to_dict(),
             "improvement": self.improvement.to_dict(),
+            "restructuring": self.restructuring.to_dict(),
             "cost": self.cost.to_dict(),
             "latency_ms": self.latency_ms.to_dict(),
+            "failure_attribution": dict(self.failure_attribution),
         }
 
     def to_json(self, *, pretty: bool = False) -> str:
@@ -270,6 +399,15 @@ class _ReplayBundle:
     faithfulness_threshold: float = HISTORICAL_FAITHFULNESS_THRESHOLD
     checklist_keys: tuple[str, ...] | None = None
     checklist_impacts: Mapping[str, str] | None = None
+    sentence_diagnosis_version: int = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+    task_taxonomy_version: int = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
+    speculative_diagnosis: bool = False
+    observe_sequential_diagnosis: bool = False
+    diagnosis_request_byte_limit: int | None = None
+    pricing_models: tuple[Mapping[str, Any], ...] = ()
+    decision_policy_artifacts: tuple[Mapping[str, Any], ...] = ()
+    decision_policy_version: str | None = None
+    cascade_settings: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -278,8 +416,22 @@ class _CaseObservation:
     source: str
     status: str
     expected_gaps: tuple[str, ...]
+    expected_task_type: str | None = None
+    task_type_labels_present: bool = False
+    predicted_task_type: str | None = None
+    task_type_fallback_reason: str | None = None
+    task_taxonomy_provider_requests: int | None = None
+    task_taxonomy_provider_request_delta_vs_legacy: int | None = None
+    task_taxonomy_latency_ms: float | None = None
+    diagnosis_request_evidence: Mapping[str, Any] = field(default_factory=dict)
+    lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
+    lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
+    failure_attribution: Mapping[str, Any] = field(default_factory=dict)
     labels_present: bool = False
     predicted_gaps: tuple[str, ...] = ()
+    expected_problem_sentences: tuple[tuple[str, str], ...] = ()
+    problem_sentence_labels_present: bool = False
+    predicted_problem_sentences: tuple[tuple[str, str], ...] = ()
     original_kept: bool | None = None
     final_prompt: str | None = None
     original_score: float | None = None
@@ -320,6 +472,20 @@ class _CaseObservation:
             cost_by_role=dict(self.cost_by_role),
             latency_ms=self.latency_ms,
             error=self.error,
+            expected_problem_sentences=self.expected_problem_sentences,
+            problem_sentence_labels_present=self.problem_sentence_labels_present,
+            predicted_problem_sentences=self.predicted_problem_sentences,
+            expected_task_type=self.expected_task_type,
+            task_type_labels_present=self.task_type_labels_present,
+            predicted_task_type=self.predicted_task_type,
+            task_type_fallback_reason=self.task_type_fallback_reason,
+            task_taxonomy_provider_requests=self.task_taxonomy_provider_requests,
+            task_taxonomy_provider_request_delta_vs_legacy=self.task_taxonomy_provider_request_delta_vs_legacy,
+            task_taxonomy_latency_ms=self.task_taxonomy_latency_ms,
+            diagnosis_request_evidence=dict(self.diagnosis_request_evidence),
+            lossless_restructuring=dict(self.lossless_restructuring),
+            lossless_strong_check=dict(self.lossless_strong_check),
+            failure_attribution=dict(self.failure_attribution),
         )
 
 
@@ -396,7 +562,11 @@ class EvaluationHarness:
             source=case.source,
             status="error",
             expected_gaps=case.expected_gaps,
+            expected_task_type=case.expected_task_type,
+            task_type_labels_present=case.task_type_labels_present,
             labels_present=case.labels_present,
+            expected_problem_sentences=case.expected_problem_sentences,
+            problem_sentence_labels_present=case.problem_sentence_labels_present,
         )
         started = perf_counter()
         try:
@@ -429,7 +599,48 @@ class EvaluationHarness:
                 result = _as_mapping(engine.resume(run_id, dict(answers)))
                 resumed = True
             report = _as_mapping(result.get("report", {}))
+            observation.failure_attribution = _attribution_case_evaluation(
+                report, case.metadata.get("attribution_labels")
+            )
+            restructuring = report.get("lossless_restructuring")
+            if isinstance(restructuring, Mapping):
+                observation.lossless_restructuring = dict(restructuring)
+            strong = _as_mapping(report.get("strong_check", {}))
+            strong_candidates = strong.get("candidates")
+            if isinstance(strong_candidates, list):
+                for candidate in strong_candidates:
+                    if (
+                        isinstance(candidate, Mapping)
+                        and candidate.get("strategy") == "restructure_lossless"
+                    ):
+                        observation.lossless_strong_check = dict(candidate)
+                        break
             observation.predicted_gaps = _predicted_gaps(result, report)
+            observation.predicted_problem_sentences = _predicted_problem_sentences(
+                report
+            )
+            diagnosis = _as_mapping(report.get("diagnosis", {}))
+            request_evidence = diagnosis.get("request_evidence")
+            if isinstance(request_evidence, Mapping):
+                observation.diagnosis_request_evidence = dict(request_evidence)
+            observation.predicted_task_type = _optional_string(
+                diagnosis.get("task_type")
+            )
+            observation.task_type_fallback_reason = _optional_string(
+                diagnosis.get("task_type_fallback_reason")
+            )
+            taxonomy_evidence = _as_mapping(diagnosis.get("taxonomy_evidence", {}))
+            request_count = taxonomy_evidence.get("provider_requests")
+            if isinstance(request_count, int) and not isinstance(request_count, bool):
+                observation.task_taxonomy_provider_requests = request_count
+            request_delta = taxonomy_evidence.get("provider_request_delta_vs_legacy")
+            if isinstance(request_delta, int) and not isinstance(request_delta, bool):
+                observation.task_taxonomy_provider_request_delta_vs_legacy = (
+                    request_delta
+                )
+            observation.task_taxonomy_latency_ms = _optional_number(
+                taxonomy_evidence.get("classification_latency_ms")
+            )
             if requested_clarification:
                 observation.predicted_gaps = tuple(
                     sorted({*observation.predicted_gaps, "clarification_need"})
@@ -482,6 +693,7 @@ def default_engine_factory(
 
     from dataclasses import replace
 
+    from ..catalog import ModelInfo, StaticModelCatalog
     from ..config import Settings
     from ..diagnosis import (
         DEFAULT_RUBRIC,
@@ -492,6 +704,7 @@ def default_engine_factory(
         with_impacts,
     )
     from ..optimizer import PromptOptimizer
+    from .calibration import DecisionPolicy
 
     if replay_path is None:
         return PromptOptimizer()
@@ -521,21 +734,53 @@ def default_engine_factory(
     configured_pin = Settings.from_env().judge_model
     recorded_pin = bundle.jev_model or configured_pin
     try:
+        priced_models = [
+            ModelInfo(
+                id=str(item["id"]),
+                provider=str(item["provider"]),
+                input_cost_per_token=item.get("input_cost_per_token"),
+                output_cost_per_token=item.get("output_cost_per_token"),
+            )
+            for item in bundle.pricing_models
+        ]
+        catalog = StaticModelCatalog(
+            [model for model in priced_models if model.provider == "go"],
+            [model for model in priced_models if model.provider == "openrouter"],
+        )
         replay_gateway = ReplayGateway(
             recordings,
             decision_provenance=bundle.decision_provenance,
             jev_model=recorded_pin,
             expected_snapshot=configured_pin,
             allow_snapshot_mismatch=allow_snapshot_mismatch,
+            catalog=catalog,
+        )
+        replay_gateway.diagnosis_request_byte_limit = (
+            bundle.diagnosis_request_byte_limit
         )
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
+    replay_settings = replace(
+        Settings.from_env(),
+        judge_model=recorded_pin,
+        **bundle.cascade_settings,
+    )
     return PromptOptimizer(
         gateway=replay_gateway,
-        config=replace(Settings.from_env(), judge_model=recorded_pin),
+        config=replay_settings,
         diagnosis_rubric=rubric,
         writer_instruction_version=bundle.writer_instruction_version,
         faithfulness_threshold=bundle.faithfulness_threshold,
+        sentence_diagnosis_version=bundle.sentence_diagnosis_version,
+        task_taxonomy_version=bundle.task_taxonomy_version,
+        speculative_diagnosis=bundle.speculative_diagnosis,
+        observe_sequential_diagnosis=bundle.observe_sequential_diagnosis,
+        decision_policy=DecisionPolicy(
+            artifacts=bundle.decision_policy_artifacts,
+            policy_version=bundle.decision_policy_version or "issue-50-v1",
+        )
+        if bundle.decision_policy_artifacts
+        else None,
     )
 
 
@@ -564,6 +809,21 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         )
         raw_checklist = raw.get("checklist_keys")
         raw_impacts = raw.get("checklist_impacts")
+        sentence_diagnosis_version = raw.get(
+            "sentence_diagnosis_version",
+            HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        )
+        task_taxonomy_version = raw.get(
+            "task_taxonomy_version",
+            HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+        )
+        speculative_diagnosis = raw.get("speculative_diagnosis", False)
+        observe_sequential_diagnosis = raw.get("observe_sequential_diagnosis", False)
+        diagnosis_request_byte_limit = raw.get("diagnosis_request_byte_limit")
+        raw_pricing_models = raw.get("pricing_models", [])
+        raw_policy_artifacts = raw.get("decision_policy_artifacts", [])
+        raw_policy_version = raw.get("decision_policy_version")
+        raw_cascade_settings = raw.get("cascade_settings", {})
     else:
         recordings = replay_path
         provenance = {}
@@ -575,6 +835,78 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         faithfulness = HISTORICAL_FAITHFULNESS_THRESHOLD
         raw_checklist = None
         raw_impacts = None
+        sentence_diagnosis_version = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+        task_taxonomy_version = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
+        speculative_diagnosis = False
+        observe_sequential_diagnosis = False
+        diagnosis_request_byte_limit = None
+        raw_pricing_models = []
+        raw_policy_artifacts = []
+        raw_policy_version = None
+        raw_cascade_settings = {}
+    if not isinstance(raw_cascade_settings, Mapping) or set(raw_cascade_settings) - {
+        "grading_cascade_pair_cap",
+        "grading_cascade_dollar_cap",
+        "grading_confirmation_reservation_usd",
+        "attribution_pair_cap",
+        "attribution_dollar_cap",
+    }:
+        raise EvaluationError("replay cascade_settings contains unknown fields")
+    pair_cap = raw_cascade_settings.get("grading_cascade_pair_cap")
+    dollar_cap = raw_cascade_settings.get("grading_cascade_dollar_cap")
+    reservation = raw_cascade_settings.get("grading_confirmation_reservation_usd")
+    attribution_pair_cap = raw_cascade_settings.get("attribution_pair_cap")
+    attribution_dollar_cap = raw_cascade_settings.get("attribution_dollar_cap")
+    if pair_cap is not None and (
+        isinstance(pair_cap, bool) or not isinstance(pair_cap, int) or pair_cap < 0
+    ):
+        raise EvaluationError("replay cascade pair cap must be non-negative")
+    if attribution_pair_cap is not None and (
+        isinstance(attribution_pair_cap, bool)
+        or not isinstance(attribution_pair_cap, int)
+        or attribution_pair_cap < 0
+    ):
+        raise EvaluationError("replay attribution pair cap must be non-negative")
+    if any(
+        value is not None
+        and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        )
+        for value in (dollar_cap, reservation, attribution_dollar_cap)
+    ):
+        raise EvaluationError("replay cascade dollar settings must be non-negative")
+    if not isinstance(raw_pricing_models, list) or any(
+        not isinstance(item, Mapping)
+        or not isinstance(item.get("id"), str)
+        or not isinstance(item.get("provider"), str)
+        or item.get("provider") not in {"go", "openrouter"}
+        or any(
+            rate is not None
+            and (
+                isinstance(rate, bool)
+                or not isinstance(rate, (int, float))
+                or not math.isfinite(rate)
+                or rate < 0
+            )
+            for rate in (
+                item.get("input_cost_per_token"),
+                item.get("output_cost_per_token"),
+            )
+        )
+        for item in raw_pricing_models
+    ):
+        raise EvaluationError("replay pricing_models must contain valid model rates")
+    if not isinstance(raw_policy_artifacts, list) or any(
+        not isinstance(item, Mapping) for item in raw_policy_artifacts
+    ):
+        raise EvaluationError("replay decision_policy_artifacts must be objects")
+    if raw_policy_artifacts and (
+        not isinstance(raw_policy_version, str) or not raw_policy_version
+    ):
+        raise EvaluationError("replay decision_policy_version is required")
     if raw_impacts is not None and (
         not isinstance(raw_impacts, Mapping)
         or any(
@@ -604,6 +936,28 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         or any(not isinstance(key, str) or not key for key in raw_checklist)
     ):
         raise EvaluationError("replay checklist_keys must be a list of question ids")
+    if isinstance(
+        sentence_diagnosis_version, bool
+    ) or sentence_diagnosis_version not in {
+        HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    }:
+        raise EvaluationError("replay sentence_diagnosis_version is not supported")
+    if isinstance(task_taxonomy_version, bool) or task_taxonomy_version not in {
+        HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+        TASK_TAXONOMY_PROTOCOL_VERSION,
+    }:
+        raise EvaluationError("replay task_taxonomy_version is not supported")
+    if not isinstance(speculative_diagnosis, bool):
+        raise EvaluationError("replay speculative_diagnosis must be a boolean")
+    if not isinstance(observe_sequential_diagnosis, bool):
+        raise EvaluationError("replay observe_sequential_diagnosis must be a boolean")
+    if diagnosis_request_byte_limit is not None and (
+        isinstance(diagnosis_request_byte_limit, bool)
+        or not isinstance(diagnosis_request_byte_limit, int)
+        or diagnosis_request_byte_limit < 0
+    ):
+        raise EvaluationError("replay diagnosis_request_byte_limit must be nonnegative")
     if (
         isinstance(writer_version, bool)
         or writer_version not in WRITER_INSTRUCTION_VERSIONS
@@ -679,6 +1033,15 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         faithfulness_threshold=float(faithfulness),
         checklist_keys=tuple(raw_checklist) if raw_checklist is not None else None,
         checklist_impacts=dict(raw_impacts) if raw_impacts is not None else None,
+        sentence_diagnosis_version=sentence_diagnosis_version,
+        task_taxonomy_version=task_taxonomy_version,
+        speculative_diagnosis=speculative_diagnosis,
+        observe_sequential_diagnosis=observe_sequential_diagnosis,
+        diagnosis_request_byte_limit=diagnosis_request_byte_limit,
+        pricing_models=tuple(raw_pricing_models),
+        decision_policy_artifacts=tuple(raw_policy_artifacts),
+        decision_policy_version=raw_policy_version,
+        cascade_settings=dict(raw_cascade_settings),
     )
 
 
@@ -691,6 +1054,7 @@ def _build_report(
     cases = tuple(observation.finish() for observation in observations)
     diagnosis = _diagnosis_summary(cases)
     improvement = _improvement_summary(cases)
+    restructuring = _restructuring_summary(cases)
     cost = _cost_summary(cases)
     latency = _latency_summary(cases, replayed=replay is not None)
     dataset_input = dataset.to_dict()
@@ -719,8 +1083,144 @@ def _build_report(
         cases=cases,
         diagnosis=diagnosis,
         improvement=improvement,
+        restructuring=restructuring,
         cost=cost,
         latency_ms=latency,
+        failure_attribution=_attribution_harness_summary(cases),
+    )
+
+
+def _attribution_case_evaluation(
+    report: Mapping[str, Any], raw_labels: object
+) -> dict[str, Any]:
+    rounds = report.get("history")
+    entries = (
+        [
+            _as_mapping(_as_mapping(item).get("evidence", {})).get(
+                "failure_attribution"
+            )
+            for item in rounds
+        ]
+        if isinstance(rounds, list)
+        else []
+    )
+    entries = [item for item in entries if isinstance(item, Mapping)]
+    if not entries and isinstance(report.get("failure_attribution"), Mapping):
+        entries = [report["failure_attribution"]]
+    pairs = [
+        pair
+        for entry in entries
+        for pair in entry.get("pairs", [])
+        if isinstance(pair, Mapping)
+    ]
+    labels = (
+        [
+            item
+            for item in raw_labels
+            if isinstance(item, Mapping)
+            and item.get("provenance") in {"human", "source"}
+        ]
+        if isinstance(raw_labels, list)
+        else []
+    )
+    label_keys = ("prompt_digest", "model", "sample", "test_id")
+    matching = [
+        (pair, label)
+        for pair in pairs
+        if pair.get("status") == "supported"
+        for label in labels
+        if all(pair.get(key) == label.get(key) for key in label_keys)
+    ]
+    correct = sum(
+        pair.get("sentence_id") == label.get("sentence_id")
+        and pair.get("kind") == label.get("kind")
+        for pair, label in matching
+    )
+    return {
+        "status": "available" if entries else "unavailable",
+        "attributed_count": sum(pair.get("status") == "supported" for pair in pairs),
+        "unresolved_count": sum(pair.get("status") == "unresolved" for pair in pairs),
+        "skipped_count": sum(pair.get("status") == "skipped" for pair in pairs),
+        "correctness": {
+            "status": "available" if matching else "unavailable",
+            "labeled_predictions": len(matching),
+            "correct_predictions": correct,
+            "accuracy": correct / len(matching) if matching else None,
+            "provenance": sorted({str(label["provenance"]) for _, label in matching}),
+        },
+    }
+
+
+def _attribution_harness_summary(cases: Sequence[CaseEvaluation]) -> dict[str, Any]:
+    observations = [
+        case.failure_attribution
+        for case in cases
+        if case.failure_attribution.get("status") == "available"
+    ]
+    correct = sum(
+        int(_as_mapping(item.get("correctness", {})).get("correct_predictions", 0))
+        for item in observations
+    )
+    labeled = sum(
+        int(_as_mapping(item.get("correctness", {})).get("labeled_predictions", 0))
+        for item in observations
+    )
+    return {
+        "status": "available" if observations else "unavailable",
+        "attributed_count": sum(
+            int(item.get("attributed_count", 0)) for item in observations
+        ),
+        "unresolved_count": sum(
+            int(item.get("unresolved_count", 0)) for item in observations
+        ),
+        "skipped_count": sum(
+            int(item.get("skipped_count", 0)) for item in observations
+        ),
+        "correctness": {
+            "status": "available" if labeled else "unavailable",
+            "labeled_predictions": labeled,
+            "correct_predictions": correct,
+            "accuracy": correct / labeled if labeled else None,
+            "provenance": sorted(
+                {
+                    provenance
+                    for item in observations
+                    for provenance in _as_mapping(item.get("correctness", {})).get(
+                        "provenance", []
+                    )
+                }
+            ),
+        },
+    }
+
+
+def _restructuring_summary(cases: Sequence[CaseEvaluation]) -> RestructuringSummary:
+    usable = [case for case in cases if case.status not in {"failed", "error"}]
+    selected = sum(bool(case.lossless_restructuring) for case in usable)
+    built = sum(
+        case.lossless_restructuring.get("outcome") == "candidate_built"
+        for case in usable
+    )
+    wins = sum(
+        case.lossless_restructuring.get("selection_outcome") == "selected"
+        for case in usable
+    )
+    checked = sum(bool(case.lossless_strong_check) for case in usable)
+    regressions = sum(
+        case.lossless_strong_check.get("regression") is True for case in usable
+    )
+    return RestructuringSummary(
+        status="available" if selected else "unavailable",
+        total_cases=len(usable),
+        selected_for_generation=selected,
+        built_candidates=built,
+        wins=wins,
+        selection_rate=selected / len(usable) if usable else None,
+        win_rate=wins / built if built else None,
+        strong_checked=checked,
+        strong_regressions=regressions,
+        strong_rejection_rate=regressions / checked if checked else None,
+        evidence_kind="observed_run_outcomes" if selected else "unavailable",
     )
 
 
@@ -765,6 +1265,173 @@ def _diagnosis_summary(cases: Sequence[CaseEvaluation]) -> DiagnosisSummary:
         excluded_failed_cases=excluded_failed_cases,
         micro=micro,
         per_gap=per_gap,
+        problem_sentences=_problem_sentence_metrics(cases),
+        task_classification=_task_classification_metrics(cases),
+    )
+
+
+def _task_classification_metrics(
+    cases: Sequence[CaseEvaluation],
+) -> TaskClassificationMetrics:
+    task_labeled = [case for case in cases if case.task_type_labels_present]
+    usable = [case for case in task_labeled if case.status not in {"failed", "error"}]
+    excluded_failed = len(task_labeled) - len(usable)
+    if not usable:
+        reason = (
+            "No evaluation cases include expected_task_type labels."
+            if not task_labeled
+            else "All task type labeled cases failed or errored."
+        )
+        return TaskClassificationMetrics(
+            status="unavailable",
+            metric="exact_task_type_and_parent_fallback",
+            total_cases=len(cases),
+            labeled_cases=0,
+            excluded_failed_cases=excluded_failed,
+            leaf_correct=None,
+            leaf_accuracy=None,
+            parent_correct=None,
+            parent_cases=0,
+            parent_accuracy=None,
+            parent_coverage=None,
+            fallback_count=None,
+            fallback_frequency=None,
+            mean_provider_requests=None,
+            mean_provider_request_delta_vs_legacy=None,
+            mean_classification_latency_ms=None,
+            latency_comparison_status="unavailable",
+            latency_comparison_reason="No matched historical classification-only timings are recorded.",
+            reason=reason,
+        )
+
+    branch_keys = {branch.key for branch in DEFAULT_RUBRIC.task_branches}
+    parent_by_task = {
+        task_key: branch.key
+        for branch in DEFAULT_RUBRIC.task_branches
+        for task_key in branch.children
+    }
+    leaf_correct = sum(
+        case.predicted_task_type == case.expected_task_type for case in usable
+    )
+    parent_cases = 0
+    parent_correct = 0
+    fallback_count = 0
+    for case in usable:
+        is_fallback = case.task_type_fallback_reason is not None
+        fallback_count += int(is_fallback)
+        if not is_fallback or case.predicted_task_type not in branch_keys:
+            continue
+        parent_cases += 1
+        expected_parent = parent_by_task.get(case.expected_task_type or "")
+        if case.expected_task_type in branch_keys:
+            expected_parent = case.expected_task_type
+        parent_correct += int(case.predicted_task_type == expected_parent)
+
+    provider_requests = [
+        case.task_taxonomy_provider_requests
+        for case in usable
+        if case.task_taxonomy_provider_requests is not None
+    ]
+    request_deltas = [
+        case.task_taxonomy_provider_request_delta_vs_legacy
+        for case in usable
+        if case.task_taxonomy_provider_request_delta_vs_legacy is not None
+    ]
+    classification_latencies = [
+        case.task_taxonomy_latency_ms
+        for case in usable
+        if case.task_taxonomy_latency_ms is not None
+    ]
+    return TaskClassificationMetrics(
+        status="available",
+        metric="exact_task_type_and_parent_fallback",
+        total_cases=len(cases),
+        labeled_cases=len(usable),
+        excluded_failed_cases=excluded_failed,
+        leaf_correct=leaf_correct,
+        leaf_accuracy=leaf_correct / len(usable),
+        parent_correct=parent_correct,
+        parent_cases=parent_cases,
+        parent_accuracy=(parent_correct / parent_cases if parent_cases else None),
+        parent_coverage=parent_cases / len(usable),
+        fallback_count=fallback_count,
+        fallback_frequency=fallback_count / len(usable),
+        mean_provider_requests=(
+            math.fsum(provider_requests) / len(provider_requests)
+            if provider_requests
+            else None
+        ),
+        mean_provider_request_delta_vs_legacy=(
+            math.fsum(request_deltas) / len(request_deltas) if request_deltas else None
+        ),
+        mean_classification_latency_ms=(
+            math.fsum(classification_latencies) / len(classification_latencies)
+            if classification_latencies
+            else None
+        ),
+        latency_comparison_status="unavailable",
+        latency_comparison_reason="Matched historical classification-only timings are not recorded.",
+    )
+
+
+def _problem_sentence_metrics(
+    cases: Sequence[CaseEvaluation],
+) -> ProblemSentenceMetrics:
+    labeled_cases = 0
+    excluded_failed_cases = 0
+    counts: dict[str, Counter[str]] = {}
+    for case in cases:
+        if not case.problem_sentence_labels_present:
+            continue
+        if case.status in {"failed", "error"}:
+            excluded_failed_cases += 1
+            continue
+        labeled_cases += 1
+        expected = set(case.expected_problem_sentences)
+        predicted = set(case.predicted_problem_sentences)
+        for kind in {item[0] for item in expected | predicted}:
+            expected_kind = {item for item in expected if item[0] == kind}
+            predicted_kind = {item for item in predicted if item[0] == kind}
+            counter = counts.setdefault(kind, Counter())
+            counter["tp"] += len(expected_kind & predicted_kind)
+            counter["fp"] += len(predicted_kind - expected_kind)
+            counter["fn"] += len(expected_kind - predicted_kind)
+    if labeled_cases == 0:
+        return ProblemSentenceMetrics(
+            status="unavailable",
+            metric="problem_sentence_kind_and_id",
+            labeled_cases=0,
+            excluded_failed_cases=excluded_failed_cases,
+            true_positives=None,
+            false_positives=None,
+            false_negatives=None,
+            precision=None,
+            recall=None,
+            f1=None,
+            false_flags=None,
+            reason="No evaluation cases include expected_problem_sentences labels.",
+        )
+    per_kind = {
+        kind: _gap_metrics(counter["tp"], counter["fp"], counter["fn"])
+        for kind, counter in counts.items()
+    }
+    true_positives = sum(metric.true_positives for metric in per_kind.values())
+    false_positives = sum(metric.false_positives for metric in per_kind.values())
+    false_negatives = sum(metric.false_negatives for metric in per_kind.values())
+    aggregate = _gap_metrics(true_positives, false_positives, false_negatives)
+    return ProblemSentenceMetrics(
+        status="available",
+        metric="problem_sentence_kind_and_id",
+        labeled_cases=labeled_cases,
+        excluded_failed_cases=excluded_failed_cases,
+        true_positives=true_positives,
+        false_positives=false_positives,
+        false_negatives=false_negatives,
+        precision=aggregate.precision,
+        recall=aggregate.recall,
+        f1=aggregate.f1,
+        false_flags=false_positives,
+        per_kind=per_kind,
     )
 
 
@@ -890,6 +1557,34 @@ def _predicted_gaps(
     return tuple(sorted(gaps))
 
 
+def _predicted_problem_sentences(
+    report: Mapping[str, Any],
+) -> tuple[tuple[str, str], ...]:
+    diagnosis = report.get("diagnosis", {})
+    if not isinstance(diagnosis, Mapping):
+        return ()
+    problems = diagnosis.get("problem_sentences", ())
+    if not isinstance(problems, Sequence) or isinstance(problems, (str, bytes)):
+        return ()
+    pairs: set[tuple[str, str]] = set()
+    for item in problems:
+        if not isinstance(item, Mapping):
+            continue
+        kind = item.get("kind")
+        sentence_id = item.get("sentence_id")
+        sentence = item.get("sentence")
+        if sentence_id is None and isinstance(sentence, Mapping):
+            sentence_id = sentence.get("id")
+        if (
+            isinstance(kind, str)
+            and kind.strip()
+            and isinstance(sentence_id, str)
+            and sentence_id.strip()
+        ):
+            pairs.add((kind.strip().lower(), sentence_id.strip()))
+    return tuple(sorted(pairs))
+
+
 def _mapping_gap_type(value: Mapping[str, Any]) -> str | None:
     for key in ("gap_type", "type", "kind", "name", "key", "id"):
         candidate = value.get(key)
@@ -912,6 +1607,13 @@ def _optional_bool(value: object) -> bool | None:
 
 def _optional_string(value: object) -> str | None:
     return value if isinstance(value, str) else None
+
+
+def _optional_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _scores(
@@ -1056,6 +1758,21 @@ def compare_reports(before: HarnessReport, after: HarnessReport) -> dict[str, An
         "only_before_cases": sorted(before_cases.keys() - after_cases.keys()),
         "only_after_cases": sorted(after_cases.keys() - before_cases.keys()),
         "diagnosis": diagnosis_deltas,
+        "task_classification": {
+            field_name: _optional_numeric_delta(
+                getattr(before.diagnosis.task_classification, field_name),
+                getattr(after.diagnosis.task_classification, field_name),
+            )
+            for field_name in (
+                "leaf_accuracy",
+                "parent_accuracy",
+                "parent_coverage",
+                "fallback_frequency",
+                "mean_provider_requests",
+                "mean_provider_request_delta_vs_legacy",
+                "mean_classification_latency_ms",
+            )
+        },
         "improvement": {
             "improvement_rate": delta(("improvement", "improvement_rate")),
             "no_change_rate": delta(("improvement", "no_change_rate")),
@@ -1118,6 +1835,48 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             cost_by_role=item.get("cost_by_role", {}),
             latency_ms=item.get("latency_ms"),
             error=item.get("error"),
+            expected_problem_sentences=tuple(
+                (str(label["kind"]), str(label["sentence_id"]))
+                for label in item.get("expected_problem_sentences", [])
+                if isinstance(label, Mapping)
+                and label.get("kind") is not None
+                and label.get("sentence_id") is not None
+            ),
+            problem_sentence_labels_present=bool(
+                item.get("problem_sentence_labels_present", False)
+            ),
+            predicted_problem_sentences=tuple(
+                (str(label["kind"]), str(label["sentence_id"]))
+                for label in item.get("predicted_problem_sentences", [])
+                if isinstance(label, Mapping)
+                and label.get("kind") is not None
+                and label.get("sentence_id") is not None
+            ),
+            expected_task_type=(
+                str(item["expected_task_type"])
+                if item.get("expected_task_type") is not None
+                else None
+            ),
+            task_type_labels_present=bool(item.get("task_type_labels_present", False)),
+            predicted_task_type=(
+                str(item["predicted_task_type"])
+                if item.get("predicted_task_type") is not None
+                else None
+            ),
+            task_type_fallback_reason=(
+                str(item["task_type_fallback_reason"])
+                if item.get("task_type_fallback_reason") is not None
+                else None
+            ),
+            task_taxonomy_provider_requests=item.get("task_taxonomy_provider_requests"),
+            task_taxonomy_provider_request_delta_vs_legacy=item.get(
+                "task_taxonomy_provider_request_delta_vs_legacy"
+            ),
+            task_taxonomy_latency_ms=item.get("task_taxonomy_latency_ms"),
+            diagnosis_request_evidence=item.get("diagnosis_request_evidence", {}),
+            lossless_restructuring=item.get("lossless_restructuring", {}),
+            lossless_strong_check=item.get("lossless_strong_check", {}),
+            failure_attribution=item.get("failure_attribution", {}),
         )
         for item in value.get("cases", [])
         if isinstance(item, Mapping)
@@ -1158,6 +1917,8 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             excluded_failed_cases=int(diagnosis_data.get("excluded_failed_cases", 0)),
             micro=micro,
             per_gap=gap_metrics,
+            problem_sentences=_problem_sentence_metrics(cases),
+            task_classification=_task_classification_metrics(cases),
         ),
         improvement=ImprovementSummary(
             comparable_cases=int(improvement_data.get("comparable_cases", 0)),
@@ -1174,6 +1935,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
                 improvement_data.get("mean_regression_magnitude", 0.0)
             ),
         ),
+        restructuring=_restructuring_summary(cases),
         cost=CostSummary(
             currency=str(cost_data.get("currency", "USD")),
             total=float(cost_data.get("total", 0.0)),
@@ -1190,6 +1952,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             p95=latency_data.get("p95"),
             unavailable_cases=int(latency_data.get("unavailable_cases", 0)),
         ),
+        failure_attribution=value.get("failure_attribution", {}),
     )
 
 
@@ -1205,6 +1968,7 @@ __all__ = [
     "HarnessOptions",
     "HarnessReport",
     "ImprovementSummary",
+    "RestructuringSummary",
     "LatencySummary",
     "compare_reports",
     "default_engine_factory",

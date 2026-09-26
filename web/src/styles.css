@@ -102,6 +102,74 @@ button:focus-visible {
   outline-offset: 2px;
 }
 
+.prompt-health {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border: 1px solid #30363d;
+  border-radius: 9px;
+  background: #101820;
+  font-size: 0.85rem;
+}
+
+.prompt-health-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.prompt-health .prompt-health-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.prompt-health-usage,
+.prompt-health-muted {
+  color: #8b949e;
+}
+
+.prompt-health-score {
+  margin: 14px 0 4px;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.prompt-health-score small {
+  color: #8b949e;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.prompt-health-dimensions,
+.prompt-health-flags ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.prompt-health-dimensions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid #26313c;
+}
+
+.prompt-health-flags button {
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #54452f;
+  border-radius: 5px;
+  color: #f5d08a;
+  background: #241e18;
+  text-align: left;
+  cursor: pointer;
+}
+
 .form-actions {
   align-items: end;
   display: flex;

@@ -30,7 +30,7 @@ def _normalized(value: Any, run_ids: set[str]) -> Any:
         return {
             key: _normalized(item, run_ids)
             for key, item in value.items()
-            if key != "timing"
+            if key not in {"timing", "classification_latency_ms"}
         }
     if isinstance(value, list):
         return [_normalized(item, run_ids) for item in value]
@@ -43,7 +43,14 @@ def _normalized(value: Any, run_ids: set[str]) -> Any:
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_scenario_results_are_unchanged(name: str, tmp_path: Path) -> None:
     make_gateway, run = SCENARIOS[name]
-    results = run(PromptOptimizer(gateway=make_gateway(), store=RunStore(":memory:")))
+    results = run(
+        PromptOptimizer(
+            gateway=make_gateway(),
+            store=RunStore(":memory:"),
+            writer_instruction_version=4,
+            speculative_diagnosis=False,
+        )
+    )
     rendered = json.dumps(
         _normalized(results, {result["run_id"] for result in results}),
         indent=2,

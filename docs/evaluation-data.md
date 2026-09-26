@@ -21,6 +21,103 @@ The recording also stores each case's measured cost and latency. Replay uses
 those observations while recomputing diagnosis and improvement from recorded
 model responses; it never makes provider calls.
 
+## Success-test screening and grading comparison
+
+New optimizer reports include `test_screening` decisions and `grading_observation`.
+The latter records one-output Gateway batch calls, question count, serialized
+input bytes, a rough token estimate, incomplete/oversized output counts, and
+measured judge cost when the Gateway supplied usage. Estimates are not charges.
+Historical reports omit these fields; missing comparisons remain `null`.
+
+To compare paired runs, save two JSON files with the same case IDs:
+
+```json
+{"cases":[{"case_id":"example-1","result":{"report":{},"cost":{}}}]}
+```
+
+Each `result` should be the full `PromptOptimizer.optimize` result for that
+case. Use the same prompt, generated tests, candidate prompts, and panel outputs
+to make grading agreement interpretable. Optional independent safety labels map
+case IDs to IDs of criteria known to be unsafe:
+
+```json
+{"example-1":["t1"]}
+```
+
+```sh
+uv run --locked python -m prompt_enhancer.evaluation.grading_comparison \
+  .local/evaluation/grading-before.json .local/evaluation/grading-after.json \
+  --unsafe-labels .local/evaluation/unsafe-criteria.json \
+  --output .local/evaluation/grading-comparison.json
+```
+
+The report compares Gateway batch calls, serialized input estimates, per-role
+cost, and matched grading scores. It identifies any measured judge-cost increase
+above 10% and shows the screening and grading charge breakdown. Agreement is
+unavailable when outputs or criteria differ; false-positive rate is unavailable
+without independent unsafe-test labels. Synthetic fixtures establish the
+comparison behavior, not live savings or screening accuracy.
+
+## Speculative diagnosis comparison
+
+Current runs record `diagnosis.request_evidence`: completeness, actual Jev
+transport attempts (including HTTP retries), the dispatch mode, fallback
+reason, and per-request timing provenance. The active rubric's questions join
+the speculative batch. Existing replay bundles without a dispatch field keep
+their sequential request protocol. A sequential baseline can opt into request
+observation with `observe_sequential_diagnosis=True` when constructing
+`PromptOptimizer`; the evaluation CLI's `--diagnosis-dispatch sequential`
+selects that measured baseline for an explicit live collection.
+
+Given two harness JSON reports over the same case IDs, compare them with:
+
+```sh
+uv run --locked python -m prompt_enhancer.evaluation.diagnosis_fanout \
+  .local/evaluation/diagnosis-sequential.json \
+  .local/evaluation/diagnosis-speculative.json \
+  --output .local/evaluation/diagnosis-comparison.json
+```
+
+The comparison reports deterministic task/gap/sentence parity, provider-call
+counts, fallback frequency, and the existing labeled gap precision and recall.
+It reports diagnosis p50/p95 only for measured provider timings; scripted and
+replay execution timings are identified as unavailable for latency claims.
+Matched scripted answers establish implementation parity, while different live
+Jev answers may reflect inference noise rather than the request schedule.
+
+## Sentence-level diagnosis metrics
+
+The evaluation report also compares confirmed sentence problems with optional
+exact labels. Add `expected_problem_sentences` to a case as a list of
+`{"kind": "vagueness", "sentence_id": "s0001"}` objects. The metric compares
+the `(kind, sentence_id)` pairs and reports precision, recall, false flags, and
+per-kind counts. Existing datasets label checklist gaps but do not identify
+problem sentences, so the report marks this metric `unavailable` with a reason
+until a dataset already has sentence-level labels. It does not treat missing
+labels as negative examples. Synthetic labels can test the report path, but they
+do not establish real-world accuracy; the default existence cutoff remains a
+provisional policy value.
+
+## Task taxonomy metrics
+
+An evaluation case may include `expected_task_type` with a taxonomy leaf key
+such as `coding`, `writing`, or `research`. The report scores exact leaf
+accuracy only over cases with explicit task type labels. It also reports how
+often diagnosis fell back to a parent branch, the correctness and coverage of
+those parent fallbacks, and observed taxonomy decision-request counts and
+classification latency. The taxonomy request count measures requests made during
+classification; `shared_prefetch` identifies cases where a prior diagnosis request
+already supplied those answers. The legacy request baseline is an estimate from the
+historical root and leaf path, and the reported delta subtracts that baseline from
+the observed incremental count. Cases without a label do not count as incorrect; when
+there are no usable labels, accuracy is `null` and the metric is marked
+`unavailable` with a reason.
+
+Classification latency is the observed time spent selecting a task type in
+that run. It is not presented as a before/after latency comparison unless the
+recording has matched historical classification-only timings. Synthetic task
+labels validate the metric plumbing but do not establish classifier accuracy.
+
 The current model split is OpenCode Go for `space-bunny-free` (writer),
 `glm-5.3-flash` (strong check), `mimo-v2.6-flash`, and
 `muse-spark-1.3-contributor` (the two additional Deep weak models). OpenRouter
@@ -171,6 +268,67 @@ accuracy. Any live mode must be explicit and have a finite, positive dollar
 budget (`--budget USD`); calibration rejects `--live` without an explicit
 budget and `--record`. Keep private prompts, answers, reports, and artifacts under ignored
 `.local/evaluation/`.
+
+## Choice and Score option-order experiment
+
+The order-bias experiment compares repeated asks in the declared order and
+reverse order with ordinary repeat variation. It operates on recorded success
+tests and the prompt/output pair each test judged. It does not include Noul.
+Choice probabilities stay keyed by their semantic option labels. Score
+probability indexes are mapped back to the original semantic levels before
+expected-level mass or argmax changes are compared.
+
+Each version 1 manifest case has an `id`, `source_group` identifying one
+distinct prompt/output pair, `provenance` (`matched_recording` or
+`synthetic_known_answer`), `prompt`, `output`, and `success_tests`. Choice tests
+include the expected option, declared `options`, and their
+`option_descriptions`; Score tests include ordered `levels` and the expected
+level. A source group must not refer to more than one prompt/output pair.
+
+Strict replay needs the exact manifest and all unique recorded request
+identities. It performs no network fallback:
+
+```sh
+uv run python -m prompt_enhancer.evaluation order-bias \
+  .local/evaluation/order-bias-manifest.json \
+  --replay .local/evaluation/order-bias-recording.json \
+  --output .local/evaluation/order-bias-report.json \
+  --artifact .local/evaluation/order-bias-policy.json
+```
+
+Live collection defaults to three independent requests per order. It is
+bounded to 100 cases and 1,000 question evaluations and requires a finite dollar
+budget plus `--record`:
+
+```sh
+uv run --env-file .env python -m prompt_enhancer.evaluation order-bias \
+  .local/evaluation/order-bias-manifest.json \
+  --live --budget 0.50 \
+  --record .local/evaluation/order-bias-recording.json \
+  --output .local/evaluation/order-bias-report.json \
+  --artifact .local/evaluation/order-bias-policy.json
+```
+
+The report keeps synthetic results, matched source-run billing, and experiment
+cost, token use, latency, and the estimated cost ceiling in separate fields.
+The fixed-seed paired bootstrap resamples distinct source groups 1,000 times.
+At least 30 complete matched groups are required to make a policy eligible.
+`single` is recommended when the 95% upper bounds for excess expected-mass
+shift and excess semantic-flip rate are each at most 0.01. `mean_pair` is
+recommended if either lower bound exceeds 0.01; other outcomes recommend
+`insufficient_evidence`. These initial tolerances are policy choices, not a
+claim of universal Jev accuracy.
+
+Pass the saved artifact to `PromptOptimizer(grading_policy=...)`, or set
+`PROMPT_ENHANCER_ORDER_BIAS_POLICY` to its path for the application server, to
+use it at runtime. A matching question schema and Jev snapshot are required.
+The run report and web report show the selected policy and its reason per
+success test. `single` asks once;
+`mean_pair` averages the semantically aligned Choice or Score pass masses. An
+absent, synthetic-only, partial, incompatible, or inconclusive artifact keeps
+the named `legacy_min_pair` behavior. Noul continues to use one direct ask. No
+matched order-bias dataset is checked into this repository, so the default
+remains `legacy_min_pair`; synthetic fixtures verify code paths only.
 
 ## Local coding-agent sessions
 

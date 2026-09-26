@@ -16,6 +16,11 @@ from .history import RunNotFound
 from .jobs import JobBusy, JobNotFound, RunJobs
 from .models import new_run_id
 from .optimizer import PromptOptimizer, RunNotFoundError
+from .prompt_health import (
+    PromptHealthService,
+    PromptHealthStore,
+    isolated_health_gateway,
+)
 from .repeat import _reject_provider_secrets
 from .store import RunStore
 
@@ -34,6 +39,12 @@ class AnswersRequest(BaseModel):
 
 class AssumptionRequest(BaseModel):
     assumption: dict[str, Any]
+
+
+class PromptHealthRequest(BaseModel):
+    prompt: str
+    revision: int = Field(ge=0)
+    session_id: str = Field(min_length=1, max_length=128)
 
 
 def _public_catalog(settings: Settings) -> dict[str, Any]:
@@ -109,6 +120,7 @@ def create_app(
     optimizer: PromptOptimizer | None = None,
     store: RunStore | None = None,
     settings: Settings | None = None,
+    health_gateway: Any | None = None,
 ) -> FastAPI:
     """Create an app with injectable engine/store seams for local testing."""
     app_settings = settings or getattr(optimizer, "config", None) or Settings.from_env()
@@ -125,6 +137,18 @@ def create_app(
     app.state.optimizer = app_optimizer
     app.state.store = app_store
     app.state.settings = app_settings
+    optimizer_gateway = getattr(app_optimizer, "gateway", None)
+    health_service = PromptHealthService(
+        health_gateway
+        or (
+            isolated_health_gateway(optimizer_gateway)
+            if optimizer_gateway is not None
+            else None
+        ),
+        PromptHealthStore(getattr(app_store, "path", ":memory:")),
+        decision_policy=getattr(app_optimizer, "decision_policy", None),
+    )
+    app.state.prompt_health = health_service
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -136,6 +160,16 @@ def create_app(
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/prompt-health/settings")
+    def prompt_health_settings() -> dict[str, Any]:
+        return health_service.settings()
+
+    @app.post("/api/prompt-health")
+    def prompt_health(request: PromptHealthRequest) -> dict[str, Any]:
+        return health_service.assess(
+            request.prompt, request.revision, request.session_id
+        )
 
     @app.post("/api/optimize")
     def optimize(request: OptimizeRequest) -> dict[str, Any]:
@@ -383,7 +417,10 @@ def create_app(
 
     @app.get("/api/settings")
     def get_settings() -> dict[str, Any]:
-        return app_optimizer.get_model_settings()
+        return {
+            **app_optimizer.get_model_settings(),
+            "live_health": health_service.settings(),
+        }
 
     @app.put("/api/settings")
     def put_settings(values: dict[str, Any]) -> dict[str, Any]:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import json as json_module
 import math
 import os
 import time
@@ -238,7 +239,16 @@ class HttpTransport:
         json: Any | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
-        data = None if json is None else json_module_dumps(json).encode("utf-8")
+        # Preserve insertion order in Choice criteria: their declared option
+        # order is an experimental input. Replay keys use the canonical,
+        # sorted json_module_dumps helper below instead.
+        data = (
+            None
+            if json is None
+            else json_module.dumps(
+                json, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")
+        )
         request = urllib.request.Request(url, data=data, method=method)
         for key, value in (headers or {}).items():
             request.add_header(key, value)
@@ -358,6 +368,7 @@ class HttpGateway:
             "muse-spark-1.3-contributor",
         } | {item if isinstance(item, str) else item.id for item in (go_models or ())}
         self.calls: list[dict[str, Any]] = []
+        self.transport_attempts_by_role: dict[str, int] = {}
         self.decision_log: list[dict[str, Any]] = []
         self._provider_status: dict[str, dict[str, Any]] = {}
 
@@ -383,6 +394,7 @@ class HttpGateway:
         """Set a stable Go session value and return it."""
         self.usage = UsageLedger()
         self.decision_log = []
+        self.transport_attempts_by_role = {}
         if run_id:
             session = str(run_id)
         else:
@@ -473,6 +485,9 @@ class HttpGateway:
         last_status: int | None = None
         for attempt in range(attempts):
             try:
+                self.transport_attempts_by_role[role] = (
+                    self.transport_attempts_by_role.get(role, 0) + 1
+                )
                 response = self._attempt(decision, payload)
                 status = _response_status(response)
                 last_status = status
@@ -928,6 +943,7 @@ class ReplayGateway(ScriptedGateway):
         super().__init__(**kwargs)
         self.recordings = dict(recordings)
         self.decision_provenance = dict(decision_provenance or {})
+        self.diagnosis_request_byte_limit: int | None = None
         if not allow_snapshot_mismatch:
             snapshots = {
                 item.get("answered_by")
