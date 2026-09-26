@@ -70,6 +70,7 @@ from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
 from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
+    SuccessTestScreenCache,
 )
 
 if TYPE_CHECKING:
@@ -144,6 +145,7 @@ class PromptOptimizer:
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
+        self.success_test_screen_cache = SuccessTestScreenCache()
         self.sentence_diagnosis_version = sentence_diagnosis_version
         self.task_taxonomy_version = task_taxonomy_version
         from .evaluation.calibration import (
@@ -505,6 +507,8 @@ class PromptOptimizer:
                 writer_instruction_version=self.writer_instruction_version,
                 prior_failures=tuple(request.prior_failures),
                 grading_policy=self.grading_policy,
+                screen_cache=self.success_test_screen_cache,
+                decision_policy=self.decision_policy,
             )
             return run_round(self.gateway, plan, on_stage=self._stage)
 

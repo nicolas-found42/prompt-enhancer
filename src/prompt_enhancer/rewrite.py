@@ -18,8 +18,8 @@ from .gateway import Gateway, completion_text, writer_messages
 # version 3 adds explicit edit permissions and treats prior fidelity evidence as
 # an unresolved candidate check rather than a fact about user intent. Version 4
 # enables the separately built lossless restructuring strategy in the Round.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4)
-CURRENT_WRITER_INSTRUCTION_VERSION = 4
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5)
+CURRENT_WRITER_INSTRUCTION_VERSION = 5
 
 
 class CandidateWriter:
@@ -84,6 +84,7 @@ class CandidateWriter:
             2: version_two_instructions,
             3: current_instructions,
             4: current_instructions,
+            5: current_instructions,
         }[self.instruction_version]
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"

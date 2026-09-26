@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -22,6 +23,8 @@ from prompt_enhancer.evaluation.order_bias import (
 from prompt_enhancer.gateway import GatewayConfig, HttpGateway, HttpTransport
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.store import RunStore
+
+PromptOptimizer = partial(PromptOptimizer, writer_instruction_version=4)
 
 
 def _manifest(*, kind: str = "choice", provenance: str = "synthetic_known_answer"):

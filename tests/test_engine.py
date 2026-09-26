@@ -1,4 +1,5 @@
 import json
+from functools import partial
 
 import pytest
 
@@ -11,6 +12,10 @@ from prompt_enhancer.diagnosis import (
     TaskType,
 )
 from prompt_enhancer.gateway import ProviderError, ScriptedGateway
+
+# These regressions pin the pre-screening request protocol; current screening
+# and shared-state grading are exercised in test_issue44_screen_and_grade.py.
+PromptOptimizer = partial(PromptOptimizer, writer_instruction_version=4)
 
 
 def test_model_settings_do_not_expose_server_credentials(monkeypatch) -> None:

@@ -205,7 +205,9 @@ def _run_lossless_round(
 
     prompt = "Read the background notes. Summarize the report."
     result = PromptOptimizer(
-        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(chat=chat, decision=decide),
+        writer_instruction_version=4,
     ).optimize(
         prompt,
         {

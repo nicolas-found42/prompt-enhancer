@@ -21,6 +21,43 @@ The recording also stores each case's measured cost and latency. Replay uses
 those observations while recomputing diagnosis and improvement from recorded
 model responses; it never makes provider calls.
 
+## Success-test screening and grading comparison
+
+New optimizer reports include `test_screening` decisions and `grading_observation`.
+The latter records one-output Gateway batch calls, question count, serialized
+input bytes, a rough token estimate, incomplete/oversized output counts, and
+measured judge cost when the Gateway supplied usage. Estimates are not charges.
+Historical reports omit these fields; missing comparisons remain `null`.
+
+To compare paired runs, save two JSON files with the same case IDs:
+
+```json
+{"cases":[{"case_id":"example-1","result":{"report":{},"cost":{}}}]}
+```
+
+Each `result` should be the full `PromptOptimizer.optimize` result for that
+case. Use the same prompt, generated tests, candidate prompts, and panel outputs
+to make grading agreement interpretable. Optional independent safety labels map
+case IDs to IDs of criteria known to be unsafe:
+
+```json
+{"example-1":["t1"]}
+```
+
+```sh
+uv run --locked python -m prompt_enhancer.evaluation.grading_comparison \
+  .local/evaluation/grading-before.json .local/evaluation/grading-after.json \
+  --unsafe-labels .local/evaluation/unsafe-criteria.json \
+  --output .local/evaluation/grading-comparison.json
+```
+
+The report compares Gateway batch calls, serialized input estimates, per-role
+cost, and matched grading scores. It identifies any measured judge-cost increase
+above 10% and shows the screening and grading charge breakdown. Agreement is
+unavailable when outputs or criteria differ; false-positive rate is unavailable
+without independent unsafe-test labels. Synthetic fixtures establish the
+comparison behavior, not live savings or screening accuracy.
+
 ## Sentence-level diagnosis metrics
 
 The evaluation report also compares confirmed sentence problems with optional
