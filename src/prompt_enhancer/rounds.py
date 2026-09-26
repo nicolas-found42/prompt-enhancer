@@ -24,6 +24,7 @@ from .evaluation.order_bias import OrderBiasPolicy
 from .fidelity import check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
+from .grading_cascade import CascadeBudget
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import Tier, utc_now
@@ -200,6 +201,7 @@ class RoundOutcome:
     test_screening: Mapping[str, Any] | None = None
     grading_observation: Mapping[str, Any] | None = None
     output_screen: tuple[dict[str, Any], ...] | None = None
+    grading_cascade: Mapping[str, Any] | None = None
 
     @property
     def continue_rounds(self) -> bool:
@@ -253,6 +255,8 @@ class RoundOutcome:
                 report["grading_observation"] = dict(self.grading_observation)
             if self.output_screen is not None:
                 report["output_screen"] = list(self.output_screen)
+            if self.grading_cascade is not None:
+                report["grading_cascade"] = dict(self.grading_cascade)
             return report
         assert (
             self.panel is not None
@@ -290,6 +294,11 @@ class RoundOutcome:
             **(
                 {"output_screen": list(self.output_screen)}
                 if self.output_screen is not None
+                else {}
+            ),
+            **(
+                {"grading_cascade": dict(self.grading_cascade)}
+                if self.grading_cascade is not None
                 else {}
             ),
             **(
@@ -553,6 +562,7 @@ def run_round(
     )
     stage("grading")
     grading_observation: dict[str, Any] = {}
+    cascade_observation: dict[str, Any] = {}
     panel_grades, grading_answers = grade_panel_with_jev(
         panel.results,
         list(tests),
@@ -563,6 +573,18 @@ def run_round(
         shared_state=plan.writer_instruction_version >= 5,
         output_screen=plan.writer_instruction_version >= 6,
         decision_policy=plan.decision_policy,
+        cascade_budget=CascadeBudget.for_tier(
+            plan.tier.value,
+            pair_cap=settings.grading_cascade_pair_cap,
+            dollar_cap=settings.grading_cascade_dollar_cap,
+            judge_reservation_usd=settings.grading_confirmation_reservation_usd,
+        )
+        if plan.writer_instruction_version >= 7
+        else None,
+        cascade_observation=cascade_observation
+        if plan.writer_instruction_version >= 7
+        else None,
+        cascade_strong_model=settings.strong_check_model,
         measurements=grading_observation
         if plan.writer_instruction_version >= 5
         else None,
@@ -593,7 +615,9 @@ def run_round(
             and panel_grades[candidate.candidate_id].ungradable_outputs == 0
             and original_grade.ungradable_outputs == 0
             and panel_grades[candidate.candidate_id].unresolved_screen_outputs == 0
-            and original_grade.unresolved_screen_outputs == 0,
+            and original_grade.unresolved_screen_outputs == 0
+            and panel_grades[candidate.candidate_id].unresolved_grade_outputs == 0
+            and original_grade.unresolved_grade_outputs == 0,
             rejection_reasons=(
                 (
                     ()
@@ -613,6 +637,12 @@ def run_round(
                     ("weak-panel output screen was unresolved",)
                     if panel_grades[candidate.candidate_id].unresolved_screen_outputs
                     or original_grade.unresolved_screen_outputs
+                    else ()
+                )
+                + (
+                    ("weak-panel grade confirmation was unresolved",)
+                    if panel_grades[candidate.candidate_id].unresolved_grade_outputs
+                    or original_grade.unresolved_grade_outputs
                     else ()
                 )
             ),
@@ -675,6 +705,9 @@ def run_round(
             if "output_screen" in answer
         )
         if plan.writer_instruction_version >= 6
+        else None,
+        grading_cascade=cascade_observation
+        if plan.writer_instruction_version >= 7
         else None,
         candidates=tuple(item.to_dict() for item in ranking.ranked),
         lossless_restructuring={

@@ -18,6 +18,8 @@ class TierBudget:
     samples: int
     max_rounds: int
     name: str = "standard"
+    grading_confirmation_pairs: int = 0
+    grading_cascade_dollars: float = 0.0
 
     def to_dict(self) -> dict[str, int | str]:
         return {
@@ -63,9 +65,23 @@ class Tier(StrEnum):
 _BUDGETS: dict[Tier, TierBudget] = {
     Tier.FAST: TierBudget(candidates=3, models=2, samples=1, max_rounds=1, name="fast"),
     Tier.STANDARD: TierBudget(
-        candidates=4, models=3, samples=2, max_rounds=2, name="standard"
+        candidates=4,
+        models=3,
+        samples=2,
+        max_rounds=2,
+        name="standard",
+        grading_confirmation_pairs=10,
+        grading_cascade_dollars=0.02,
     ),
-    Tier.DEEP: TierBudget(candidates=6, models=5, samples=3, max_rounds=3, name="deep"),
+    Tier.DEEP: TierBudget(
+        candidates=6,
+        models=5,
+        samples=3,
+        max_rounds=3,
+        name="deep",
+        grading_confirmation_pairs=30,
+        grading_cascade_dollars=0.05,
+    ),
 }
 
 RunStatus = Literal["completed", "needs_input", "failed"]

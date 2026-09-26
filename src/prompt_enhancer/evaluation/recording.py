@@ -31,6 +31,10 @@ class RecordingGateway:
         self.faithfulness_threshold: float | None = None
         self.sentence_diagnosis_version = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
         self.task_taxonomy_version = TASK_TAXONOMY_PROTOCOL_VERSION
+        self.decision_policy_artifacts: list[dict[str, Any]] = []
+        self.decision_policy_version: str | None = None
+        self.pricing_models: list[dict[str, Any]] = []
+        self.cascade_settings: dict[str, Any] | None = None
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
         self.checklist_impacts: dict[str, str] | None = checklist_impacts(
@@ -74,6 +78,13 @@ class RecordingGateway:
             bundle["writer_instruction_version"] = self.writer_instruction_version
         if self.faithfulness_threshold is not None:
             bundle["faithfulness_threshold"] = self.faithfulness_threshold
+        if self.decision_policy_artifacts:
+            bundle["decision_policy_artifacts"] = self.decision_policy_artifacts
+            bundle["decision_policy_version"] = self.decision_policy_version
+        if self.pricing_models:
+            bundle["pricing_models"] = self.pricing_models
+        if self.cascade_settings is not None:
+            bundle["cascade_settings"] = self.cascade_settings
         if self.checklist_keys is not None:
             bundle["checklist_keys"] = self.checklist_keys
         if self.checklist_impacts is not None:
@@ -168,7 +179,18 @@ class RecordingGateway:
 
     def list_models(self, *, refresh: bool = False) -> Any:
         # The model catalog and ledger are not part of the Gateway interface.
-        return cast(Any, self.gateway).list_models(refresh=refresh)
+        snapshot = cast(Any, self.gateway).list_models(refresh=refresh)
+        self.pricing_models = [
+            {
+                "id": model.id,
+                "provider": model.provider,
+                "input_cost_per_token": model.input_cost_per_token,
+                "output_cost_per_token": model.output_cost_per_token,
+            }
+            for model in snapshot.models
+        ]
+        self.save()
+        return snapshot
 
     def usage_report(self) -> dict[str, Any]:
         return self.gateway.usage_report()

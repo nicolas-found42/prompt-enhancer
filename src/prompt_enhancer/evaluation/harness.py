@@ -395,6 +395,10 @@ class _ReplayBundle:
     checklist_impacts: Mapping[str, str] | None = None
     sentence_diagnosis_version: int = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
     task_taxonomy_version: int = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
+    pricing_models: tuple[Mapping[str, Any], ...] = ()
+    decision_policy_artifacts: tuple[Mapping[str, Any], ...] = ()
+    decision_policy_version: str | None = None
+    cascade_settings: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -670,6 +674,7 @@ def default_engine_factory(
 
     from dataclasses import replace
 
+    from ..catalog import ModelInfo, StaticModelCatalog
     from ..config import Settings
     from ..diagnosis import (
         DEFAULT_RUBRIC,
@@ -680,6 +685,7 @@ def default_engine_factory(
         with_impacts,
     )
     from ..optimizer import PromptOptimizer
+    from .calibration import DecisionPolicy
 
     if replay_path is None:
         return PromptOptimizer()
@@ -709,23 +715,48 @@ def default_engine_factory(
     configured_pin = Settings.from_env().judge_model
     recorded_pin = bundle.jev_model or configured_pin
     try:
+        priced_models = [
+            ModelInfo(
+                id=str(item["id"]),
+                provider=str(item["provider"]),
+                input_cost_per_token=item.get("input_cost_per_token"),
+                output_cost_per_token=item.get("output_cost_per_token"),
+            )
+            for item in bundle.pricing_models
+        ]
+        catalog = StaticModelCatalog(
+            [model for model in priced_models if model.provider == "go"],
+            [model for model in priced_models if model.provider == "openrouter"],
+        )
         replay_gateway = ReplayGateway(
             recordings,
             decision_provenance=bundle.decision_provenance,
             jev_model=recorded_pin,
             expected_snapshot=configured_pin,
             allow_snapshot_mismatch=allow_snapshot_mismatch,
+            catalog=catalog,
         )
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
+    replay_settings = replace(
+        Settings.from_env(),
+        judge_model=recorded_pin,
+        **bundle.cascade_settings,
+    )
     return PromptOptimizer(
         gateway=replay_gateway,
-        config=replace(Settings.from_env(), judge_model=recorded_pin),
+        config=replay_settings,
         diagnosis_rubric=rubric,
         writer_instruction_version=bundle.writer_instruction_version,
         faithfulness_threshold=bundle.faithfulness_threshold,
         sentence_diagnosis_version=bundle.sentence_diagnosis_version,
         task_taxonomy_version=bundle.task_taxonomy_version,
+        decision_policy=DecisionPolicy(
+            artifacts=bundle.decision_policy_artifacts,
+            policy_version=bundle.decision_policy_version or "issue-50-v1",
+        )
+        if bundle.decision_policy_artifacts
+        else None,
     )
 
 
@@ -762,6 +793,10 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
             "task_taxonomy_version",
             HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
         )
+        raw_pricing_models = raw.get("pricing_models", [])
+        raw_policy_artifacts = raw.get("decision_policy_artifacts", [])
+        raw_policy_version = raw.get("decision_policy_version")
+        raw_cascade_settings = raw.get("cascade_settings", {})
     else:
         recordings = replay_path
         provenance = {}
@@ -775,6 +810,63 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_impacts = None
         sentence_diagnosis_version = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
         task_taxonomy_version = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
+        raw_pricing_models = []
+        raw_policy_artifacts = []
+        raw_policy_version = None
+        raw_cascade_settings = {}
+    if not isinstance(raw_cascade_settings, Mapping) or set(raw_cascade_settings) - {
+        "grading_cascade_pair_cap",
+        "grading_cascade_dollar_cap",
+        "grading_confirmation_reservation_usd",
+    }:
+        raise EvaluationError("replay cascade_settings contains unknown fields")
+    pair_cap = raw_cascade_settings.get("grading_cascade_pair_cap")
+    dollar_cap = raw_cascade_settings.get("grading_cascade_dollar_cap")
+    reservation = raw_cascade_settings.get("grading_confirmation_reservation_usd")
+    if pair_cap is not None and (
+        isinstance(pair_cap, bool) or not isinstance(pair_cap, int) or pair_cap < 0
+    ):
+        raise EvaluationError("replay cascade pair cap must be non-negative")
+    if any(
+        value is not None
+        and (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        )
+        for value in (dollar_cap, reservation)
+    ):
+        raise EvaluationError("replay cascade dollar settings must be non-negative")
+    if not isinstance(raw_pricing_models, list) or any(
+        not isinstance(item, Mapping)
+        or not isinstance(item.get("id"), str)
+        or not isinstance(item.get("provider"), str)
+        or item.get("provider") not in {"go", "openrouter"}
+        or any(
+            rate is not None
+            and (
+                isinstance(rate, bool)
+                or not isinstance(rate, (int, float))
+                or not math.isfinite(rate)
+                or rate < 0
+            )
+            for rate in (
+                item.get("input_cost_per_token"),
+                item.get("output_cost_per_token"),
+            )
+        )
+        for item in raw_pricing_models
+    ):
+        raise EvaluationError("replay pricing_models must contain valid model rates")
+    if not isinstance(raw_policy_artifacts, list) or any(
+        not isinstance(item, Mapping) for item in raw_policy_artifacts
+    ):
+        raise EvaluationError("replay decision_policy_artifacts must be objects")
+    if raw_policy_artifacts and (
+        not isinstance(raw_policy_version, str) or not raw_policy_version
+    ):
+        raise EvaluationError("replay decision_policy_version is required")
     if raw_impacts is not None and (
         not isinstance(raw_impacts, Mapping)
         or any(
@@ -893,6 +985,10 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         checklist_impacts=dict(raw_impacts) if raw_impacts is not None else None,
         sentence_diagnosis_version=sentence_diagnosis_version,
         task_taxonomy_version=task_taxonomy_version,
+        pricing_models=tuple(raw_pricing_models),
+        decision_policy_artifacts=tuple(raw_policy_artifacts),
+        decision_policy_version=raw_policy_version,
+        cascade_settings=dict(raw_cascade_settings),
     )
 
 

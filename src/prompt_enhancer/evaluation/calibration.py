@@ -2746,6 +2746,7 @@ class DecisionPolicy:
     ) -> None:
         self.policy_version = policy_version
         self._questions: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+        self._artifact_dicts: list[dict[str, Any]] = []
         sources: list[object] = []
         if artifact is not None:
             sources.append(artifact)
@@ -2761,6 +2762,7 @@ class DecisionPolicy:
             )
             if not isinstance(loaded, CalibrationArtifact):
                 raise CalibrationError("DecisionPolicy accepts calibration artifacts")
+            self._artifact_dicts.append(loaded.to_dict())
             for key, value in loaded.questions.items():
                 identity = value.get("identity")
                 question_id = (
@@ -2782,6 +2784,11 @@ class DecisionPolicy:
     @property
     def question_ids(self) -> tuple[str, ...]:
         return tuple(sorted(self._questions))
+
+    @property
+    def artifact_dicts(self) -> tuple[dict[str, Any], ...]:
+        """The exact calibration inputs needed for a strict runtime replay."""
+        return tuple(self._artifact_dicts)
 
     def has_candidate(self, question_id: str) -> bool:
         return question_id in self._questions
