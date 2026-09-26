@@ -69,6 +69,26 @@ const gradingPolicyReasons: Record<string, string> = {
   outside_order_bias_experiment: "Order bias applies only to Choice and Score",
 };
 
+const attributionKinds: Record<string, string> = {
+  ignored_constraint: "Ignored constraint",
+  misread_instruction: "Misread instruction",
+  missing_context_in_prompt: "Missing context in prompt",
+  format_not_followed: "Format not followed",
+  task_not_attempted: "Task not attempted",
+  other: "Other prompt wording issue",
+};
+
+const attributionReasons: Record<string, string> = {
+  source_backed_hypothesis: "Source backed hypothesis",
+  low_confidence_or_unsupported_source: "Uncertain or unsupported source",
+  missing_answering_snapshot: "Answering snapshot unavailable",
+  incomplete_answer: "Incomplete answer",
+  pair_budget_exhausted: "Pair limit reached",
+  dollar_budget_exhausted: "Spending limit reached",
+  missing_trustworthy_pricing: "Pricing unavailable",
+  request_exceeds_provider_limit: "Request size limit reached",
+};
+
 function highlightedPrompt(
   prompt: string,
   problems: Record<string, unknown>[]
@@ -119,6 +139,18 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const outputScreen = items(report.output_screen);
   const gradingCascade = record(report.grading_cascade);
   const cascadePairs = items(gradingCascade.pairs);
+  const roundAttributions = items(report.history)
+    .map((round) => record(record(round.evidence).failure_attribution))
+    .filter((entry) => Object.keys(entry).length > 0);
+  const attributions =
+    roundAttributions.length > 0
+      ? roundAttributions
+      : Object.keys(record(report.failure_attribution)).length > 0
+        ? [record(report.failure_attribution)]
+        : [];
+  const attributionPairs = attributions.flatMap((entry) => items(entry.pairs));
+  const attributionCount = (name: string) =>
+    attributions.reduce((total, entry) => total + Number(entry[name] ?? 0), 0);
   const gradingPolicies = items(report.grading_policy);
   const selection = record(report.selection_evidence);
   const originalScore = record(selection.original_score);
@@ -364,6 +396,57 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
                   <li key={`${text(pair.pair_id)}-${index}`}>
                     {text(pair.candidate_id)} test {text(pair.test_id)}:{" "}
                     {humanize(text(pair.reason || pair.status))}.
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
+      {attributions.length > 0 && (
+        <section aria-labelledby="failure-attribution-heading">
+          <h3 id="failure-attribution-heading">Failure attribution</h3>
+          <p>
+            {attributionCount("attributed_count")} supported hypotheses,{" "}
+            {attributionCount("unresolved_count")} unresolved pairs,{" "}
+            {attributionCount("skipped_count")} skipped pairs.
+          </p>
+          {attributionPairs.length > 0 && (
+            <ul>
+              {attributionPairs.map((item, index) => {
+                const pair = record(item);
+                const supported = pair.status === "supported";
+                const reason = text(pair.reason);
+                return (
+                  <li key={`${text(pair.pair_id)}-${index}`}>
+                    {text(pair.candidate_id)} on {text(pair.model)} sample{" "}
+                    {text(pair.sample)}, test {text(pair.test_id)}:{" "}
+                    {supported
+                      ? "Hypothesis"
+                      : pair.status === "unresolved"
+                        ? "Unresolved"
+                        : "Skipped"}
+                    {supported && (
+                      <>
+                        {" "}
+                        — {text(pair.sentence_id)} “{text(pair.sentence_text)}”
+                        (
+                        {attributionKinds[text(pair.kind)] ??
+                          "Other prompt wording issue"}
+                        )
+                      </>
+                    )}
+                    {!supported && reason && (
+                      <>
+                        {" "}
+                        —{" "}
+                        {attributionReasons[reason] ??
+                          (reason.startsWith("provider_")
+                            ? "Provider unavailable"
+                            : "Uncertain attribution")}
+                      </>
+                    )}
+                    .
                   </li>
                 );
               })}

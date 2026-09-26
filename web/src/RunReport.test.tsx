@@ -11,6 +11,88 @@ const baseResult: OptimizeResult = {
   timing: { total_ms: 0 },
 };
 
+it("shows per-round source-backed failure hypotheses and uncertain pairs", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          history: [
+            {
+              evidence: {
+                failure_attribution: {
+                  attributed_count: 2,
+                  unresolved_count: 1,
+                  skipped_count: 0,
+                  pairs: [
+                    {
+                      pair_id: "0:0",
+                      candidate_id: "candidate-a",
+                      model: "weak-a",
+                      sample: 0,
+                      test_id: "t0",
+                      status: "supported",
+                      sentence_id: "s0002",
+                      sentence_text: "Keep it concise.",
+                      kind: "ignored_constraint",
+                    },
+                    {
+                      pair_id: "1:0",
+                      candidate_id: "candidate-b",
+                      model: "weak-b",
+                      sample: 1,
+                      test_id: "t0",
+                      status: "supported",
+                      sentence_id: "s0001",
+                      sentence_text: "Summarize the report.",
+                      kind: "misread_instruction",
+                    },
+                    {
+                      pair_id: "2:0",
+                      candidate_id: "candidate-b",
+                      model: "weak-c",
+                      sample: 0,
+                      test_id: "t1",
+                      status: "unresolved",
+                      reason: "low_confidence_or_unsupported_source",
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", { name: "Failure attribution" });
+  expect(
+    within(section).getByText(/2 supported hypotheses, 1 unresolved pair/)
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(
+      /candidate-a.*s0002.*Keep it concise.*Ignored constraint/
+    )
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(
+      /candidate-b.*s0001.*Summarize the report.*Misread instruction/
+    )
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(/weak-c.*Uncertain or unsupported source/)
+  ).toBeInTheDocument();
+});
+
+it("renders historical reports without attribution", () => {
+  render(<RunReport result={baseResult} />);
+  expect(
+    screen.queryByRole("region", { name: "Failure attribution" })
+  ).not.toBeInTheDocument();
+});
+
 it("shows incomplete bounded diagnosis without claiming the prompt has no gaps", () => {
   render(
     <RunReport

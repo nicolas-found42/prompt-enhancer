@@ -299,6 +299,7 @@ class CaseEvaluation:
     diagnosis_request_evidence: Mapping[str, Any] = field(default_factory=dict)
     lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
     lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
+    failure_attribution: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -337,6 +338,7 @@ class CaseEvaluation:
             "diagnosis_request_evidence": dict(self.diagnosis_request_evidence),
             "lossless_restructuring": dict(self.lossless_restructuring),
             "lossless_strong_check": dict(self.lossless_strong_check),
+            "failure_attribution": dict(self.failure_attribution),
         }
 
 
@@ -353,6 +355,7 @@ class HarnessReport:
     restructuring: RestructuringSummary
     cost: CostSummary
     latency_ms: LatencySummary
+    failure_attribution: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -367,6 +370,7 @@ class HarnessReport:
             "restructuring": self.restructuring.to_dict(),
             "cost": self.cost.to_dict(),
             "latency_ms": self.latency_ms.to_dict(),
+            "failure_attribution": dict(self.failure_attribution),
         }
 
     def to_json(self, *, pretty: bool = False) -> str:
@@ -421,6 +425,7 @@ class _CaseObservation:
     diagnosis_request_evidence: Mapping[str, Any] = field(default_factory=dict)
     lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
     lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
+    failure_attribution: Mapping[str, Any] = field(default_factory=dict)
     labels_present: bool = False
     predicted_gaps: tuple[str, ...] = ()
     expected_problem_sentences: tuple[tuple[str, str], ...] = ()
@@ -479,6 +484,7 @@ class _CaseObservation:
             diagnosis_request_evidence=dict(self.diagnosis_request_evidence),
             lossless_restructuring=dict(self.lossless_restructuring),
             lossless_strong_check=dict(self.lossless_strong_check),
+            failure_attribution=dict(self.failure_attribution),
         )
 
 
@@ -592,6 +598,9 @@ class EvaluationHarness:
                 result = _as_mapping(engine.resume(run_id, dict(answers)))
                 resumed = True
             report = _as_mapping(result.get("report", {}))
+            observation.failure_attribution = _attribution_case_evaluation(
+                report, case.metadata.get("attribution_labels")
+            )
             restructuring = report.get("lossless_restructuring")
             if isinstance(restructuring, Mapping):
                 observation.lossless_restructuring = dict(restructuring)
@@ -833,15 +842,25 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         "grading_cascade_pair_cap",
         "grading_cascade_dollar_cap",
         "grading_confirmation_reservation_usd",
+        "attribution_pair_cap",
+        "attribution_dollar_cap",
     }:
         raise EvaluationError("replay cascade_settings contains unknown fields")
     pair_cap = raw_cascade_settings.get("grading_cascade_pair_cap")
     dollar_cap = raw_cascade_settings.get("grading_cascade_dollar_cap")
     reservation = raw_cascade_settings.get("grading_confirmation_reservation_usd")
+    attribution_pair_cap = raw_cascade_settings.get("attribution_pair_cap")
+    attribution_dollar_cap = raw_cascade_settings.get("attribution_dollar_cap")
     if pair_cap is not None and (
         isinstance(pair_cap, bool) or not isinstance(pair_cap, int) or pair_cap < 0
     ):
         raise EvaluationError("replay cascade pair cap must be non-negative")
+    if attribution_pair_cap is not None and (
+        isinstance(attribution_pair_cap, bool)
+        or not isinstance(attribution_pair_cap, int)
+        or attribution_pair_cap < 0
+    ):
+        raise EvaluationError("replay attribution pair cap must be non-negative")
     if any(
         value is not None
         and (
@@ -850,7 +869,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
             or not math.isfinite(value)
             or value < 0
         )
-        for value in (dollar_cap, reservation)
+        for value in (dollar_cap, reservation, attribution_dollar_cap)
     ):
         raise EvaluationError("replay cascade dollar settings must be non-negative")
     if not isinstance(raw_pricing_models, list) or any(
@@ -1054,7 +1073,112 @@ def _build_report(
         restructuring=restructuring,
         cost=cost,
         latency_ms=latency,
+        failure_attribution=_attribution_harness_summary(cases),
     )
+
+
+def _attribution_case_evaluation(
+    report: Mapping[str, Any], raw_labels: object
+) -> dict[str, Any]:
+    rounds = report.get("history")
+    entries = (
+        [
+            _as_mapping(_as_mapping(item).get("evidence", {})).get(
+                "failure_attribution"
+            )
+            for item in rounds
+        ]
+        if isinstance(rounds, list)
+        else []
+    )
+    entries = [item for item in entries if isinstance(item, Mapping)]
+    if not entries and isinstance(report.get("failure_attribution"), Mapping):
+        entries = [report["failure_attribution"]]
+    pairs = [
+        pair
+        for entry in entries
+        for pair in entry.get("pairs", [])
+        if isinstance(pair, Mapping)
+    ]
+    labels = (
+        [
+            item
+            for item in raw_labels
+            if isinstance(item, Mapping)
+            and item.get("provenance") in {"human", "source"}
+        ]
+        if isinstance(raw_labels, list)
+        else []
+    )
+    label_keys = ("prompt_digest", "model", "sample", "test_id")
+    matching = [
+        (pair, label)
+        for pair in pairs
+        if pair.get("status") == "supported"
+        for label in labels
+        if all(pair.get(key) == label.get(key) for key in label_keys)
+    ]
+    correct = sum(
+        pair.get("sentence_id") == label.get("sentence_id")
+        and pair.get("kind") == label.get("kind")
+        for pair, label in matching
+    )
+    return {
+        "status": "available" if entries else "unavailable",
+        "attributed_count": sum(pair.get("status") == "supported" for pair in pairs),
+        "unresolved_count": sum(pair.get("status") == "unresolved" for pair in pairs),
+        "skipped_count": sum(pair.get("status") == "skipped" for pair in pairs),
+        "correctness": {
+            "status": "available" if matching else "unavailable",
+            "labeled_predictions": len(matching),
+            "correct_predictions": correct,
+            "accuracy": correct / len(matching) if matching else None,
+            "provenance": sorted({str(label["provenance"]) for _, label in matching}),
+        },
+    }
+
+
+def _attribution_harness_summary(cases: Sequence[CaseEvaluation]) -> dict[str, Any]:
+    observations = [
+        case.failure_attribution
+        for case in cases
+        if case.failure_attribution.get("status") == "available"
+    ]
+    correct = sum(
+        int(_as_mapping(item.get("correctness", {})).get("correct_predictions", 0))
+        for item in observations
+    )
+    labeled = sum(
+        int(_as_mapping(item.get("correctness", {})).get("labeled_predictions", 0))
+        for item in observations
+    )
+    return {
+        "status": "available" if observations else "unavailable",
+        "attributed_count": sum(
+            int(item.get("attributed_count", 0)) for item in observations
+        ),
+        "unresolved_count": sum(
+            int(item.get("unresolved_count", 0)) for item in observations
+        ),
+        "skipped_count": sum(
+            int(item.get("skipped_count", 0)) for item in observations
+        ),
+        "correctness": {
+            "status": "available" if labeled else "unavailable",
+            "labeled_predictions": labeled,
+            "correct_predictions": correct,
+            "accuracy": correct / labeled if labeled else None,
+            "provenance": sorted(
+                {
+                    provenance
+                    for item in observations
+                    for provenance in _as_mapping(item.get("correctness", {})).get(
+                        "provenance", []
+                    )
+                }
+            ),
+        },
+    }
 
 
 def _restructuring_summary(cases: Sequence[CaseEvaluation]) -> RestructuringSummary:
@@ -1739,6 +1863,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             diagnosis_request_evidence=item.get("diagnosis_request_evidence", {}),
             lossless_restructuring=item.get("lossless_restructuring", {}),
             lossless_strong_check=item.get("lossless_strong_check", {}),
+            failure_attribution=item.get("failure_attribution", {}),
         )
         for item in value.get("cases", [])
         if isinstance(item, Mapping)
@@ -1814,6 +1939,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
             p95=latency_data.get("p95"),
             unavailable_cases=int(latency_data.get("unavailable_cases", 0)),
         ),
+        failure_attribution=value.get("failure_attribution", {}),
     )
 
 
