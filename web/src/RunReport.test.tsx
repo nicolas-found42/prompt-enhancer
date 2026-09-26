@@ -256,3 +256,49 @@ it("shows preservation, uncertain roles, and cost for a structural candidate", (
   expect(section).toHaveTextContent("Role assignment requests: 2.");
   expect(section).toHaveTextContent("Reported role assignment cost: $0.0020.");
 });
+
+it("shows discarded criteria and measured grading request counts", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          test_screening: {
+            screening_checks: [
+              { test_id: "t0", accepted: true },
+              {
+                test_id: "t1",
+                accepted: false,
+                reason: "evaluator_instructions",
+              },
+            ],
+            screening_observation: {
+              approved_count: 1,
+              discarded_count: 1,
+              gateway_batch_calls: 1,
+              judge_cost_usd_measured: null,
+            },
+          },
+          grading_observation: {
+            gateway_batch_calls: 4,
+            graded_output_count: 4,
+            serialized_input_bytes_estimate: 5410,
+            ungradable_output_count: 0,
+            judge_cost_usd_measured: null,
+          },
+        },
+      }}
+    />
+  );
+
+  const screening = screen.getByRole("region", {
+    name: "Success test screening",
+  });
+  expect(screening).toHaveTextContent("Approved: 1. Discarded: 1.");
+  expect(screening).toHaveTextContent("t1: Evaluator instructions");
+  expect(screening).toHaveTextContent("Measured judge cost: unavailable");
+  const grading = screen.getByRole("region", { name: "Grading requests" });
+  expect(grading).toHaveTextContent("4 requests for 4 outputs");
+  expect(grading).toHaveTextContent("Estimated serialized input: 5410 bytes");
+});

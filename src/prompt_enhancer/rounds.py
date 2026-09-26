@@ -19,6 +19,7 @@ from typing import Any
 from . import jev_questions
 from .config import Settings
 from .diagnosis import model_diagnosis
+from .evaluation.calibration import DecisionPolicy
 from .evaluation.order_bias import OrderBiasPolicy
 from .fidelity import check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
@@ -40,7 +41,7 @@ from .strategies import (
     search_strategies,
 )
 from .strong_check import StrongCheckPolicy, StrongCheckReport
-from .success_tests import SuccessTestCompiler
+from .success_tests import SuccessTestCompiler, SuccessTestScreenCache
 
 StageCallback = Callable[[str], None]
 
@@ -171,6 +172,8 @@ class RoundPlan:
     prior_failures: tuple[str, ...] = ()
     """Summaries of the previous round's losing candidates."""
     grading_policy: OrderBiasPolicy | None = None
+    screen_cache: SuccessTestScreenCache | None = None
+    decision_policy: DecisionPolicy | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +197,8 @@ class RoundOutcome:
     failures: tuple[CandidateFailure, ...] = ()
     """The candidates that lost this round; the next round is told why."""
     lossless_restructuring: Mapping[str, Any] | None = None
+    test_screening: Mapping[str, Any] | None = None
+    grading_observation: Mapping[str, Any] | None = None
 
     @property
     def continue_rounds(self) -> bool:
@@ -241,6 +246,10 @@ class RoundOutcome:
                 report["strategies"] = self.strategies.to_dict()
             if self.lossless_restructuring is not None:
                 report["lossless_restructuring"] = dict(self.lossless_restructuring)
+            if self.test_screening is not None:
+                report["test_screening"] = dict(self.test_screening)
+            if self.grading_observation is not None:
+                report["grading_observation"] = dict(self.grading_observation)
             return report
         assert (
             self.panel is not None
@@ -265,6 +274,16 @@ class RoundOutcome:
             "selection_evidence": self.ranking.to_dict(),
             "strong_check": self.strong_check.to_dict(),
             "strategies": self.strategies.to_dict(),
+            **(
+                {"test_screening": dict(self.test_screening)}
+                if self.test_screening is not None
+                else {}
+            ),
+            **(
+                {"grading_observation": dict(self.grading_observation)}
+                if self.grading_observation is not None
+                else {}
+            ),
             **(
                 {"lossless_restructuring": dict(self.lossless_restructuring)}
                 if self.lossless_restructuring is not None
@@ -327,6 +346,7 @@ def run_round(
     settings = plan.settings
     working_prompt = plan.working_prompt
     model_view = model_diagnosis(plan.diagnosis)
+    screening_evidence: Mapping[str, Any] | None = None
 
     def ended(
         status: str, summary: str, tests: tuple[dict[str, Any], ...]
@@ -338,6 +358,7 @@ def run_round(
             final_prompt=working_prompt,
             original_kept=working_prompt == plan.prompt,
             tests=tests,
+            test_screening=screening_evidence,
             **_spent(gateway),
         )
 
@@ -347,6 +368,10 @@ def run_round(
             gateway,
             writer_model=settings.writer_model,
             faithfulness_threshold=plan.faithfulness_threshold,
+            screen_protocol_version=2 if plan.writer_instruction_version >= 5 else 1,
+            screen_cache=plan.screen_cache,
+            decision_policy=plan.decision_policy,
+            run_id=plan.run_id,
         ).compile(working_prompt)
     except (ValueError, TypeError) as exc:
         raise ProviderError(
@@ -358,6 +383,8 @@ def run_round(
             kind="invalid_response",
         ) from exc
     tests = tuple(test.to_dict() for test in compiled.tests)
+    if plan.writer_instruction_version >= 5:
+        screening_evidence = compiled.as_dict()
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
     if not tests or no_gaps:
@@ -503,6 +530,7 @@ def run_round(
             lossless_restructuring=lossless_build.evidence
             if lossless_build is not None
             else None,
+            test_screening=screening_evidence,
         )
 
     stage("running_weak_models")
@@ -516,6 +544,7 @@ def run_round(
         run_id=plan.run_id,
     )
     stage("grading")
+    grading_observation: dict[str, Any] = {}
     panel_grades, grading_answers = grade_panel_with_jev(
         panel.results,
         list(tests),
@@ -523,6 +552,10 @@ def run_round(
         judge_model=settings.judge_model,
         run_id=plan.run_id,
         grading_policy=plan.grading_policy,
+        shared_state=plan.writer_instruction_version >= 5,
+        measurements=grading_observation
+        if plan.writer_instruction_version >= 5
+        else None,
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
@@ -546,10 +579,25 @@ def run_round(
                     support_prompt=plan.prompt,
                     preservation_proof=candidate.metadata.get("lossless_proof"),
                 )
-            ).passed,
-            rejection_reasons=()
-            if fidelity.passed
-            else ("candidate failed fidelity checks", *fidelity.rejection_reasons),
+            ).passed
+            and panel_grades[candidate.candidate_id].ungradable_outputs == 0
+            and original_grade.ungradable_outputs == 0,
+            rejection_reasons=(
+                (
+                    ()
+                    if fidelity.passed
+                    else (
+                        "candidate failed fidelity checks",
+                        *fidelity.rejection_reasons,
+                    )
+                )
+                + (
+                    ("weak-panel grading was incomplete or oversized",)
+                    if panel_grades[candidate.candidate_id].ungradable_outputs
+                    or original_grade.ungradable_outputs
+                    else ()
+                )
+            ),
             metadata={
                 "fidelity": fidelity.to_dict(),
                 **(
@@ -615,6 +663,10 @@ def run_round(
         }
         if lossless_build is not None
         else None,
+        test_screening=screening_evidence,
+        grading_observation=grading_observation
+        if plan.writer_instruction_version >= 5
+        else None,
         failures=tuple(
             CandidateFailure(
                 candidate_id=item.candidate.candidate_id,
@@ -673,6 +725,7 @@ def _strong_score(gateway: Gateway, prompt: str, tests: Any, plan: RoundPlan) ->
         judge_model=settings.judge_model,
         run_id=plan.run_id,
         grading_policy=plan.grading_policy,
+        shared_state=plan.writer_instruction_version >= 5,
     )
     return grades["strong"].sample_scores[0]
 

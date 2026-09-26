@@ -111,6 +111,10 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const problems = items(diagnosis.problem_sentences);
   const gaps = items(diagnosis.confirmed_gaps);
   const tests = items(report.tests);
+  const testScreening = record(report.test_screening);
+  const screenChecks = items(testScreening.screening_checks);
+  const screenObservation = record(testScreening.screening_observation);
+  const gradingObservation = record(report.grading_observation);
   const gradingPolicies = items(report.grading_policy);
   const selection = record(report.selection_evidence);
   const originalScore = record(selection.original_score);
@@ -236,6 +240,61 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
           <p>No faithful success tests were available for this run.</p>
         )}
       </section>
+      {Object.keys(testScreening).length > 0 && (
+        <section aria-labelledby="test-screening-heading">
+          <h3 id="test-screening-heading">Success test screening</h3>
+          <p>
+            Approved: {text(screenObservation.approved_count ?? tests.length)}.
+            Discarded: {text(screenObservation.discarded_count ?? 0)}.
+          </p>
+          {screenChecks.some((check) => check.accepted === false) && (
+            <ul>
+              {screenChecks
+                .filter((check) => check.accepted === false)
+                .map((check, index) => (
+                  <li key={text(check.test_id) || index}>
+                    {text(check.test_id)}: {humanize(text(check.reason))}
+                  </li>
+                ))}
+            </ul>
+          )}
+          <p>
+            Screening requests:{" "}
+            {text(screenObservation.gateway_batch_calls ?? 0)}. Measured judge
+            cost:{" "}
+            {typeof screenObservation.judge_cost_usd_measured === "number"
+              ? `$${screenObservation.judge_cost_usd_measured.toFixed(4)}`
+              : "unavailable"}
+            .
+          </p>
+        </section>
+      )}
+      {Object.keys(gradingObservation).length > 0 && (
+        <section aria-labelledby="grading-observation-heading">
+          <h3 id="grading-observation-heading">Grading requests</h3>
+          <p>
+            {text(gradingObservation.gateway_batch_calls ?? 0)} requests for{" "}
+            {text(gradingObservation.graded_output_count ?? 0)} outputs.
+            Estimated serialized input:{" "}
+            {text(gradingObservation.serialized_input_bytes_estimate ?? 0)}{" "}
+            bytes.
+          </p>
+          {Number(gradingObservation.ungradable_output_count ?? 0) > 0 && (
+            <p>
+              Ungradable outputs:{" "}
+              {text(gradingObservation.ungradable_output_count)}. No verified
+              improvement was selected from incomplete grading.
+            </p>
+          )}
+          <p>
+            Measured judge cost:{" "}
+            {typeof gradingObservation.judge_cost_usd_measured === "number"
+              ? `$${gradingObservation.judge_cost_usd_measured.toFixed(4)}`
+              : "unavailable"}
+            .
+          </p>
+        </section>
+      )}
       {gradingPolicies.length > 0 && (
         <section aria-labelledby="grading-policy-heading">
           <h3 id="grading-policy-heading">Grading policy</h3>
