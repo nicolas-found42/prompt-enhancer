@@ -45,6 +45,8 @@ _CASE_METADATA_EXCLUSIONS = frozenset(
         "labels_present",
         "expected_problem_sentences",
         "problem_sentence_labels_present",
+        "expected_task_type",
+        "task_type_labels_present",
     }
 )
 
@@ -212,6 +214,8 @@ class EvaluationCase:
     labels_present: bool = False
     expected_problem_sentences: tuple[tuple[str, str], ...] = ()
     problem_sentence_labels_present: bool = False
+    expected_task_type: str | None = None
+    task_type_labels_present: bool = False
 
     @classmethod
     def from_dict(
@@ -229,6 +233,18 @@ class EvaluationCase:
             )
         case_id = case_id.strip()
         has_problem_sentence_labels = "expected_problem_sentences" in value
+        expected_task_type = value.get("expected_task_type")
+        if expected_task_type is not None and (
+            not isinstance(expected_task_type, str) or not expected_task_type.strip()
+        ):
+            raise DatasetError(
+                f"{dataset_name} case {case_id!r} expected_task_type must be a non-empty string"
+            )
+        if isinstance(expected_task_type, str):
+            expected_task_type = "_".join(
+                expected_task_type.strip().lower().replace("-", " ").split()
+            )
+        has_task_type_labels = isinstance(expected_task_type, str)
         expected_problem_sentences = _expected_problem_sentences(
             value.get("expected_problem_sentences"),
             case_id=case_id,
@@ -259,7 +275,9 @@ class EvaluationCase:
             prompt=prompt,
             source=_normalize_source(
                 value.get("source"),
-                has_labels=bool(expected) or has_problem_sentence_labels,
+                has_labels=bool(expected)
+                or has_problem_sentence_labels
+                or has_task_type_labels,
             ),
             expected_gaps=expected,
             notes=notes,
@@ -271,6 +289,10 @@ class EvaluationCase:
             ),
             expected_problem_sentences=expected_problem_sentences,
             problem_sentence_labels_present=has_problem_sentence_labels,
+            expected_task_type=(
+                expected_task_type if isinstance(expected_task_type, str) else None
+            ),
+            task_type_labels_present=has_task_type_labels,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -280,6 +302,7 @@ class EvaluationCase:
             "source": self.source,
             "labels_present": self.labels_present,
             "problem_sentence_labels_present": self.problem_sentence_labels_present,
+            "task_type_labels_present": self.task_type_labels_present,
         }
         if self.expected_gaps:
             value["expected_gaps"] = list(self.expected_gaps)
@@ -288,6 +311,8 @@ class EvaluationCase:
                 {"kind": kind, "sentence_id": sentence_id}
                 for kind, sentence_id in self.expected_problem_sentences
             ]
+        if self.task_type_labels_present:
+            value["expected_task_type"] = self.expected_task_type
         if self.notes is not None:
             value["evaluation_notes"] = self.notes
         if self.metadata:
