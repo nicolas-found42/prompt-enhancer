@@ -975,8 +975,8 @@ class Diagnoser:
                 "explored_paths": [],
                 "selected_path_score": None,
                 "checklist_source": "historical_leaf",
-                "provider_requests": 1 + int(root_selected in _HISTORICAL_TASK_TREE),
-                "provider_request_delta_vs_legacy": 0,
+                "legacy_provider_requests": 1
+                + int(root_selected in _HISTORICAL_TASK_TREE),
             },
         )
 
@@ -1112,10 +1112,8 @@ class Diagnoser:
                     "explored_paths": [],
                     "selected_path_score": None,
                     "checklist_source": "general",
-                    "provider_requests": 1,
-                    "provider_request_delta_vs_legacy": -int(
-                        selected_root in _HISTORICAL_TASK_TREE
-                    ),
+                    "legacy_provider_requests": 1
+                    + int(selected_root in _HISTORICAL_TASK_TREE),
                 },
             )
 
@@ -1147,8 +1145,7 @@ class Diagnoser:
                     "explored_paths": [],
                     "selected_path_score": root_probability,
                     "checklist_source": "leaf",
-                    "provider_requests": 1,
-                    "provider_request_delta_vs_legacy": 0,
+                    "legacy_provider_requests": 1,
                 },
             )
 
@@ -1314,8 +1311,7 @@ class Diagnoser:
                     "explored_paths": explored,
                     "selected_path_score": score,
                     "checklist_source": "leaf",
-                    "provider_requests": 2,
-                    "provider_request_delta_vs_legacy": 0,
+                    "legacy_provider_requests": 2,
                 },
             )
             return selection
@@ -1360,8 +1356,7 @@ class Diagnoser:
                 "selected_path_score": parent_probability,
                 "checklist_source": checklist_source,
                 "checklist_fallback_reason": checklist_fallback_reason,
-                "provider_requests": 2,
-                "provider_request_delta_vs_legacy": 0,
+                "legacy_provider_requests": 2,
             },
         )
 
@@ -1561,9 +1556,15 @@ class Diagnoser:
             self._prefetch_diagnosis(prompt, rubric)
         state = {"prompt": prompt}
         classification_started = perf_counter()
+        classification_requests_before = self._provider_requests
         selection = self._classify_task(prompt, state, rubric)
+        taxonomy_requests = self._provider_requests - classification_requests_before
+        legacy_requests = int(selection.evidence["legacy_provider_requests"])
         taxonomy_evidence = {
             **dict(selection.evidence),
+            "provider_requests": taxonomy_requests,
+            "provider_request_delta_vs_legacy": taxonomy_requests - legacy_requests,
+            "shared_prefetch": self._prefetched is not None,
             "effective_task_type": selection.task.key,
             "fallback_reason": selection.fallback_reason,
             "effective_checklist": list(_checklist_payload(selection.task.checklist)),

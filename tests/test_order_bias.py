@@ -14,6 +14,7 @@ from prompt_enhancer.diagnosis import (
 )
 from prompt_enhancer.evaluation.__main__ import main as evaluation_main
 from prompt_enhancer.evaluation.order_bias import (
+    OrderBiasError,
     OrderBiasManifest,
     analyze_order_bias,
     build_order_bias_requests,
@@ -485,6 +486,55 @@ def test_live_collection_reserves_budget_before_each_independent_ask() -> None:
     )
 
     assert len(events) == 1
+
+
+def test_live_capture_preserves_existing_paid_recording(tmp_path: Path) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+
+    destination = tmp_path / "recording.json"
+    destination.write_text("paid events", encoding="utf-8")
+    gateway = ScriptedGateway()
+
+    with pytest.raises(OrderBiasError, match="already exists"):
+        capture_order_bias(
+            _manifest(),
+            gateway,
+            repetitions=2,
+            budget_usd=0.01,
+            recording_path=destination,
+        )
+
+    assert destination.read_text(encoding="utf-8") == "paid events"
+    assert gateway.calls == []
+
+
+def test_live_capture_rejects_different_served_snapshot(tmp_path: Path) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+
+    class MismatchedGateway(ScriptedGateway):
+        def decide(self, payload, *, role="judge", run_id=None):
+            answer = super().decide(payload, role=role, run_id=run_id)
+            self.decision_log[-1]["answered_by"] = "typesafe/other-snapshot"
+            return answer
+
+    gateway = MismatchedGateway(
+        decision=lambda *_args, **_kwargs: {
+            "type": "choice",
+            "choice": "pass",
+            "probabilities": {"pass": 1.0, "fail": 0.0, "unknown": 0.0},
+        }
+    )
+
+    destination = tmp_path / "mismatched.json"
+    with pytest.raises(OrderBiasError, match="differs from configured"):
+        capture_order_bias(
+            _manifest(),
+            gateway,
+            repetitions=2,
+            budget_usd=0.01,
+            recording_path=destination,
+        )
+    assert not destination.exists()
 
 
 def test_http_transport_serialization_preserves_choice_order() -> None:

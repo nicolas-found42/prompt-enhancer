@@ -18,7 +18,11 @@ from typing import Any
 
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.gateway import ReplayGateway, ScriptedGateway
-from prompt_enhancer.prompt_health import PromptHealthService, PromptHealthStore
+from prompt_enhancer.prompt_health import (
+    PromptHealthPolicy,
+    PromptHealthService,
+    PromptHealthStore,
+)
 
 
 def _fixture_answer(
@@ -80,10 +84,15 @@ def benchmark(
 ) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="prompt-health-benchmark-") as folder:
         root = Path(folder)
+        benchmark_policy = PromptHealthPolicy(
+            max_refreshes_per_minute=max(20, len(cases))
+        )
         if recording is None:
             capture = _CaptureGateway(cases)
             capture_service = PromptHealthService(
-                capture, PromptHealthStore(root / "capture.sqlite3")
+                capture,
+                PromptHealthStore(root / "capture.sqlite3"),
+                policy=benchmark_policy,
             )
             for index, case in enumerate(cases):
                 result = capture_service.assess(case["prompt"], index, "capture")
@@ -103,7 +112,7 @@ def benchmark(
             jev_model=recording.get("jev_model", JEV_MODEL),
         )
         service = PromptHealthService(
-            replay, PromptHealthStore(root / "replay.sqlite3")
+            replay, PromptHealthStore(root / "replay.sqlite3"), policy=benchmark_policy
         )
         false_flags = missed_flags = labeled_flags = 0
         hits = misses = 0

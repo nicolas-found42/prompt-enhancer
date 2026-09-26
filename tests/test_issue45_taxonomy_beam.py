@@ -93,6 +93,26 @@ def test_task_branch_options_describe_leaf_meaning_and_scope() -> None:
     assert "intended scope" in investigation.lower()
 
 
+def test_taxonomy_request_count_distinguishes_shared_prefetch() -> None:
+    optimizer, _gateway = _optimizer()
+
+    result = optimizer.optimize("Write a brief note.", {"tier": "fast"})
+
+    evidence = result["report"]["diagnosis"]["taxonomy_evidence"]
+    assert evidence["provider_requests"] == 1
+    assert evidence["provider_request_delta_vs_legacy"] == 0
+    assert evidence["shared_prefetch"] is False
+
+    optimizer, _gateway = _optimizer()
+    optimizer.speculative_diagnosis = True
+    prefetched = optimizer.optimize("Write a brief note.", {"tier": "fast"})
+    diagnosis = prefetched["report"]["diagnosis"]
+    assert diagnosis["taxonomy_evidence"]["provider_requests"] == 0
+    assert diagnosis["taxonomy_evidence"]["provider_request_delta_vs_legacy"] == -1
+    assert diagnosis["taxonomy_evidence"]["shared_prefetch"] is True
+    assert diagnosis["request_evidence"]["provider_requests"] == 1
+
+
 def test_close_branch_split_batches_both_paths_and_can_choose_second_branch() -> None:
     optimizer, gateway = _optimizer(
         {

@@ -1058,11 +1058,11 @@ def capture_order_bias(
         request_cost_ceiling, field_name="request cost ceiling", minimum=0.000001
     )
     requests = build_order_bias_requests(manifest, repetitions=repetitions)
+    destination = Path(recording_path) if recording_path is not None else None
+    if destination is not None and destination.exists():
+        raise OrderBiasError(f"order-bias recording {destination} already exists")
     gateway.new_run(run_id)
     recorded: list[dict[str, Any]] = []
-    destination = Path(recording_path) if recording_path is not None else None
-    if destination is not None:
-        _save_recording(destination, manifest, repetitions, recorded)
     reserved_cost = 0.0
     for request in requests:
         reserved_cost = max(reserved_cost, _role_cost(gateway.usage_report()))
@@ -1082,6 +1082,11 @@ def capture_order_bias(
             raise OrderBiasError(
                 "Gateway did not record the order-bias decision identity"
             )
+        answered_by = decision.get("answered_by", gateway.jev_model)
+        if answered_by != gateway.jev_model:
+            raise OrderBiasError(
+                f"order-bias response snapshot {answered_by!r} differs from configured {gateway.jev_model!r}"
+            )
         usage = decision.get("usage", {})
         if not isinstance(usage, Mapping):
             usage = {}
@@ -1089,7 +1094,7 @@ def capture_order_bias(
             "request_id": request["key"],
             "request": request,
             "answer": answer,
-            "answered_by": decision.get("answered_by", gateway.jev_model),
+            "answered_by": answered_by,
             "usage": dict(usage),
             "latency_ms": latency_ms,
             "cost_usd": max(0.0, _role_cost(gateway.usage_report()) - before_cost),
@@ -1098,6 +1103,8 @@ def capture_order_bias(
         reserved_cost += ceiling
         if destination is not None:
             _save_recording(destination, manifest, repetitions, recorded)
+    if destination is not None and not recorded:
+        _save_recording(destination, manifest, repetitions, recorded)
     return tuple(recorded)
 
 

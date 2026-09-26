@@ -56,6 +56,12 @@ def test_harness_compares_problem_sentence_predictions_with_explicit_labels() ->
                     "prompt": "No sentence labels.",
                     "source": "real",
                 },
+                {
+                    "id": "null-label",
+                    "prompt": "Null means labels were not supplied.",
+                    "source": "real",
+                    "expected_problem_sentences": None,
+                },
             ],
         }
     )

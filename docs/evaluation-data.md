@@ -105,7 +105,11 @@ such as `coding`, `writing`, or `research`. The report scores exact leaf
 accuracy only over cases with explicit task type labels. It also reports how
 often diagnosis fell back to a parent branch, the correctness and coverage of
 those parent fallbacks, and observed taxonomy decision-request counts and
-classification latency. Cases without a label do not count as incorrect; when
+classification latency. The taxonomy request count measures requests made during
+classification; `shared_prefetch` identifies cases where a prior diagnosis request
+already supplied those answers. The legacy request baseline is an estimate from the
+historical root and leaf path, and the reported delta subtracts that baseline from
+the observed incremental count. Cases without a label do not count as incorrect; when
 there are no usable labels, accuracy is `null` and the metric is marked
 `unavailable` with a reason.
 

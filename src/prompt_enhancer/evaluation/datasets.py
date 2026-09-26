@@ -232,7 +232,9 @@ class EvaluationCase:
                 f"{dataset_name} case {position} id must be a non-empty string"
             )
         case_id = case_id.strip()
-        has_problem_sentence_labels = "expected_problem_sentences" in value
+        has_problem_sentence_labels = (
+            value.get("expected_problem_sentences") is not None
+        )
         expected_task_type = value.get("expected_task_type")
         if expected_task_type is not None and (
             not isinstance(expected_task_type, str) or not expected_task_type.strip()

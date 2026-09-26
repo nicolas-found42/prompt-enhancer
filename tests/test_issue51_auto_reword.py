@@ -667,15 +667,45 @@ def test_paired_repeat_noise_floor_is_measured_in_brier_units(tmp_path: Path) ->
 
     without_repeats = _dataset()
     del without_repeats["repeat_answers"]
+    live_gateway = RewordGateway()
     missing = optimize_reword(
         _store(tmp_path / "missing-repeat.sqlite3"),
-        RewordGateway(),
+        live_gateway,
         "task-clarity",
         without_repeats,
         attempt_id="missing-repeat",
     )
-    assert missing["status"] == "hold"
-    assert missing["gates"]["stability_evidence"] is False
+    assert missing["status"] == "adopted"
+    assert missing["gates"]["stability_evidence"] is True
+    assert missing["repeat_source"] == "workflow_distinct_requests"
+    final_requests = [
+        request
+        for request in live_gateway.evaluated
+        if request["state"]["source_id"].startswith("final-")
+    ]
+    assert len(final_requests) == 4 * 30
+    assert len({request["key"] for request in final_requests}) == len(final_requests)
+
+    incomplete = _dataset()
+    incomplete["repeat_answers"].pop(_digest(ALTERNATIVE))
+    incomplete_store = _store(tmp_path / "incomplete-repeat.sqlite3")
+    held = optimize_reword(
+        incomplete_store,
+        RewordGateway(),
+        "task-clarity",
+        incomplete,
+        attempt_id="incomplete-repeat",
+    )
+    assert held["status"] == "hold"
+    assert held["reason"] == "paired repeat evidence is incomplete"
+    retry = optimize_reword(
+        incomplete_store,
+        RewordGateway(),
+        "task-clarity",
+        _dataset(),
+        attempt_id="complete-repeat",
+    )
+    assert retry["status"] == "adopted"
 
 
 def test_rank_only_semantic_calibration_cannot_approve_reword(tmp_path: Path) -> None:

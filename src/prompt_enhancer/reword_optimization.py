@@ -320,6 +320,33 @@ def _stability_floor(
     return max(floors), "paired_repeated_predictions"
 
 
+def _provided_repeats_complete(
+    repeats: object,
+    rows: Sequence[_Row],
+    texts: tuple[str, str],
+    *,
+    response_type: str,
+    criteria: tuple[str, ...],
+    snapshot: str,
+) -> bool:
+    if not isinstance(repeats, Mapping):
+        return False
+    for text in texts:
+        by_row = repeats.get(_digest(text))
+        if not isinstance(by_row, Mapping):
+            return False
+        for row in rows:
+            entry = by_row.get(row.row_id)
+            if (
+                not isinstance(entry, Mapping)
+                or entry.get("snapshot") != snapshot
+                or _probabilities(entry.get("raw_answer"), response_type, criteria)
+                is None
+            ):
+                return False
+    return True
+
+
 class _Budget:
     def __init__(self, gateway: Gateway, policy: RewordPolicy) -> None:
         self.gateway = gateway
@@ -650,7 +677,7 @@ def optimize_reword(
         evaluation_costs: dict[str, float] = defaultdict(float)
 
         def evaluate(
-            text: str, selected_rows: Sequence[_Row]
+            text: str, selected_rows: Sequence[_Row], *, repeat: bool = False
         ) -> dict[str, tuple[float, ...]]:
             def event_probabilities(raw: Any) -> tuple[float, ...] | None:
                 probabilities = _probabilities(raw, question.response_type, criteria)
@@ -664,19 +691,18 @@ def optimize_reword(
 
             result: dict[str, tuple[float, ...]] = {}
             for row in selected_rows:
-                key = _digest(
-                    (
-                        text,
-                        row.state,
-                        question.response_type,
-                        criteria,
-                        gateway.jev_model,
-                        POLICY_VERSION,
-                        question.question_version + 1,
-                    )
+                identity = (
+                    text,
+                    row.state,
+                    question.response_type,
+                    criteria,
+                    gateway.jev_model,
+                    POLICY_VERSION,
+                    question.question_version + 1,
                 )
+                key = _digest((*identity, "repeat") if repeat else identity)
                 request = {
-                    "key": f"reword-eval:{key[:16]}",
+                    "key": f"reword-{'repeat' if repeat else 'eval'}:{key[:16]}",
                     "model": judge_model,
                     "type": question.response_type,
                     "state": dict(row.state),
@@ -684,6 +710,7 @@ def optimize_reword(
                     "question_schema": {
                         "version": question.question_version + 1,
                         "policy": POLICY_VERSION,
+                        **({"repeat": 2} if repeat else {}),
                     },
                 }
                 if question.response_type == "choice":
@@ -727,6 +754,7 @@ def optimize_reword(
                         "raw_answer": raw,
                         "snapshot": snapshot,
                         "cache_hit": cache_hit,
+                        "repeat": repeat,
                     }
                 )
                 result[row.row_id] = probabilities
@@ -851,10 +879,38 @@ def optimize_reword(
         report["gates"]["independent_final_support"] = support
         if not support:
             return finish("insufficient independent final support")
+        repeat_answers = dataset.get("repeat_answers")
+        if repeat_answers is not None and not _provided_repeats_complete(
+            repeat_answers,
+            final_rows,
+            (question.text, finalist),
+            response_type=question.response_type,
+            criteria=criteria,
+            snapshot=gateway.jev_model,
+        ):
+            return finish("paired repeat evidence is incomplete")
         consumed = True
         final_predictions = {
             text: evaluate(text, final_rows) for text in (question.text, finalist)
         }
+        if repeat_answers is None:
+            repeat_start = len(raw_evaluations)
+            for text in (question.text, finalist):
+                evaluate(text, final_rows, repeat=True)
+            repeat_answers = {
+                _digest(text): {
+                    item["row_id"]: {
+                        "snapshot": item["snapshot"],
+                        "raw_answer": item["raw_answer"],
+                    }
+                    for item in raw_evaluations[repeat_start:]
+                    if item["text_digest"] == _digest(text)
+                }
+                for text in (question.text, finalist)
+            }
+            report["repeat_source"] = "workflow_distinct_requests"
+        else:
+            report["repeat_source"] = "provided_recording"
         group_deltas: dict[str, list[float]] = defaultdict(list)
         baseline_losses: list[float] = []
         candidate_losses: list[float] = []
@@ -919,7 +975,7 @@ def optimize_reword(
             != row.label
         ]
         noise_floor, noise_provenance = _stability_floor(
-            dataset.get("repeat_answers"),
+            repeat_answers,
             final_rows,
             final_predictions,
             (question.text, finalist),
