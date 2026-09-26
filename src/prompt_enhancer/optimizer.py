@@ -226,6 +226,14 @@ class PromptOptimizer:
                 "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,
                 "grading_cascade_dollar_cap": self.config.grading_cascade_dollar_cap,
                 "grading_confirmation_reservation_usd": self.config.grading_confirmation_reservation_usd,
+                **(
+                    {
+                        "attribution_pair_cap": self.config.attribution_pair_cap,
+                        "attribution_dollar_cap": self.config.attribution_dollar_cap,
+                    }
+                    if self.writer_instruction_version >= 8
+                    else {}
+                ),
             }
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (

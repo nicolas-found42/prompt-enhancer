@@ -20,6 +20,8 @@ class TierBudget:
     name: str = "standard"
     grading_confirmation_pairs: int = 0
     grading_cascade_dollars: float = 0.0
+    attribution_pairs: int = 0
+    attribution_dollars: float = 0.0
 
     def to_dict(self) -> dict[str, int | str]:
         return {
@@ -72,6 +74,8 @@ _BUDGETS: dict[Tier, TierBudget] = {
         name="standard",
         grading_confirmation_pairs=10,
         grading_cascade_dollars=0.02,
+        attribution_pairs=10,
+        attribution_dollars=0.01,
     ),
     Tier.DEEP: TierBudget(
         candidates=6,
@@ -81,6 +85,8 @@ _BUDGETS: dict[Tier, TierBudget] = {
         name="deep",
         grading_confirmation_pairs=30,
         grading_cascade_dollars=0.05,
+        attribution_pairs=30,
+        attribution_dollars=0.03,
     ),
 }
 

@@ -192,6 +192,7 @@ def grade_panel_with_jev(
     cascade_budget: CascadeBudget | None = None,
     cascade_observation: dict[str, Any] | None = None,
     cascade_strong_model: str = "",
+    pair_outcomes_out: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
     """Grade panel outputs using a compatible persisted order-bias policy.
 
@@ -627,6 +628,7 @@ def grade_panel_with_jev(
         if screen_results.get(output_index, {}).get("status") == "steering_detected":
             scores[(run.candidate_id, run.model, run.sample, run.seed)] = 0.0
     unresolved_grade_outputs: set[int] = set()
+    overrides: dict[tuple[int, int], float] = {}
     if cascade_budget is not None:
         ineligible_pairs: dict[tuple[int, int], dict[str, Any]] = {}
         uncertainty_bands: dict[tuple[int, int], tuple[float, float]] = {}
@@ -699,6 +701,34 @@ def grade_panel_with_jev(
         evidence.extend({"grading_cascade": item} for item in cascade_evidence)
         if cascade_observation is not None:
             cascade_observation.update(cascade_report)
+    if pair_outcomes_out is not None:
+        for (output_index, test_index), raw_probability in sorted(pair_scores.items()):
+            run = panel[output_index]
+            probability = overrides.get((output_index, test_index), raw_probability)
+            unavailable = (
+                output_index in ungradable_outputs
+                or output_index in unresolved_grade_outputs
+                or screen_results.get(output_index, {}).get("status")
+                in {"steering_detected", "screen_unresolved"}
+            )
+            pair_outcomes_out.append(
+                {
+                    "output_index": output_index,
+                    "test_index": test_index,
+                    "candidate_id": run.candidate_id,
+                    "model": run.model,
+                    "sample": run.sample,
+                    "seed": run.seed,
+                    "test_id": str(tests[test_index].get("id", f"t{test_index}")),
+                    "raw_pass_probability": raw_probability,
+                    "pass_probability": probability,
+                    "status": "unavailable"
+                    if unavailable
+                    else "failed"
+                    if probability < 0.5
+                    else "passed",
+                }
+            )
     grades = {
         candidate_id: replace(
             grade_candidate(

@@ -21,6 +21,7 @@ from .config import Settings
 from .diagnosis import model_diagnosis
 from .evaluation.calibration import DecisionPolicy
 from .evaluation.order_bias import OrderBiasPolicy
+from .failure_attribution import AttributionBudget, attribute_failed_pairs
 from .fidelity import check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
@@ -64,6 +65,7 @@ class CandidateFailure:
     worst_pass_rate: float | None = None
     sample_spread: float | None = None
     candidate_prompt: str | None = None
+    attributions: tuple[Mapping[str, Any], ...] = ()
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> CandidateFailure:
@@ -91,6 +93,11 @@ class CandidateFailure:
             worst_pass_rate=number("worst_pass_rate"),
             sample_spread=number("sample_spread"),
             candidate_prompt=str(prompt) if prompt is not None else None,
+            attributions=tuple(
+                dict(item)
+                for item in value.get("attributions") or ()
+                if isinstance(item, Mapping)
+            ),
         )
 
     @property
@@ -123,10 +130,32 @@ class CandidateFailure:
             reasons = f"{reasons}; weak pass rates: {rates}"
         if self.strong_pass_rate is not None:
             reasons = f"{reasons}; strong pass rate={self.strong_pass_rate:.3f}"
+        supported = [
+            item for item in self.attributions if item.get("status") == "supported"
+        ]
+        groups: dict[tuple[str, str, str, str], set[tuple[str, int]]] = {}
+        for item in supported:
+            key = (
+                str(item.get("prompt_digest", "")),
+                str(item.get("sentence_id", "")),
+                str(item.get("sentence_text", "")),
+                str(item.get("kind", "")),
+            )
+            groups.setdefault(key, set()).add(
+                (str(item.get("model", "")), int(item.get("sample", 0)))
+            )
+        for (digest, sentence_id, sentence_text, kind), sources in sorted(
+            groups.items()
+        ):
+            reasons += (
+                f"; attribution hypothesis: source {self.candidate_id} "
+                f"({digest[:12]}) {sentence_id} '{sentence_text[:120]}' "
+                f"{kind} ({len(sources)} model/sample pair(s))"
+            )
         return f"{identity}: {reasons}"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "candidate_id": self.candidate_id,
             "strategy": self.strategy,
             "reasons": list(self.reasons),
@@ -138,6 +167,9 @@ class CandidateFailure:
             "candidate_prompt": self.candidate_prompt,
             "summary": self.summary,
         }
+        if self.attributions:
+            result["attributions"] = [dict(item) for item in self.attributions]
+        return result
 
 
 def _concise_fidelity_reason(reason: str) -> str:
@@ -202,6 +234,7 @@ class RoundOutcome:
     grading_observation: Mapping[str, Any] | None = None
     output_screen: tuple[dict[str, Any], ...] | None = None
     grading_cascade: Mapping[str, Any] | None = None
+    failure_attribution: Mapping[str, Any] | None = None
 
     @property
     def continue_rounds(self) -> bool:
@@ -257,6 +290,8 @@ class RoundOutcome:
                 report["output_screen"] = list(self.output_screen)
             if self.grading_cascade is not None:
                 report["grading_cascade"] = dict(self.grading_cascade)
+            if self.failure_attribution is not None:
+                report["failure_attribution"] = dict(self.failure_attribution)
             return report
         assert (
             self.panel is not None
@@ -302,6 +337,11 @@ class RoundOutcome:
                 else {}
             ),
             **(
+                {"failure_attribution": dict(self.failure_attribution)}
+                if self.failure_attribution is not None
+                else {}
+            ),
+            **(
                 {"lossless_restructuring": dict(self.lossless_restructuring)}
                 if self.lossless_restructuring is not None
                 else {}
@@ -328,6 +368,11 @@ class RoundOutcome:
                     "candidate_prompt": failure.candidate_prompt,
                     "reasons": list(failure.reasons),
                     "weak_pass_rates": dict(failure.weak_pass_rates),
+                    **(
+                        {"attributions": [dict(item) for item in failure.attributions]}
+                        if failure.attributions
+                        else {}
+                    ),
                 }
                 for failure in self.failures
             ],
@@ -350,6 +395,7 @@ class RoundOutcome:
                 "selection_evidence",
                 "grading_policy",
                 "strategies",
+                "failure_attribution",
             )
             if key in report
         }
@@ -563,6 +609,7 @@ def run_round(
     stage("grading")
     grading_observation: dict[str, Any] = {}
     cascade_observation: dict[str, Any] = {}
+    pair_outcomes: list[dict[str, Any]] = []
     panel_grades, grading_answers = grade_panel_with_jev(
         panel.results,
         list(tests),
@@ -585,6 +632,9 @@ def run_round(
         if plan.writer_instruction_version >= 7
         else None,
         cascade_strong_model=settings.strong_check_model,
+        pair_outcomes_out=pair_outcomes
+        if plan.writer_instruction_version >= 8
+        else None,
         measurements=grading_observation
         if plan.writer_instruction_version >= 5
         else None,
@@ -679,6 +729,29 @@ def run_round(
     )
     final_prompt = ranking.final_prompt
     original_kept = final_prompt == plan.prompt
+    attribution_by_candidate: dict[str, tuple[dict[str, Any], ...]] = {}
+    attribution_report: dict[str, Any] | None = None
+    if plan.writer_instruction_version >= 8:
+        grading_observation["pair_outcomes"] = pair_outcomes
+        attribution_by_candidate, attribution_report = attribute_failed_pairs(
+            panel.results,
+            tests,
+            pair_outcomes,
+            {
+                item.candidate.candidate_id
+                for item in ranking.ranked
+                if not item.selected
+            },
+            gateway,
+            judge_model=settings.judge_model,
+            run_id=plan.run_id,
+            budget=AttributionBudget.for_tier(
+                plan.tier,
+                pair_cap=settings.attribution_pair_cap,
+                dollar_cap=settings.attribution_dollar_cap,
+            ),
+            decision_policy=plan.decision_policy,
+        )
     return RoundOutcome(
         plan=plan,
         status="no_change"
@@ -709,6 +782,7 @@ def run_round(
         grading_cascade=cascade_observation
         if plan.writer_instruction_version >= 7
         else None,
+        failure_attribution=attribution_report,
         candidates=tuple(item.to_dict() for item in ranking.ranked),
         lossless_restructuring={
             **lossless_build.evidence,
@@ -736,6 +810,9 @@ def run_round(
                 if item.candidate.grade is not None
                 else {},
                 candidate_prompt=item.candidate.text,
+                attributions=attribution_by_candidate.get(
+                    item.candidate.candidate_id, ()
+                ),
             )
             for item in ranking.ranked
             if not item.selected
