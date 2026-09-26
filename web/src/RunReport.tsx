@@ -116,6 +116,8 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const screenObservation = record(testScreening.screening_observation);
   const gradingObservation = record(report.grading_observation);
   const outputScreen = items(report.output_screen);
+  const gradingCascade = record(report.grading_cascade);
+  const cascadePairs = items(gradingCascade.pairs);
   const gradingPolicies = items(report.grading_policy);
   const selection = record(report.selection_evidence);
   const originalScore = record(selection.original_score);
@@ -328,6 +330,36 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
         gradingObservation.protocol !== "single_output_screened_v2" && (
           <p>Output screen unavailable for this historical run.</p>
         )}
+      {Object.keys(gradingCascade).length > 0 && (
+        <section aria-labelledby="grade-confirmation-heading">
+          <h3 id="grade-confirmation-heading">Grade confirmation</h3>
+          <p>
+            {text(gradingCascade.confirmation_count ?? 0)} confirmation
+            requests, {text(gradingCascade.escalation_count ?? 0)} strong-model
+            evidence calls, {text(gradingCascade.verification_count ?? 0)} Jev
+            verification requests; {text(gradingCascade.unresolved_count ?? 0)}{" "}
+            unresolved pairs.
+          </p>
+          <p>
+            Reserved cascade cost: $
+            {Number(gradingCascade.reserved_cost_usd ?? 0).toFixed(4)} of $
+            {Number(gradingCascade.dollar_cap ?? 0).toFixed(4)}.
+          </p>
+          {cascadePairs.length > 0 && (
+            <ul>
+              {cascadePairs.map((item, index) => {
+                const pair = record(item);
+                return (
+                  <li key={`${text(pair.pair_id)}-${index}`}>
+                    {text(pair.candidate_id)} test {text(pair.test_id)}:{" "}
+                    {humanize(text(pair.reason || pair.status))}.
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      )}
       {gradingPolicies.length > 0 && (
         <section aria-labelledby="grading-policy-heading">
           <h3 id="grading-policy-heading">Grading policy</h3>

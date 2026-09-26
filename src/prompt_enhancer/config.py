@@ -30,6 +30,9 @@ class Settings:
     # without an active subscription can switch in one click.
     fallback_writer_model: str = "~deepseek/deepseek-flash-latest"
     fallback_strong_check_model: str = "deepseek/deepseek-v4.1-flash"
+    grading_cascade_pair_cap: int | None = None
+    grading_cascade_dollar_cap: float | None = None
+    grading_confirmation_reservation_usd: float = 0.001
 
     @classmethod
     def from_env(cls) -> Settings:

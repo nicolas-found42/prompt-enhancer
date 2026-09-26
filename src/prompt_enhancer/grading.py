@@ -13,6 +13,7 @@ from . import jev_questions
 from .evaluation.calibration import DecisionPolicy, runtime_question_identity
 from .evaluation.order_bias import LEGACY_GRADING_POLICY, OrderBiasPolicy
 from .gateway import Gateway
+from .grading_cascade import CascadeBudget, resolve_uncertain_grades
 from .jev import (
     ChoiceDecision,
     JevResponseError,
@@ -44,6 +45,7 @@ class GradeReport:
     ungradable_outputs: int = 0
     detected_outputs: int = 0
     unresolved_screen_outputs: int = 0
+    unresolved_grade_outputs: int = 0
 
     @property
     def worst_model_pass_rate(self) -> float:
@@ -85,6 +87,8 @@ class GradeReport:
             report["detected_outputs"] = self.detected_outputs
         if self.unresolved_screen_outputs:
             report["unresolved_screen_outputs"] = self.unresolved_screen_outputs
+        if self.unresolved_grade_outputs:
+            report["unresolved_grade_outputs"] = self.unresolved_grade_outputs
         return report
 
 
@@ -185,6 +189,9 @@ def grade_panel_with_jev(
     measurements: dict[str, Any] | None = None,
     output_screen: bool = False,
     decision_policy: DecisionPolicy | None = None,
+    cascade_budget: CascadeBudget | None = None,
+    cascade_observation: dict[str, Any] | None = None,
+    cascade_strong_model: str = "",
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
     """Grade panel outputs using a compatible persisted order-bias policy.
 
@@ -307,6 +314,18 @@ def grade_panel_with_jev(
                         **(
                             {"criteria": list(reversed(options) if second else options)}
                             if kind == "score"
+                            else {}
+                        ),
+                        **(
+                            {
+                                "question_schema": {
+                                    "test_id": resolution["test_id"],
+                                    "criterion": str(test.get("question", "")),
+                                    "kind": kind,
+                                    "expected": str(test.get("expected", "yes")),
+                                }
+                            }
+                            if cascade_budget is not None
                             else {}
                         ),
                     }
@@ -527,15 +546,19 @@ def grade_panel_with_jev(
             None,
         )
         if pair is not None:
-            evidence.append(
-                {
-                    "question": request,
-                    "answer": response,
-                    "grading_policy": policy_evidence[pair],
-                }
-            )
+            entry = {
+                "question": request,
+                "answer": response,
+                "grading_policy": policy_evidence[pair],
+            }
+            if cascade_budget is not None:
+                entry["answered_by"] = response_metadata[request_index].get(
+                    "answered_by", gateway.jev_model
+                )
+            evidence.append(entry)
     evidence.extend({"output_screen": result} for result in screen_results.values())
     scores: dict[tuple[str, str, int, int], float] = {}
+    pair_scores: dict[tuple[int, int], float] = {}
     for output_index, run in enumerate(panel):
         if output_index in ungradable_outputs:
             scores[(run.candidate_id, run.model, run.sample, run.seed)] = 0.0
@@ -595,11 +618,87 @@ def grade_panel_with_jev(
                         test_scores.append(0.0)
                 except ValueError:
                     test_scores.append(0.0)
+        pair_scores.update(
+            {(output_index, index): value for index, value in enumerate(test_scores)}
+        )
         scores[(run.candidate_id, run.model, run.sample, run.seed)] = min(
             test_scores, default=0.0
         )
         if screen_results.get(output_index, {}).get("status") == "steering_detected":
             scores[(run.candidate_id, run.model, run.sample, run.seed)] = 0.0
+    unresolved_grade_outputs: set[int] = set()
+    if cascade_budget is not None:
+        ineligible_pairs: dict[tuple[int, int], dict[str, Any]] = {}
+        uncertainty_bands: dict[tuple[int, int], tuple[float, float]] = {}
+        if decision_policy is not None:
+            for pair in pair_scores:
+                index = response_indices[pair][0]
+                request = requests[index]
+                test = tests[pair[1]]
+                question_id = f"grade:{test.get('id', f't{pair[1]}')}"
+                snapshot = str(
+                    response_metadata[index].get("answered_by") or gateway.jev_model
+                )
+                identity = runtime_question_identity(
+                    question_id,
+                    request,
+                    family="grading",
+                    rubric_version="issue-49-v1",
+                    snapshot=snapshot,
+                    policy_version=decision_policy.policy_version,
+                )
+                policy = decision_policy.resolve(
+                    question_id, identity=identity, snapshot=snapshot
+                )
+                if policy.disposition in {"ranker", "abstain"}:
+                    ineligible_pairs[pair] = {
+                        "policy": asdict(policy),
+                        "identity": identity.to_dict(),
+                    }
+                elif policy.may_gate and policy.threshold is not None:
+                    uncertainty_bands[pair] = (
+                        min(0.3, 1.0 - policy.threshold),
+                        max(0.7, policy.threshold),
+                    )
+        overrides, unresolved_grade_outputs, cascade_evidence, cascade_report = (
+            resolve_uncertain_grades(
+                panel,
+                tests,
+                pair_scores,
+                gateway,
+                judge_model=judge_model,
+                run_id=run_id,
+                budget=cascade_budget,
+                screen_statuses={
+                    index: str(result["status"])
+                    for index, result in screen_results.items()
+                },
+                strong_model=cascade_strong_model,
+                decision_policy=decision_policy,
+                ineligible_pairs=ineligible_pairs,
+                uncertainty_bands=uncertainty_bands,
+            )
+        )
+        for output_index, run in enumerate(panel):
+            if (
+                output_index in ungradable_outputs
+                or screen_results.get(output_index, {}).get("status")
+                == "steering_detected"
+            ):
+                continue
+            scores[(run.candidate_id, run.model, run.sample, run.seed)] = min(
+                (
+                    overrides.get(
+                        (output_index, test_index),
+                        pair_scores[(output_index, test_index)],
+                    )
+                    for test_index in range(len(tests))
+                ),
+                default=0.0,
+            )
+        evidence.extend({"grading_cascade": item} for item in cascade_evidence)
+        if cascade_observation is not None:
+            cascade_observation.update(cascade_report)
     grades = {
         candidate_id: replace(
             grade_candidate(
@@ -620,6 +719,10 @@ def grade_panel_with_jev(
                 panel[index].candidate_id == candidate_id
                 and result["status"] == "screen_unresolved"
                 for index, result in screen_results.items()
+            ),
+            unresolved_grade_outputs=sum(
+                panel[index].candidate_id == candidate_id
+                for index in unresolved_grade_outputs
             ),
         )
         for candidate_id in dict.fromkeys(run.candidate_id for run in panel)

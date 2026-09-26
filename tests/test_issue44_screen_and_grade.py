@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from prompt_enhancer.catalog import JEV_MODEL
+from prompt_enhancer.catalog import JEV_MODEL, ModelInfo, StaticModelCatalog
 from prompt_enhancer.config import Settings
 from prompt_enhancer.evaluation.harness import default_engine_factory
 from prompt_enhancer.evaluation.recording import RecordingGateway
@@ -34,6 +34,17 @@ def _run_screened_round(
     record_path: Path | None = None,
     writer_instruction_version: int = 5,
     output_screen: Mapping[str, float | None] | None = None,
+    tier: str = "fast",
+    grade_pass_probability: float = 1.0,
+    confirmation_answers: tuple[float, float, float] | None = None,
+    generated_test_count: int = 3,
+    strong_evidence: Mapping[str, Any] | None = None,
+    verification_answers: tuple[float, float, float, float] | None = None,
+    decision_policy: Any = None,
+    priced_catalog: bool = False,
+    criterion_text: str | None = None,
+    settings: Settings | None = None,
+    confirmation_provider_error: bool = False,
 ) -> tuple[dict[str, Any], list[list[dict[str, Any]]]]:
     batches: list[list[dict[str, Any]]] = []
     prompt = "Read the background notes. Summarize the report."
@@ -41,6 +52,8 @@ def _run_screened_round(
     def chat(
         _model: str, messages: Sequence[Mapping[str, str]], *, role: str, **_kwargs: Any
     ) -> str:
+        if role == "judge_escalation":
+            return json.dumps(strong_evidence or {})
         if role == "writer":
             state = json.loads(messages[1]["content"])
             assert "strategies" not in state
@@ -48,11 +61,12 @@ def _run_screened_round(
                 {
                     "tests": [
                         {
-                            "question": f"Does the answer satisfy criterion {index}?",
+                            "question": criterion_text
+                            or f"Does the answer satisfy criterion {index}?",
                             "kind": "noul",
                             "expected": "yes",
                         }
-                        for index in range(3)
+                        for index in range(generated_test_count)
                     ]
                 }
             )
@@ -91,7 +105,29 @@ def _run_screened_round(
                 else 0.99
             )
         elif key.startswith("grade_"):
-            probability = float(request["state"]["output"] == "pass")
+            probability = (
+                grade_pass_probability if request["state"]["output"] == "pass" else 0.0
+            )
+        elif key.startswith("grade-confirm:"):
+            hazard = key.rsplit(":", 1)[-1]
+            probabilities = dict(
+                zip(
+                    ("sufficient", "meets", "violation"),
+                    confirmation_answers or (0.5, 0.5, 0.5),
+                    strict=True,
+                )
+            )
+            probability = probabilities[hazard]
+        elif key.startswith("grade-verify:"):
+            check = key.rsplit(":", 1)[-1]
+            probabilities = dict(
+                zip(
+                    ("sufficient", "meets", "violation", "support"),
+                    verification_answers or (0.5, 0.5, 0.5, 0.5),
+                    strict=True,
+                )
+            )
+            probability = probabilities[check]
         elif key.startswith("output-screen:"):
             hazard = (output_screen or {}).get(str(request["state"]["output"]), 0.01)
             if hazard is None:
@@ -126,9 +162,37 @@ def _run_screened_round(
                 and str(requests[0]["key"]).startswith("grade_")
             ):
                 return super().decide_batch(requests[:-1], role=role, run_id=run_id)
+            if (
+                confirmation_provider_error
+                and requests
+                and str(requests[0]["key"]).startswith("grade-confirm:")
+            ):
+                raise ProviderError("scripted", self.jev_model, None, role=role)
             return super().decide_batch(requests, role=role, run_id=run_id)
 
-    gateway = CountingGateway(chat=chat, decision=decide)
+    catalog = (
+        StaticModelCatalog(
+            [
+                ModelInfo(
+                    id="glm-5.3-flash",
+                    provider="go",
+                    input_cost_per_token=0.0000001,
+                    output_cost_per_token=0.0000002,
+                )
+            ],
+            [
+                ModelInfo(
+                    id=JEV_MODEL,
+                    provider="openrouter",
+                    input_cost_per_token=0.0000001,
+                    output_cost_per_token=0.0000002,
+                )
+            ],
+        )
+        if priced_catalog
+        else None
+    )
+    gateway = CountingGateway(chat=chat, decision=decide, catalog=catalog)
     recording = RecordingGateway(gateway, record_path) if record_path else None
     if recording is not None:
         recording.writer_instruction_version = writer_instruction_version
@@ -136,9 +200,10 @@ def _run_screened_round(
     result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=recording or gateway,
-        config=Settings(),
+        config=settings or Settings(),
         writer_instruction_version=writer_instruction_version,
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+        decision_policy=decision_policy,
+    ).optimize(prompt, {"tier": tier, "clarification_allowed": False})
     return result, batches
 
 

@@ -199,6 +199,25 @@ class PromptOptimizer:
         self.gateway: Gateway = (
             gateway if gateway is not None else self._default_gateway()
         )
+        from .evaluation.recording import RecordingGateway
+
+        if (
+            isinstance(self.gateway, RecordingGateway)
+            and self.decision_policy is not None
+        ):
+            self.gateway.decision_policy_artifacts = list(
+                self.decision_policy.artifact_dicts
+            )
+            self.gateway.decision_policy_version = self.decision_policy.policy_version
+        if (
+            isinstance(self.gateway, RecordingGateway)
+            and self.writer_instruction_version >= 7
+        ):
+            self.gateway.cascade_settings = {
+                "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,
+                "grading_cascade_dollar_cap": self.config.grading_cascade_dollar_cap,
+                "grading_confirmation_reservation_usd": self.config.grading_confirmation_reservation_usd,
+            }
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (
             SQLiteRubricStore(self.store.path)

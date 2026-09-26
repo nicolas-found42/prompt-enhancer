@@ -11,6 +11,43 @@ const baseResult: OptimizeResult = {
   timing: { total_ms: 0 },
 };
 
+it("explains unresolved weak-grade confirmation and cascade spending", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          grading_cascade: {
+            confirmation_count: 1,
+            escalation_count: 0,
+            verification_count: 0,
+            unresolved_count: 1,
+            reserved_cost_usd: 0.001,
+            dollar_cap: 0.02,
+            pairs: [
+              {
+                pair_id: "0001:0000",
+                candidate_id: "candidate-a",
+                test_id: "t0",
+                reason: "confirmation_not_decisive",
+                status: "unresolved",
+              },
+            ],
+          },
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", { name: "Grade confirmation" });
+  expect(within(section).getByText(/1 confirmation/i)).toBeInTheDocument();
+  expect(
+    within(section).getByText(/candidate-a.*confirmation not decisive/i)
+  ).toBeInTheDocument();
+  expect(within(section).getByText(/\$0\.0010.*\$0\.0200/)).toBeInTheDocument();
+});
+
 it("shows a detected output and an unresolved screen without treating both as malicious", () => {
   render(
     <RunReport
