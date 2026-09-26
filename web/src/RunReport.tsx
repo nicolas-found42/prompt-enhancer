@@ -115,6 +115,7 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const screenChecks = items(testScreening.screening_checks);
   const screenObservation = record(testScreening.screening_observation);
   const gradingObservation = record(report.grading_observation);
+  const outputScreen = items(report.output_screen);
   const gradingPolicies = items(report.grading_policy);
   const selection = record(report.selection_evidence);
   const originalScore = record(selection.original_score);
@@ -295,6 +296,38 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
           </p>
         </section>
       )}
+      {outputScreen.length > 0 && (
+        <section aria-labelledby="output-screen-heading">
+          <h3 id="output-screen-heading">Output screen</h3>
+          <p>
+            Each weak-panel output was checked for instructions aimed at the
+            evaluator. Detected outputs score zero; unresolved screens keep
+            their ordinary score for audit but cannot verify an improvement.
+          </p>
+          <ul>
+            {outputScreen.map((item, index) => {
+              const entry = record(item);
+              return (
+                <li
+                  key={`${text(entry.candidate_id)}-${text(entry.model)}-${text(entry.sample)}-${index}`}
+                >
+                  {text(entry.candidate_id)} on {text(entry.model)} sample{" "}
+                  {text(entry.sample)}:{" "}
+                  {humanize(text(entry.reason || entry.status))}
+                  {entry.status === "screen_unresolved" &&
+                    " (screen unresolved)"}
+                  .
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+      {outputScreen.length === 0 &&
+        Object.keys(gradingObservation).length > 0 &&
+        gradingObservation.protocol !== "single_output_screened_v2" && (
+          <p>Output screen unavailable for this historical run.</p>
+        )}
       {gradingPolicies.length > 0 && (
         <section aria-labelledby="grading-policy-heading">
           <h3 id="grading-policy-heading">Grading policy</h3>

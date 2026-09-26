@@ -32,6 +32,8 @@ def _run_screened_round(
     oversized_output: bool = False,
     screen_provider_error: bool = False,
     record_path: Path | None = None,
+    writer_instruction_version: int = 5,
+    output_screen: Mapping[str, float | None] | None = None,
 ) -> tuple[dict[str, Any], list[list[dict[str, Any]]]]:
     batches: list[list[dict[str, Any]]] = []
     prompt = "Read the background notes. Summarize the report."
@@ -90,6 +92,11 @@ def _run_screened_round(
             )
         elif key.startswith("grade_"):
             probability = float(request["state"]["output"] == "pass")
+        elif key.startswith("output-screen:"):
+            hazard = (output_screen or {}).get(str(request["state"]["output"]), 0.01)
+            if hazard is None:
+                return {"type": "unknown", "answer": "yes"}
+            probability = hazard
         elif key.startswith(
             ("gap:goal", "strategy_recheck:restructure_lossless", "fidelity:meaning")
         ):
@@ -124,12 +131,13 @@ def _run_screened_round(
     gateway = CountingGateway(chat=chat, decision=decide)
     recording = RecordingGateway(gateway, record_path) if record_path else None
     if recording is not None:
-        recording.writer_instruction_version = 5
+        recording.writer_instruction_version = writer_instruction_version
         recording.faithfulness_threshold = 0.8
     result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=recording or gateway,
         config=Settings(),
+        writer_instruction_version=writer_instruction_version,
     ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
     return result, batches
 

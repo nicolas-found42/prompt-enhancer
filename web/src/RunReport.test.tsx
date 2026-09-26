@@ -11,6 +11,64 @@ const baseResult: OptimizeResult = {
   timing: { total_ms: 0 },
 };
 
+it("shows a detected output and an unresolved screen without treating both as malicious", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          output_screen: [
+            {
+              candidate_id: "candidate-a",
+              model: "weak-a",
+              sample: 0,
+              status: "steering_detected",
+              reason: "evaluator_steering_detected",
+            },
+            {
+              candidate_id: "candidate-b",
+              model: "weak-b",
+              sample: 0,
+              status: "screen_unresolved",
+              reason: "hazard_answer_incomplete_or_uncertain",
+            },
+          ],
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", { name: "Output screen" });
+  expect(
+    within(section).getByText(/candidate-a.*evaluator steering detected/i)
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(/candidate-b.*screen unresolved/i)
+  ).toBeInTheDocument();
+});
+
+it("identifies grading records from before the output-screen protocol", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          grading_observation: {
+            protocol: "single_output_shared_state_v1",
+            gateway_batch_calls: 2,
+          },
+        },
+      }}
+    />
+  );
+
+  expect(
+    screen.getByText(/Output screen unavailable for this historical run/i)
+  ).toBeInTheDocument();
+});
+
 it("explains a calibrated gate and its confidence threshold", () => {
   render(
     <RunReport
