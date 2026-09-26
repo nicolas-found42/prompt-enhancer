@@ -120,6 +120,19 @@ STRATEGY_LIBRARY: tuple[RewriteStrategy, ...] = (
     ),
 )
 
+LOSSLESS_RESTRUCTURE_STRATEGY = RewriteStrategy(
+    name="restructure_lossless",
+    kind="safe",
+    description=(
+        "Group unchanged source content under fixed headings chosen from semantic roles."
+    ),
+    applies_to=("structure", "organization", "format", "output_format"),
+    keywords=("organize", "structure", "group", "sections"),
+    priority=84,
+    restructures=True,
+)
+CURRENT_STRATEGY_LIBRARY = (*STRATEGY_LIBRARY, LOSSLESS_RESTRUCTURE_STRATEGY)
+
 # A short alias is useful to callers and keeps the public API discoverable.
 STRATEGIES = STRATEGY_LIBRARY
 
@@ -497,6 +510,8 @@ def search_strategies(
 
 
 __all__ = [
+    "CURRENT_STRATEGY_LIBRARY",
+    "LOSSLESS_RESTRUCTURE_STRATEGY",
     "STRATEGIES",
     "STRATEGY_LIBRARY",
     "CandidateBatchRequest",

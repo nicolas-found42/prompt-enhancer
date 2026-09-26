@@ -125,6 +125,13 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const strong = record(report.strong_check);
   const strongCandidates = items(strong.candidates);
   const rejected = items(selection.rejected_candidates);
+  const restructuring = record(report.lossless_restructuring);
+  const preservation = record(restructuring.source_preservation);
+  const restructureRoles = items(restructuring.roles);
+  const unknownRoles = Array.isArray(restructuring.unknowns)
+    ? restructuring.unknowns.map(String)
+    : [];
+  const restructureCost = record(restructuring.cost);
   const costByRole = record(result.cost.cost_by_role);
   const goUsage = Object.values(result.cost.by_role ?? {})
     .flat()
@@ -251,6 +258,59 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
               );
             })}
           </ul>
+        </section>
+      )}
+      {Object.keys(restructuring).length > 0 && (
+        <section aria-labelledby="lossless-restructuring-heading">
+          <h3 id="lossless-restructuring-heading">
+            Content preserving structure
+          </h3>
+          <p>
+            Source preservation:{" "}
+            {humanize(text(preservation.status) || "unavailable")}. Outcome:{" "}
+            {humanize(
+              text(restructuring.selection_outcome || restructuring.outcome)
+            )}
+            .
+          </p>
+          {Boolean(restructuring.decline_reason) && (
+            <p>Reason: {text(restructuring.decline_reason)}</p>
+          )}
+          {restructureRoles.length > 0 && (
+            <>
+              <h4>Source unit roles</h4>
+              <ul>
+                {restructureRoles.map((role, index) => (
+                  <li key={text(role.unit_id) || index}>
+                    {text(role.unit_id)}: {humanize(text(role.role))}
+                    {typeof role.confidence === "number" &&
+                      ` (${score(role.confidence)} confidence)`}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          {unknownRoles.length > 0 && (
+            <p>
+              Uncertain source units retained in Other:{" "}
+              {unknownRoles.join(", ")}.
+            </p>
+          )}
+          <p>
+            Role assignment requests:{" "}
+            {text(restructuring.role_assignment_requests || 0)}. Reported role
+            assignment cost:{" "}
+            {Object.keys(restructureCost).length > 0
+              ? `$${Object.values(record(restructureCost.cost_by_role))
+                  .reduce<number>(
+                    (total, value) =>
+                      total + (typeof value === "number" ? value : 0),
+                    0
+                  )
+                  .toFixed(4)}`
+              : "unavailable"}
+            .
+          </p>
         </section>
       )}
       {Object.keys(originalRates).length > 0 && (
