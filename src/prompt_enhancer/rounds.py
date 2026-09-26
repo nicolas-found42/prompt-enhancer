@@ -199,6 +199,7 @@ class RoundOutcome:
     lossless_restructuring: Mapping[str, Any] | None = None
     test_screening: Mapping[str, Any] | None = None
     grading_observation: Mapping[str, Any] | None = None
+    output_screen: tuple[dict[str, Any], ...] | None = None
 
     @property
     def continue_rounds(self) -> bool:
@@ -250,6 +251,8 @@ class RoundOutcome:
                 report["test_screening"] = dict(self.test_screening)
             if self.grading_observation is not None:
                 report["grading_observation"] = dict(self.grading_observation)
+            if self.output_screen is not None:
+                report["output_screen"] = list(self.output_screen)
             return report
         assert (
             self.panel is not None
@@ -282,6 +285,11 @@ class RoundOutcome:
             **(
                 {"grading_observation": dict(self.grading_observation)}
                 if self.grading_observation is not None
+                else {}
+            ),
+            **(
+                {"output_screen": list(self.output_screen)}
+                if self.output_screen is not None
                 else {}
             ),
             **(
@@ -553,6 +561,8 @@ def run_round(
         run_id=plan.run_id,
         grading_policy=plan.grading_policy,
         shared_state=plan.writer_instruction_version >= 5,
+        output_screen=plan.writer_instruction_version >= 6,
+        decision_policy=plan.decision_policy,
         measurements=grading_observation
         if plan.writer_instruction_version >= 5
         else None,
@@ -581,7 +591,9 @@ def run_round(
                 )
             ).passed
             and panel_grades[candidate.candidate_id].ungradable_outputs == 0
-            and original_grade.ungradable_outputs == 0,
+            and original_grade.ungradable_outputs == 0
+            and panel_grades[candidate.candidate_id].unresolved_screen_outputs == 0
+            and original_grade.unresolved_screen_outputs == 0,
             rejection_reasons=(
                 (
                     ()
@@ -595,6 +607,12 @@ def run_round(
                     ("weak-panel grading was incomplete or oversized",)
                     if panel_grades[candidate.candidate_id].ungradable_outputs
                     or original_grade.ungradable_outputs
+                    else ()
+                )
+                + (
+                    ("weak-panel output screen was unresolved",)
+                    if panel_grades[candidate.candidate_id].unresolved_screen_outputs
+                    or original_grade.unresolved_screen_outputs
                     else ()
                 )
             ),
@@ -651,6 +669,13 @@ def run_round(
         ranking=ranking,
         strong_check=strong,
         grading_answers=tuple(grading_answers),
+        output_screen=tuple(
+            answer["output_screen"]
+            for answer in grading_answers
+            if "output_screen" in answer
+        )
+        if plan.writer_instruction_version >= 6
+        else None,
         candidates=tuple(item.to_dict() for item in ranking.ranked),
         lossless_restructuring={
             **lossless_build.evidence,
