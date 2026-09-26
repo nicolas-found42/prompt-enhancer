@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
 from prompt_enhancer import diagnosis as diagnosis_module
-from prompt_enhancer.catalog import JEV_MODEL
+from prompt_enhancer.catalog import JEV_MODEL, ModelInfo, StaticModelCatalog
 from prompt_enhancer.diagnosis import (
     DEFAULT_RUBRIC,
     ChecklistItem,
@@ -19,6 +20,7 @@ from prompt_enhancer.gateway import (
     ProviderError,
     ScriptedGateway,
 )
+from prompt_enhancer.jev import batch_decision_payload
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.rubric_revisions import (
     RubricQuestion,
@@ -258,6 +260,37 @@ def test_oversized_fanout_falls_back_with_a_hard_request_cap(monkeypatch) -> Non
     assert evidence["provider_requests"] == 1
     assert result["original_kept"] is True
     assert "incomplete" in result["report"]["summary"].lower()
+
+
+def test_fanout_uses_selected_models_current_context_limit() -> None:
+    gateway = BatchGateway()
+    gateway.catalog = StaticModelCatalog(
+        (), (ModelInfo(JEV_MODEL, "openrouter", context_window=8_192),)
+    )
+
+    result = _run(gateway)
+
+    evidence = result["report"]["diagnosis"]["request_evidence"]
+    assert evidence["mode"] == "bounded_sequential_fallback"
+    assert evidence["reason"] == "speculative_request_exceeds_provider_limits"
+    assert (
+        evidence["provider_requests"]
+        <= diagnosis_module.MAX_DIAGNOSIS_PROVIDER_REQUESTS
+    )
+    for batch in gateway.batches:
+        _, envelope = batch_decision_payload(batch, model=JEV_MODEL)
+        assert len(json.dumps(envelope, ensure_ascii=False).encode()) <= 7_168
+
+
+def test_request_sizing_uses_a_conservative_fallback_without_model_metadata() -> None:
+    request = {"key": "large", "state": "x" * 100_000, "query": "Is it clear?"}
+    known = BatchGateway()
+    known.catalog = StaticModelCatalog(
+        (), (ModelInfo(JEV_MODEL, "openrouter", context_window=200_000),)
+    )
+
+    assert Diagnoser(known)._request_fits([request]) is True
+    assert Diagnoser(BatchGateway())._request_fits([request]) is False
 
 
 def test_over_character_cap_returns_incomplete_without_inference() -> None:

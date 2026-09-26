@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from .evaluation.calibration import DecisionPolicy, PolicyDecision
 from . import jev_questions
+from .catalog import CatalogError
 from .gateway import Gateway, HttpGateway, ProviderError
 from .jev import (
     ChoiceDecision,
@@ -39,7 +40,7 @@ DEFAULT_TASK_TYPE_CONFIDENCE_THRESHOLD = 0.8
 DEFAULT_EXISTENCE_THRESHOLD = 0.8
 DEFAULT_EXISTENCE_THRESHOLD_VERSION = "existence-cutoffs-v1"
 MAX_DIAGNOSIS_INPUT_CHARACTERS = 20_000
-MAX_DIAGNOSIS_REQUEST_BYTES = 96_000
+MAX_DIAGNOSIS_REQUEST_BYTES = 96_000  # Conservative fallback without model metadata.
 MAX_DIAGNOSIS_QUESTIONS_PER_REQUEST = 40
 MAX_DIAGNOSIS_PROVIDER_REQUESTS = 8
 
@@ -608,6 +609,7 @@ class Diagnoser:
         self._incomplete = False
         self._fallback_reason: str | None = None
         self._dispatch_blocked = False
+        self._request_byte_limit: int | None = None
 
     @property
     def rubric(self) -> DiagnosisRubric:
@@ -671,10 +673,31 @@ class Diagnoser:
             _, envelope = batch_decision_payload(requests, model=self.gateway.jev_model)
         except ValueError:
             return False
-        return (
-            len(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
-            <= MAX_DIAGNOSIS_REQUEST_BYTES
+        return len(json.dumps(envelope, ensure_ascii=False).encode("utf-8")) <= (
+            self._provider_request_byte_limit()
         )
+
+    def _provider_request_byte_limit(self) -> int:
+        if self._request_byte_limit is not None:
+            return self._request_byte_limit
+        gateway = getattr(self.gateway, "gateway", self.gateway)
+        catalog = getattr(gateway, "catalog", None)
+        snapshot = getattr(catalog, "snapshot", None)
+        if snapshot is None and catalog is not None:
+            fetch = getattr(catalog, "fetch", None)
+            try:
+                snapshot = fetch() if callable(fetch) else None
+            except (CatalogError, ProviderError, RuntimeError, TypeError, ValueError):
+                pass
+        model = snapshot.get(self.gateway.jev_model) if snapshot is not None else None
+        window = getattr(model, "context_window", None)
+        if isinstance(window, int) and not isinstance(window, bool) and window > 0:
+            # A UTF-8 byte is a conservative token proxy. Reserve room for the
+            # provider's framing and the answer inside the advertised context.
+            self._request_byte_limit = max(0, window - max(1_024, window // 20))
+        else:
+            self._request_byte_limit = MAX_DIAGNOSIS_REQUEST_BYTES
+        return self._request_byte_limit
 
     def _dispatch(
         self, requests: Sequence[Mapping[str, Any]]
