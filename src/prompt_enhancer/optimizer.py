@@ -210,6 +210,8 @@ class PromptOptimizer:
             self.gateway.observe_sequential_diagnosis = (
                 self.observe_sequential_diagnosis
             )
+            self.gateway.sentence_diagnosis_version = self.sentence_diagnosis_version
+            self.gateway.task_taxonomy_version = self.task_taxonomy_version
         if (
             isinstance(self.gateway, RecordingGateway)
             and self.decision_policy is not None

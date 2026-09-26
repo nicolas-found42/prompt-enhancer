@@ -309,7 +309,9 @@ def isolated_health_gateway(gateway: Gateway) -> Gateway | None:
     if isinstance(gateway, HttpGateway):
         return HttpGateway(
             transport=gateway.transport,
-            config=replace(gateway.config, max_retries=0),
+            config=replace(
+                gateway.config, max_retries=0, timeout=min(gateway.config.timeout, 15.0)
+            ),
             catalog=gateway.catalog,
         )
     if isinstance(gateway, ReplayGateway):
@@ -482,8 +484,16 @@ class PromptHealthService:
         sentences = split_sentences(prompt)
         if not sentences:
             return {**empty, "status": "empty"}
-        with self._lock:
+        if not self._lock.acquire(blocking=False):
+            return {
+                **empty,
+                "status": "paused",
+                "reason": "another live check is running",
+            }
+        try:
             return self._assess_locked(prompt, sentences, session_id, empty)
+        finally:
+            self._lock.release()
 
     def _assess_locked(
         self,
@@ -589,6 +599,7 @@ class PromptHealthService:
                 }
         dispatched = 0
         measured = 0.0
+        success = False
         outcome: dict[str, Any] | None = None
         try:
             gateway.new_run(f"health-{uuid.uuid4().hex}")
@@ -620,7 +631,9 @@ class PromptHealthService:
                 if records:
                     self.store.cache(records)
             measured = float(gateway.usage_report().get("total", 0.0))
-            result = self._render(sentences, requests, request_keys, answers, empty)
+            result = self._render(
+                prompt, sentences, requests, request_keys, answers, empty
+            )
             result["cache"] = {
                 "hits": hits,
                 "misses": misses,
@@ -633,6 +646,7 @@ class PromptHealthService:
                 "provider_requests": dispatched,
             }
             outcome = result
+            success = True
             return result
         except (ProviderError, JevResponseError, RuntimeError, ValueError, TypeError):
             measured = float(gateway.usage_report().get("total", 0.0))
@@ -655,7 +669,9 @@ class PromptHealthService:
                     reservation,
                     measured=measured,
                     dispatched=attempts,
-                    measured_complete=bool(measured) and attempts <= dispatched,
+                    measured_complete=success
+                    and bool(measured)
+                    and attempts <= dispatched,
                     status=str(outcome.get("status", "failed"))
                     if outcome is not None
                     else "failed",
@@ -665,6 +681,7 @@ class PromptHealthService:
 
     def _render(
         self,
+        prompt: str,
         sentences: Sequence[Sentence],
         requests: Sequence[Mapping[str, Any]],
         request_keys: Mapping[str, str],
@@ -737,8 +754,9 @@ class PromptHealthService:
                         {
                             "sentence_id": sentence.id,
                             "kind": kind,
-                            "start": sentence.start,
-                            "end": sentence.end,
+                            "start": len(prompt[: sentence.start].encode("utf-16-le"))
+                            // 2,
+                            "end": len(prompt[: sentence.end].encode("utf-16-le")) // 2,
                             "text": sentence.text,
                             "probability": decision.probability,
                             "threshold": flag_cutoff,

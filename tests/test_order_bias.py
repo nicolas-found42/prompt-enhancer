@@ -21,10 +21,48 @@ from prompt_enhancer.evaluation.order_bias import (
     question_schema_digest,
 )
 from prompt_enhancer.gateway import GatewayConfig, HttpGateway, HttpTransport
+from prompt_enhancer.grading import grade_panel_with_jev
 from prompt_enhancer.optimizer import PromptOptimizer
+from prompt_enhancer.runner import PanelResult
 from prompt_enhancer.store import RunStore
 
 PromptOptimizer = partial(PromptOptimizer, writer_instruction_version=4)
+
+
+@pytest.mark.parametrize("kind", ["choice", "score"])
+def test_wrong_type_reversed_grade_contributes_zero(kind: str) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+
+    def answer(request, **_kwargs):
+        if str(request["key"]).endswith("_second"):
+            return {"type": "noul", "probability_true": 0.9}
+        if kind == "choice":
+            return {
+                "type": "choice",
+                "choice": "pass",
+                "probabilities": {"pass": 1.0, "fail": 0.0},
+            }
+        return {"type": "score", "score": 1, "probabilities": {"0": 0.0, "1": 1.0}}
+
+    test = {
+        "id": "graded",
+        "question": "How well?",
+        "kind": kind,
+        "expected": "pass" if kind == "choice" else "good",
+    }
+    if kind == "choice":
+        test["options"] = ["pass", "fail"]
+    else:
+        test["levels"] = ["poor", "good"]
+    grades, _ = grade_panel_with_jev(
+        [PanelResult("candidate", "weak", 0, 7, "answer", "prompt")],
+        [test],
+        ScriptedGateway(decision=answer),
+        judge_model="typesafe/jev-1.13-20260917",
+        run_id="wrong-reversed-type",
+    )
+
+    assert grades["candidate"].per_model_samples["weak"] == (0.0,)
 
 
 def _manifest(*, kind: str = "choice", provenance: str = "synthetic_known_answer"):

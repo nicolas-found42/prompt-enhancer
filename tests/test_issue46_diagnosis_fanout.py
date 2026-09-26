@@ -407,3 +407,41 @@ def test_fanout_recording_strictly_replays_and_old_sequential_bundle_still_loads
             restored["report"]["diagnosis"]["problem_sentences"]
             == original["report"]["diagnosis"]["problem_sentences"]
         )
+
+
+def test_recording_replays_the_provider_limit_and_diagnosis_protocols(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bounded.json"
+    gateway = BatchGateway()
+    gateway.catalog = StaticModelCatalog(
+        (), (ModelInfo(JEV_MODEL, "openrouter", context_window=8_192),)
+    )
+    recording = RecordingGateway(gateway, path)
+    original = PromptOptimizer(
+        gateway=recording,
+        store=RunStore(":memory:"),
+        sentence_diagnosis_version=2,
+        task_taxonomy_version=2,
+    ).optimize(
+        "Write a brief note. Keep it clear.",
+        {"tier": "fast", "clarification_allowed": False},
+    )
+    bundle = json.loads(path.read_text())
+    assert bundle["diagnosis_request_byte_limit"] == 7_168
+    assert bundle["sentence_diagnosis_version"] == 2
+    assert bundle["task_taxonomy_version"] == 2
+
+    replay = default_engine_factory(path)
+    replay.store = RunStore(":memory:")
+    restored = replay.optimize(
+        "Write a brief note. Keep it clear.",
+        {"tier": "fast", "clarification_allowed": False},
+    )
+    restored_evidence = restored["report"]["diagnosis"]["request_evidence"]
+    original_evidence = original["report"]["diagnosis"]["request_evidence"]
+    assert restored_evidence["mode"] == original_evidence["mode"]
+    assert (
+        restored_evidence["provider_requests"] == original_evidence["provider_requests"]
+    )
+    assert restored_evidence["reason"] == original_evidence["reason"]

@@ -190,7 +190,10 @@ def test_low_confidence_none_unknown_and_provider_failure_stay_auditable() -> No
 
 
 def test_fast_and_missing_pricing_skip_attribution_without_losing_failure() -> None:
-    for tier, priced in (("fast", True), ("standard", False)):
+    for tier, priced, reason in (
+        ("fast", True, "pair_budget_exhausted"),
+        ("standard", False, "missing_trustworthy_pricing"),
+    ):
         gateway = AttributionGateway(priced=priced)
         result = _optimize(gateway, tier=tier)
 
@@ -198,6 +201,7 @@ def test_fast_and_missing_pricing_skip_attribution_without_losing_failure() -> N
         assert result["report"]["history"][0]["candidate_failures"]
         attribution = result["report"]["failure_attribution"]
         assert attribution["skipped_count"] > 0
+        assert {pair["reason"] for pair in attribution["pairs"]} == {reason}
 
 
 def test_pair_cap_applies_across_models_and_samples() -> None:

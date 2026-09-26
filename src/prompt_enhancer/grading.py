@@ -591,6 +591,8 @@ def grade_panel_with_jev(
                         masses = [first.probabilities.get(expected, 0.0)]
                         if isinstance(second, ChoiceDecision):
                             masses.append(second.probabilities.get(expected, 0.0))
+                        elif len(indexes) > 1:
+                            masses.append(0.0)
                         selected_policy = str(
                             policy_evidence[(output_index, test_index)]["policy"]
                         )
@@ -609,6 +611,8 @@ def grade_panel_with_jev(
                                     second, levels, expected, reverse=True
                                 )
                             )
+                        elif len(indexes) > 1:
+                            masses.append(0.0)
                         selected_policy = str(
                             policy_evidence[(output_index, test_index)]["policy"]
                         )

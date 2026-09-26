@@ -403,6 +403,7 @@ class _ReplayBundle:
     task_taxonomy_version: int = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
     speculative_diagnosis: bool = False
     observe_sequential_diagnosis: bool = False
+    diagnosis_request_byte_limit: int | None = None
     pricing_models: tuple[Mapping[str, Any], ...] = ()
     decision_policy_artifacts: tuple[Mapping[str, Any], ...] = ()
     decision_policy_version: str | None = None
@@ -754,6 +755,9 @@ def default_engine_factory(
             allow_snapshot_mismatch=allow_snapshot_mismatch,
             catalog=catalog,
         )
+        replay_gateway.diagnosis_request_byte_limit = (
+            bundle.diagnosis_request_byte_limit
+        )
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
     replay_settings = replace(
@@ -815,6 +819,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         )
         speculative_diagnosis = raw.get("speculative_diagnosis", False)
         observe_sequential_diagnosis = raw.get("observe_sequential_diagnosis", False)
+        diagnosis_request_byte_limit = raw.get("diagnosis_request_byte_limit")
         raw_pricing_models = raw.get("pricing_models", [])
         raw_policy_artifacts = raw.get("decision_policy_artifacts", [])
         raw_policy_version = raw.get("decision_policy_version")
@@ -834,6 +839,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         task_taxonomy_version = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
         speculative_diagnosis = False
         observe_sequential_diagnosis = False
+        diagnosis_request_byte_limit = None
         raw_pricing_models = []
         raw_policy_artifacts = []
         raw_policy_version = None
@@ -946,6 +952,12 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raise EvaluationError("replay speculative_diagnosis must be a boolean")
     if not isinstance(observe_sequential_diagnosis, bool):
         raise EvaluationError("replay observe_sequential_diagnosis must be a boolean")
+    if diagnosis_request_byte_limit is not None and (
+        isinstance(diagnosis_request_byte_limit, bool)
+        or not isinstance(diagnosis_request_byte_limit, int)
+        or diagnosis_request_byte_limit < 0
+    ):
+        raise EvaluationError("replay diagnosis_request_byte_limit must be nonnegative")
     if (
         isinstance(writer_version, bool)
         or writer_version not in WRITER_INSTRUCTION_VERSIONS
@@ -1025,6 +1037,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         task_taxonomy_version=task_taxonomy_version,
         speculative_diagnosis=speculative_diagnosis,
         observe_sequential_diagnosis=observe_sequential_diagnosis,
+        diagnosis_request_byte_limit=diagnosis_request_byte_limit,
         pricing_models=tuple(raw_pricing_models),
         decision_policy_artifacts=tuple(raw_policy_artifacts),
         decision_policy_version=raw_policy_version,

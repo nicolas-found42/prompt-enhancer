@@ -349,11 +349,7 @@ class _Budget:
     def measured(self) -> float:
         return max(0.0, self._role_cost() - self.initial_measured)
 
-    def reserve(self, model: str, payload: Any, *, evaluation_count: int = 0) -> float:
-        if self.evaluations + evaluation_count > self.policy.max_evaluations:
-            raise RuntimeError("metric evaluation budget exhausted")
-        if self.measured() > self.policy.max_cost_usd:
-            raise RuntimeError("measured dollar budget exhausted")
+    def estimate(self, model: str, payload: Any) -> float:
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         if len(encoded.encode()) > 96_000:
             raise RuntimeError("request size limit reached")
@@ -383,6 +379,14 @@ class _Budget:
                     + 256 * info.output_cost_per_token
                 )
             )
+        return cost
+
+    def reserve(self, model: str, payload: Any, *, evaluation_count: int = 0) -> float:
+        if self.evaluations + evaluation_count > self.policy.max_evaluations:
+            raise RuntimeError("metric evaluation budget exhausted")
+        if self.measured() > self.policy.max_cost_usd:
+            raise RuntimeError("measured dollar budget exhausted")
+        cost = self.estimate(model, payload)
         if self.reserved_usd + cost > self.policy.max_cost_usd:
             raise RuntimeError("dollar budget exhausted")
         self.reserved_usd += cost
@@ -417,7 +421,10 @@ def optimize_reword(
         name: tuple(row for row in rows if row.partition == name)
         for name in ("training", "calibration", "final", "regression")
     }
-    final_digest = _digest([asdict(row) for row in partitions["final"]])
+    final_digest = _digest(
+        [asdict(row) for row in sorted(partitions["final"], key=lambda row: row.row_id)]
+    )
+    final_groups = tuple(sorted({row.group_id for row in partitions["final"]}))
     report: dict[str, Any] = {
         "attempt_id": attempt_id,
         "actor": "automatic_policy",
@@ -462,6 +469,7 @@ def optimize_reword(
             attempt_id,
             final_digest,
             report,
+            holdout_groups=final_groups,
             adopted_rubric=adopted_rubric,
             automated_decision=persisted_decision,
             consume_holdout=consumed,
@@ -471,7 +479,7 @@ def optimize_reword(
     budget = _Budget(gateway, policy)
     if gateway.jev_model != JEV_MODEL:
         return finish("answering snapshot is not the verified pin")
-    if store.holdout_consumed(final_digest):
+    if store.holdout_consumed(final_digest, final_groups):
         return finish("validation budget exhausted")
     if (
         not partitions["training"]
@@ -636,7 +644,7 @@ def optimize_reword(
                 "reject" if texts and explicitly_drifted == len(texts) else "hold"
             )
             return finish("semantic screening held or rejected all alternatives")
-        cache: dict[str, tuple[float, ...]] = {}
+        cache: dict[str, tuple[tuple[float, ...], Any, str]] = {}
         raw_evaluations: list[dict[str, Any]] = []
         report["evaluations"] = raw_evaluations
         evaluation_costs: dict[str, float] = defaultdict(float)
@@ -667,6 +675,23 @@ def optimize_reword(
                         question.question_version + 1,
                     )
                 )
+                request = {
+                    "key": f"reword-eval:{key[:16]}",
+                    "model": judge_model,
+                    "type": question.response_type,
+                    "state": dict(row.state),
+                    "question": text,
+                    "question_schema": {
+                        "version": question.question_version + 1,
+                        "policy": POLICY_VERSION,
+                    },
+                }
+                if question.response_type == "choice":
+                    request["options"] = list(criteria)
+                elif question.response_type == "score":
+                    request["levels"] = list(criteria)
+                evaluation_costs[text] += budget.estimate(judge_model, request)
+                cache_hit = key in cache
                 if key not in cache:
                     persisted = store.get_reword_evaluation(key)
                     if persisted is not None:
@@ -677,59 +702,34 @@ def optimize_reword(
                             raise RuntimeError(
                                 "cached evaluation has mismatched provenance"
                             )
-                        cache[key] = probabilities
-                        raw_evaluations.append(
-                            {
-                                "row_id": row.row_id,
-                                "text_digest": _digest(text),
-                                "raw_answer": raw,
-                                "snapshot": snapshot,
-                                "cache_hit": True,
-                            }
+                        cache[key] = (probabilities, raw, snapshot)
+                        cache_hit = True
+                    else:
+                        budget.reserve(judge_model, request, evaluation_count=1)
+                        raw = gateway.decide(request, role="judge_reword_eval")
+                        snapshot = gateway.decision_log[-1].get("answered_by")
+                        probabilities = event_probabilities(raw)
+                        if snapshot != gateway.jev_model or probabilities is None:
+                            raise RuntimeError(
+                                "missing, malformed, or mismatched answering snapshot"
+                            )
+                        cache[key] = (probabilities, raw, snapshot)
+                        store.cache_reword_evaluation(
+                            key,
+                            {"raw_answer": raw, "snapshot": snapshot},
                         )
-                        result[row.row_id] = probabilities
-                        continue
-                    request = {
-                        "key": f"reword-eval:{key[:16]}",
-                        "model": judge_model,
-                        "type": question.response_type,
-                        "state": dict(row.state),
-                        "question": text,
-                        "question_schema": {
-                            "version": question.question_version + 1,
-                            "policy": POLICY_VERSION,
-                        },
+                probabilities, raw, snapshot = cache[key]
+                raw_evaluations.append(
+                    {
+                        "row_id": row.row_id,
+                        "text_digest": _digest(text),
+                        "request": request,
+                        "raw_answer": raw,
+                        "snapshot": snapshot,
+                        "cache_hit": cache_hit,
                     }
-                    if question.response_type == "choice":
-                        request["options"] = list(criteria)
-                    elif question.response_type == "score":
-                        request["levels"] = list(criteria)
-                    evaluation_costs[text] += budget.reserve(
-                        judge_model, request, evaluation_count=1
-                    )
-                    raw = gateway.decide(request, role="judge_reword_eval")
-                    snapshot = gateway.decision_log[-1].get("answered_by")
-                    probabilities = event_probabilities(raw)
-                    raw_evaluations.append(
-                        {
-                            "row_id": row.row_id,
-                            "text_digest": _digest(text),
-                            "request": request,
-                            "raw_answer": raw,
-                            "snapshot": snapshot,
-                            "cache_hit": False,
-                        }
-                    )
-                    if snapshot != gateway.jev_model or probabilities is None:
-                        raise RuntimeError(
-                            "missing, malformed, or mismatched answering snapshot"
-                        )
-                    cache[key] = probabilities
-                    store.cache_reword_evaluation(
-                        key,
-                        {"raw_answer": raw, "snapshot": snapshot},
-                    )
-                result[row.row_id] = cache[key]
+                )
+                result[row.row_id] = probabilities
             return result
 
         training_predictions = {

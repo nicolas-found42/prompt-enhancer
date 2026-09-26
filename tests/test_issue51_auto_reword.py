@@ -30,9 +30,12 @@ from prompt_enhancer.reword_optimization import (
     optimize_reword,
 )
 from prompt_enhancer.rubric_revisions import (
+    RevisionKind,
     RubricQuestion,
+    RubricQuestionChange,
     RubricVersion,
     SQLiteRubricStore,
+    StaleProposalError,
 )
 from prompt_enhancer.store import RunStore
 
@@ -219,6 +222,27 @@ def test_equivalent_reword_adopts_without_human_identity_and_rolls_back(
     assert store.rollback_reword(result["adopted_version_id"]).version_id == "rubric-v1"
 
 
+def test_new_rubric_version_can_inherit_a_calibrated_question(tmp_path: Path) -> None:
+    store = _store(tmp_path / "rubric.sqlite3")
+    result = optimize_reword(
+        store, RewordGateway(), "task-clarity", _dataset(), attempt_id="first"
+    )
+    assert result["status"] == "adopted"
+    calibrated = store.active_rubric()
+    added = RubricQuestion("audience", "Is the audience clear?")
+
+    later = calibrated.apply(
+        RubricQuestionChange(
+            RevisionKind.NEW, "audience", None, added, "cover audience"
+        ),
+        version_id="rubric-v3",
+        created_at="test",
+    )
+
+    assert later.question("task-clarity") == calibrated.question("task-clarity")
+    assert later.question("audience") == added
+
+
 def test_final_rows_and_labels_are_sealed_until_finalist_is_selected(
     tmp_path: Path,
 ) -> None:
@@ -292,6 +316,40 @@ def test_drift_uncertainty_support_regression_and_reuse_hold(tmp_path: Path) -> 
     )
     assert second["reason"] == "validation budget exhausted"
     assert second_gateway.writer_states == []
+
+
+def test_final_group_cannot_be_reused_after_rows_or_provenance_change(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "groups.sqlite3")
+    original = _dataset()
+    first = optimize_reword(
+        store,
+        RewordGateway(final_regression=True),
+        "task-clarity",
+        original,
+        attempt_id="first",
+    )
+    assert first["status"] == "hold"
+    reordered = {**original, "rows": list(reversed(original["rows"]))}
+    reordered_gateway = RewordGateway()
+    same = optimize_reword(
+        store, reordered_gateway, "task-clarity", reordered, attempt_id="reordered"
+    )
+    assert same["holdout_digest"] == first["holdout_digest"]
+    assert same["reason"] == "validation budget exhausted"
+    assert reordered_gateway.writer_states == []
+
+    changed = _dataset()
+    final_row = next(row for row in changed["rows"] if row["partition"] == "final")
+    final_row["provenance"] = "human"
+    changed_gateway = RewordGateway()
+    held = optimize_reword(
+        store, changed_gateway, "task-clarity", changed, attempt_id="changed"
+    )
+    assert held["holdout_digest"] != first["holdout_digest"]
+    assert held["reason"] == "validation budget exhausted"
+    assert changed_gateway.writer_states == []
 
 
 def test_group_leakage_and_evaluation_cap_fail_closed(tmp_path: Path) -> None:
@@ -420,6 +478,85 @@ def test_exact_training_evaluations_are_cached_across_fresh_attempts(
     )
 
 
+def test_in_memory_cache_keeps_raw_evidence_for_each_row(tmp_path: Path) -> None:
+    dataset = _dataset(final_groups=20)
+    rows = dataset["rows"]
+    first = next(row for row in rows if row["id"] == "training-0")
+    duplicate = next(row for row in rows if row["id"] == "training-2")
+    duplicate["state"] = dict(first["state"])
+    result = optimize_reword(
+        _store(tmp_path / "same-state.sqlite3"),
+        RewordGateway(),
+        "task-clarity",
+        dataset,
+        attempt_id="same-state",
+    )
+
+    baseline = [
+        row
+        for row in result["evaluations"]
+        if row["text_digest"] == _digest(BASELINE)
+        and row["row_id"] in {"training-0", "training-2"}
+    ]
+    assert len(baseline) == 2
+    assert {row["cache_hit"] for row in baseline} == {False, True}
+    assert baseline[0]["raw_answer"] == baseline[1]["raw_answer"]
+
+
+def test_cost_gate_uses_per_row_cost_even_when_prior_answers_are_cached(
+    tmp_path: Path,
+) -> None:
+    catalog = StaticModelCatalog(
+        (
+            ModelInfo(
+                DEFAULT_GO_WRITER,
+                "go",
+                input_cost_per_token=1e-7,
+                output_cost_per_token=2e-7,
+            ),
+        ),
+        (
+            ModelInfo(
+                JEV_MODEL,
+                "openrouter",
+                input_cost_per_token=1e-7,
+                output_cost_per_token=2e-7,
+            ),
+        ),
+    )
+
+    def gateway(name: str) -> RecordingGateway:
+        scripted = RewordGateway()
+        scripted.catalog = catalog
+        return RecordingGateway(scripted, tmp_path / f"{name}.json")
+
+    warm_store = _store(tmp_path / "warm.sqlite3")
+    prepared = optimize_reword(
+        warm_store,
+        gateway("prepare"),
+        "task-clarity",
+        _dataset(final_groups=20),
+        attempt_id="prepare",
+    )
+    assert prepared["status"] == "hold"
+    warm = optimize_reword(
+        warm_store, gateway("warm"), "task-clarity", _dataset(), attempt_id="warm"
+    )
+    cold = optimize_reword(
+        _store(tmp_path / "cold.sqlite3"),
+        gateway("cold"),
+        "task-clarity",
+        _dataset(),
+        attempt_id="cold",
+    )
+
+    assert warm["status"] == cold["status"] == "adopted"
+    assert any(item["cache_hit"] for item in warm["evaluations"])
+    assert warm["final_validation"]["evaluation_cost_increase_usd"] == pytest.approx(
+        cold["final_validation"]["evaluation_cost_increase_usd"]
+    )
+
+
 def test_stale_rubric_cannot_win_atomic_adoption(tmp_path: Path) -> None:
     store = _store(tmp_path / "stale.sqlite3")
 
@@ -457,6 +594,38 @@ def test_stale_rubric_cannot_win_atomic_adoption(tmp_path: Path) -> None:
     assert result["status"] == "hold"
     assert result["reason"] == "active rubric changed after evaluation"
     assert store.active_rubric().version_id == "rubric-v2"
+
+
+def test_suppressed_active_update_cannot_report_adoption_or_rollback(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "suppressed.sqlite3")
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "CREATE TRIGGER ignore_active_update BEFORE UPDATE ON active_rubric "
+            "BEGIN SELECT RAISE(IGNORE); END"
+        )
+    blocked = optimize_reword(
+        store, RewordGateway(), "task-clarity", _dataset(), attempt_id="blocked"
+    )
+    assert blocked["status"] == "hold"
+    assert blocked["reason"] == "active rubric changed after evaluation"
+    assert store.active_rubric().version_id == "rubric-v1"
+    assert store.get_reword_attempt("blocked") == blocked
+
+    store = _store(tmp_path / "rollback.sqlite3")
+    adopted = optimize_reword(
+        store, RewordGateway(), "task-clarity", _dataset(), attempt_id="adopted"
+    )
+    assert adopted["status"] == "adopted"
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "CREATE TRIGGER ignore_active_update BEFORE UPDATE ON active_rubric "
+            "BEGIN SELECT RAISE(IGNORE); END"
+        )
+    with pytest.raises(StaleProposalError, match="only the active version"):
+        store.rollback_reword(adopted["adopted_version_id"])
+    assert store.active_rubric().version_id == adopted["adopted_version_id"]
 
 
 def test_paired_repeat_noise_floor_is_measured_in_brier_units(tmp_path: Path) -> None:

@@ -127,15 +127,6 @@ class RubricVersion:
         ids = [question.question_id for question in self.questions]
         if len(ids) != len(set(ids)):
             raise ValueError("rubric question IDs must be unique")
-        for question in self.questions:
-            artifact = question.calibration_artifact
-            if artifact is None:
-                continue
-            entry = artifact["questions"][f"rubric:{question.question_id}"]
-            if entry["identity"].get("rubric_version") != self.version_id:
-                raise ValueError(
-                    "calibration artifact targets a different rubric version"
-                )
         object.__setattr__(
             self,
             "questions",
@@ -160,6 +151,14 @@ class RubricVersion:
         created_at: str,
     ) -> RubricVersion:
         """Return the next immutable version after applying one change."""
+
+        if change.after is not None and change.after.calibration_artifact is not None:
+            artifact = change.after.calibration_artifact
+            entry = artifact["questions"][f"rubric:{change.after.question_id}"]
+            if entry["identity"].get("rubric_version") != version_id:
+                raise ValueError(
+                    "calibration artifact targets a different rubric version"
+                )
 
         questions = {question.question_id: question for question in self.questions}
         disabled_defaults = set(self.disabled_default_question_ids)
@@ -899,6 +898,10 @@ class SQLiteRubricStore:
                     digest TEXT PRIMARY KEY,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS reword_holdout_groups (
+                    group_id TEXT PRIMARY KEY,
+                    digest TEXT NOT NULL REFERENCES reword_holdouts(digest)
+                );
                 CREATE TABLE IF NOT EXISTS reword_attempts (
                     attempt_id TEXT PRIMARY KEY,
                     holdout_digest TEXT NOT NULL,
@@ -1070,11 +1073,19 @@ class SQLiteRubricStore:
                 (input_digest, _json_dump(payload)),
             )
 
-    def holdout_consumed(self, digest: str) -> bool:
+    def holdout_consumed(self, digest: str, groups: Sequence[str] = ()) -> bool:
         with self._connect() as connection:
             row = connection.execute(
                 "SELECT 1 FROM reword_holdouts WHERE digest = ?", (digest,)
             ).fetchone()
+            if row is not None:
+                return True
+            if groups:
+                placeholders = ",".join("?" for _ in groups)
+                row = connection.execute(
+                    f"SELECT 1 FROM reword_holdout_groups WHERE group_id IN ({placeholders}) LIMIT 1",
+                    tuple(groups),
+                ).fetchone()
         return row is not None
 
     def record_reword_attempt(
@@ -1083,6 +1094,7 @@ class SQLiteRubricStore:
         holdout_digest: str,
         payload: Mapping[str, Any],
         *,
+        holdout_groups: Sequence[str] = (),
         adopted_rubric: RubricVersion | None = None,
         automated_decision: RevisionDecision | None = None,
         consume_holdout: bool = True,
@@ -1096,6 +1108,13 @@ class SQLiteRubricStore:
                     "INSERT INTO reword_holdouts VALUES (?, ?)",
                     (holdout_digest, _json_dump(payload)),
                 )
+                for group_id in sorted(set(holdout_groups)):
+                    claimed = connection.execute(
+                        "INSERT OR IGNORE INTO reword_holdout_groups VALUES (?, ?)",
+                        (group_id, holdout_digest),
+                    )
+                    if claimed.rowcount != 1:
+                        raise StaleProposalError("final group was already consumed")
             if adopted_rubric is not None:
                 active = connection.execute(
                     "SELECT version_id FROM active_rubric WHERE singleton = 1"
@@ -1112,10 +1131,14 @@ class SQLiteRubricStore:
                         _json_dump(adopted_rubric),
                     ),
                 )
-                connection.execute(
+                swapped = connection.execute(
                     "UPDATE active_rubric SET version_id = ? WHERE singleton = 1 AND version_id = ?",
                     (adopted_rubric.version_id, adopted_rubric.parent_version_id),
                 )
+                if swapped.rowcount != 1:
+                    raise StaleProposalError(
+                        "the active rubric changed after evaluation"
+                    )
                 assert automated_decision is not None
                 connection.execute(
                     "INSERT INTO automatic_reword_decisions VALUES (?, ?)",
@@ -1150,10 +1173,12 @@ class SQLiteRubricStore:
             if current.parent_version_id is None:
                 raise StaleProposalError("the active rubric has no parent")
             parent = self.get_rubric(current.parent_version_id)
-            connection.execute(
+            restored = connection.execute(
                 "UPDATE active_rubric SET version_id = ? WHERE singleton = 1 AND version_id = ?",
                 (parent.version_id, version_id),
             )
+            if restored.rowcount != 1:
+                raise StaleProposalError("only the active version can be rolled back")
         return parent
 
     def list_decisions(self) -> tuple[RevisionDecision, ...]:

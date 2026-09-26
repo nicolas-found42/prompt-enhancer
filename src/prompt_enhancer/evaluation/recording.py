@@ -33,6 +33,7 @@ class RecordingGateway:
         self.task_taxonomy_version = TASK_TAXONOMY_PROTOCOL_VERSION
         self.speculative_diagnosis = True
         self.observe_sequential_diagnosis = False
+        self.diagnosis_request_byte_limit: int | None = None
         self.decision_policy_artifacts: list[dict[str, Any]] = []
         self.decision_policy_version: str | None = None
         self.pricing_models: list[dict[str, Any]] = []
@@ -78,6 +79,8 @@ class RecordingGateway:
             "speculative_diagnosis": self.speculative_diagnosis,
             "observe_sequential_diagnosis": self.observe_sequential_diagnosis,
         }
+        if self.diagnosis_request_byte_limit is not None:
+            bundle["diagnosis_request_byte_limit"] = self.diagnosis_request_byte_limit
         if self.writer_instruction_version is not None:
             bundle["writer_instruction_version"] = self.writer_instruction_version
         if self.faithfulness_threshold is not None:

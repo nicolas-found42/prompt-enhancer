@@ -70,6 +70,7 @@ def test_unsupported_strong_fallback_quote_cannot_resolve_uncertain_grade() -> N
         confirmation_answers=(0.95, 0.5, 0.5),
         generated_test_count=1,
         priced_catalog=True,
+        decision_policy=_verification_policy("Does the answer satisfy criterion 0?"),
         strong_evidence={
             "suggested_verdict": "pass",
             "prompt_quote": "text absent from prompt",
@@ -314,6 +315,7 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
         grade_pass_probability=0.5,
         generated_test_count=1,
         confirmation_answers=(0.95, 0.5, 0.5),
+        decision_policy=_verification_policy("Does the answer satisfy criterion 0?"),
     )
     assert unpriced["original_kept"] is True
     assert unpriced["report"]["grading_cascade"]["escalation_count"] == 0
@@ -340,6 +342,11 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
     )
     assert uncalibrated["original_kept"] is True
     assert uncalibrated["report"]["grading_cascade"]["verification_count"] == 0
+    assert uncalibrated["report"]["grading_cascade"]["escalation_count"] == 0
+    assert all(
+        "strong_answer" not in pair
+        for pair in uncalibrated["report"]["grading_cascade"]["pairs"]
+    )
     assert any(
         item["reason"] == "missing_gate_calibration"
         for item in uncalibrated["report"]["grading_cascade"]["pairs"]
@@ -539,6 +546,7 @@ def test_exact_json_failure_blocks_semantic_confirmation_and_fallback_claim() ->
         tier="standard",
         generated_test_count=1,
         criterion_text="Is the output valid JSON?",
+        decision_policy=_verification_policy("Is the output valid JSON?"),
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         priced_catalog=True,

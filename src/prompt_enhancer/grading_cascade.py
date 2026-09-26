@@ -542,8 +542,14 @@ def resolve_uncertain_grades(
                 spent_reserved += max(0.0, actual - confirmation_reservation)
                 record["confirmation_cost_usd_measured"] = actual
             if record["reason"] == "confirmation_not_decisive":
-                rates = _catalog_rates(gateway, strong_model)
-                if rates is None:
+                rates = (
+                    _catalog_rates(gateway, strong_model)
+                    if decision_policy is not None
+                    else None
+                )
+                if decision_policy is None:
+                    record["reason"] = "missing_gate_calibration"
+                elif rates is None:
                     record["reason"] = "missing_trustworthy_fallback_pricing"
                 else:
                     evidence_state = {

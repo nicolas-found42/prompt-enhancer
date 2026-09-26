@@ -163,6 +163,20 @@ def test_duplicate_sentences_remap_cached_text_checks_to_current_ids(
     ] == ["s0001", "s0003"]
 
 
+def test_flag_offsets_use_browser_utf16_positions(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    prompt = "😀. Do this."
+
+    result = client.post(
+        "/api/prompt-health",
+        json={"prompt": prompt, "revision": 1, "session_id": "emoji"},
+    ).json()
+
+    flag = next(item for item in result["flags"] if item["text"] == "Do this.")
+    assert flag["start"] == len("😀. ".encode("utf-16-le")) // 2
+    assert flag["end"] == len(prompt.encode("utf-16-le")) // 2
+
+
 def test_changed_antecedent_rechecks_unchanged_sentence(tmp_path: Path) -> None:
     client = _client(tmp_path)
 
@@ -226,6 +240,34 @@ def test_health_gateway_does_not_reset_optimizer_ledger(tmp_path: Path) -> None:
 
     assert response.json()["status"] == "complete"
     assert optimizer_gateway.decision_log == [{"existing": "optimization"}]
+
+
+def test_busy_health_check_returns_paused_without_waiting(tmp_path: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    started = Event()
+    release = Event()
+
+    def slow_answer(request: dict, **_kwargs):
+        if not started.is_set():
+            started.set()
+            assert release.wait(10)
+        return _answer(request)
+
+    service = PromptHealthService(
+        ScriptedGateway(decision=slow_answer),
+        PromptHealthStore(tmp_path / "busy.sqlite3"),
+    )
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(service.assess, "Do this.", 1, "one")
+        assert started.wait(10)
+        try:
+            second = pool.submit(service.assess, "Write a note.", 2, "two")
+            assert second.result(timeout=2)["status"] == "paused"
+        finally:
+            release.set()
+        assert first.result(timeout=10)["status"] == "complete"
 
 
 def test_health_request_beside_active_optimization_keeps_separate_costs(
@@ -384,6 +426,57 @@ def test_live_http_refresh_batches_requests_and_reconciles_usage(
     assert 0 < store.usage()["rolling_hour_usd"] < 0.05
     assert first["usage"]["rolling_hour_usd"] == store.usage()["rolling_hour_usd"]
     assert first["composite"] == 1.0
+
+
+def test_failed_later_batch_keeps_unmeasured_reservation(tmp_path: Path) -> None:
+    class FailingTransport:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def request(self, _url, *, json, **_kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                return {"status_code": 503, "json": {}, "headers": {}}
+            answers = {}
+            for key, question in json["questions"].items():
+                if question["type"] == "score":
+                    answers[key] = {
+                        "type": "score",
+                        "score": 3,
+                        "levels": {str(i): float(i == 3) for i in range(4)},
+                    }
+                else:
+                    answers[key] = {"type": "noul", "probability_true": 0.01}
+            return {
+                "model": JEV_MODEL,
+                "answers": answers,
+                "usage": {"input_tokens": 100, "output_tokens": 20},
+            }
+
+    gateway = HttpGateway(
+        transport=FailingTransport(),
+        config=GatewayConfig(openrouter_api_key="local-test-key", max_retries=0),
+        catalog=StaticModelCatalog(
+            (),
+            (
+                ModelInfo(
+                    JEV_MODEL,
+                    "openrouter",
+                    input_cost_per_token=1e-7,
+                    output_cost_per_token=2e-7,
+                ),
+            ),
+        ),
+    )
+    store = PromptHealthStore(tmp_path / "failed-batch.sqlite3")
+    result = PromptHealthService(gateway, store).assess("Write a note.", 1, "tab")
+
+    assert result["status"] == "unavailable"
+    assert result["usage"]["provider_requests"] == 2
+    reserved, measured, charged = store._db.execute(
+        "SELECT reserved_usd, measured_usd, charged_usd FROM prompt_health_spend"
+    ).fetchone()
+    assert 0 < measured < reserved <= charged
 
 
 def test_unverified_snapshot_does_not_cache_an_answer(tmp_path: Path) -> None:

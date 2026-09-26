@@ -13,7 +13,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from enum import StrEnum
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 if TYPE_CHECKING:
     from .evaluation.calibration import DecisionPolicy, PolicyDecision
@@ -43,6 +43,10 @@ MAX_DIAGNOSIS_INPUT_CHARACTERS = 20_000
 MAX_DIAGNOSIS_REQUEST_BYTES = 96_000  # Conservative fallback without model metadata.
 MAX_DIAGNOSIS_QUESTIONS_PER_REQUEST = 40
 MAX_DIAGNOSIS_PROVIDER_REQUESTS = 8
+
+
+class _RequestLimitCarrier(Protocol):
+    diagnosis_request_byte_limit: int | None
 
 
 class GapImpact(StrEnum):
@@ -680,6 +684,14 @@ class Diagnoser:
     def _provider_request_byte_limit(self) -> int:
         if self._request_byte_limit is not None:
             return self._request_byte_limit
+        recorded = getattr(self.gateway, "diagnosis_request_byte_limit", None)
+        if (
+            isinstance(recorded, int)
+            and not isinstance(recorded, bool)
+            and recorded >= 0
+        ):
+            self._request_byte_limit = recorded
+            return recorded
         gateway = getattr(self.gateway, "gateway", self.gateway)
         catalog = getattr(gateway, "catalog", None)
         snapshot = getattr(catalog, "snapshot", None)
@@ -697,6 +709,9 @@ class Diagnoser:
             self._request_byte_limit = max(0, window - max(1_024, window // 20))
         else:
             self._request_byte_limit = MAX_DIAGNOSIS_REQUEST_BYTES
+        if hasattr(self.gateway, "diagnosis_request_byte_limit"):
+            carrier = cast(_RequestLimitCarrier, self.gateway)
+            carrier.diagnosis_request_byte_limit = self._request_byte_limit
         return self._request_byte_limit
 
     def _dispatch(
