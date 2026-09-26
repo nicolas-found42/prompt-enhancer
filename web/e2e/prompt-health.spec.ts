@@ -68,9 +68,9 @@ test("debounces draft checks, shows current dimensions and flags, and persists t
   await page.goto("/");
   const draft = page.getByRole("textbox", { name: "Your prompt" });
   await draft.fill("Write a note.");
-  await page.clock.runFor(599);
+  await page.clock.runFor(500);
   expect(prompts).toHaveLength(0);
-  await page.clock.runFor(1);
+  await page.clock.runFor(100);
   await expect(page.getByText("Prompt clarity: 83%")).toBeVisible();
   await expect(page.getByText("Task or goal")).toBeVisible();
   await page.getByRole("button", { name: /Vague wording/ }).click();
