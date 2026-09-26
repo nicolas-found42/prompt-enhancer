@@ -34,6 +34,22 @@ labels as negative examples. Synthetic labels can test the report path, but they
 do not establish real-world accuracy; the default existence cutoff remains a
 provisional policy value.
 
+## Task taxonomy metrics
+
+An evaluation case may include `expected_task_type` with a taxonomy leaf key
+such as `coding`, `writing`, or `research`. The report scores exact leaf
+accuracy only over cases with explicit task type labels. It also reports how
+often diagnosis fell back to a parent branch, the correctness and coverage of
+those parent fallbacks, and observed taxonomy decision-request counts and
+classification latency. Cases without a label do not count as incorrect; when
+there are no usable labels, accuracy is `null` and the metric is marked
+`unavailable` with a reason.
+
+Classification latency is the observed time spent selecting a task type in
+that run. It is not presented as a before/after latency comparison unless the
+recording has matched historical classification-only timings. Synthetic task
+labels validate the metric plumbing but do not establish classifier accuracy.
+
 The current model split is OpenCode Go for `space-bunny-free` (writer),
 `glm-5.3-flash` (strong check), `mimo-v2.6-flash`, and
 `muse-spark-1.3-contributor` (the two additional Deep weak models). OpenRouter

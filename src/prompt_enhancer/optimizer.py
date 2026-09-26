@@ -31,7 +31,9 @@ from .config import Settings
 from .diagnosis import (
     DEFAULT_RUBRIC,
     HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
     SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    TASK_TAXONOMY_PROTOCOL_VERSION,
     ConfirmedGap,
     Diagnoser,
     DiagnosisReport,
@@ -121,6 +123,7 @@ class PromptOptimizer:
         calibration: CalibrationArtifact | Mapping[str, Any] | str | Path | None = None,
         grading_policy: OrderBiasPolicy | Mapping[str, Any] | str | Path | None = None,
         sentence_diagnosis_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        task_taxonomy_version: int = TASK_TAXONOMY_PROTOCOL_VERSION,
     ) -> None:
         if writer_instruction_version not in WRITER_INSTRUCTION_VERSIONS:
             raise ValueError("unknown candidate writer instruction version")
@@ -131,12 +134,18 @@ class PromptOptimizer:
             SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         }:
             raise ValueError("unsupported sentence diagnosis protocol version")
+        if task_taxonomy_version not in {
+            HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+            TASK_TAXONOMY_PROTOCOL_VERSION,
+        }:
+            raise ValueError("unsupported task taxonomy protocol version")
         self.store = store or RunStore()
         self.config = config or Settings.from_env()
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
         self.sentence_diagnosis_version = sentence_diagnosis_version
+        self.task_taxonomy_version = task_taxonomy_version
         from .evaluation.calibration import (
             DEFAULT_POLICY_VERSION,
             CalibrationArtifact,
@@ -541,6 +550,21 @@ class PromptOptimizer:
                 )
                 for task in self.diagnosis_rubric.task_types
             ),
+            task_branches=tuple(
+                replace(
+                    branch,
+                    checklist=(
+                        tuple(
+                            item
+                            for item in branch.checklist
+                            if item.key not in suppressed
+                        )
+                        if branch.checklist is not None
+                        else None
+                    ),
+                )
+                for branch in self.diagnosis_rubric.task_branches
+            ),
         )
         active_rubric_version = (
             rubric.version_id if rubric is not None else "default-v1"
@@ -551,6 +575,7 @@ class PromptOptimizer:
             decision_policy=self.decision_policy,
             rubric_version=active_rubric_version,
             sentence_protocol_version=self.sentence_diagnosis_version,
+            task_taxonomy_version=self.task_taxonomy_version,
         ).diagnose(prompt)
         calibration_evidence = dict(report.calibration or {})
         if rubric is None:

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from ..diagnosis import (
     DEFAULT_RUBRIC,
     SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    TASK_TAXONOMY_PROTOCOL_VERSION,
     checklist_impacts,
     checklist_keys,
 )
@@ -29,6 +30,7 @@ class RecordingGateway:
         self.writer_instruction_version: int | None = None
         self.faithfulness_threshold: float | None = None
         self.sentence_diagnosis_version = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+        self.task_taxonomy_version = TASK_TAXONOMY_PROTOCOL_VERSION
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
         self.checklist_impacts: dict[str, str] | None = checklist_impacts(
@@ -66,6 +68,7 @@ class RecordingGateway:
             "case_costs": self.case_costs,
             "rubric_thresholds": self.rubric_thresholds,
             "sentence_diagnosis_version": self.sentence_diagnosis_version,
+            "task_taxonomy_version": self.task_taxonomy_version,
         }
         if self.writer_instruction_version is not None:
             bundle["writer_instruction_version"] = self.writer_instruction_version

@@ -30,8 +30,14 @@ def gap_question(label: str) -> str:
     return f"Is the required piece '{label}' confidently missing from the request?"
 
 
-def task_branch_description(children: Sequence[str]) -> str:
-    return "Contains " + ", ".join(children) + " requests."
+def task_branch_description(
+    *, label: str, description: str, scope: str, children: Sequence[str]
+) -> str:
+    descendants = "; ".join(children)
+    return (
+        f"{label}: {description} Intended scope: {scope} "
+        f"This subtree contains: {descendants}."
+    )
 
 
 def task_leaf_question(branch: str) -> str:
