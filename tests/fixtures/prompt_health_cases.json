@@ -1,0 +1,17 @@
+[
+  {
+    "id": "clear",
+    "prompt": "Write a brief note.",
+    "expected_flags": []
+  },
+  {
+    "id": "vague",
+    "prompt": "Do this.",
+    "expected_flags": ["s0001:vagueness"]
+  },
+  {
+    "id": "contradiction",
+    "prompt": "Write a note. Do not write a note.",
+    "expected_flags": ["s0002:contradiction"]
+  }
+]
