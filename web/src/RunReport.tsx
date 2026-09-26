@@ -107,6 +107,7 @@ function highlightedPrompt(
 export default function RunReport({ result }: { result: OptimizeResult }) {
   const report = result.report;
   const diagnosis = record(report.diagnosis);
+  const diagnosisRequests = record(diagnosis.request_evidence);
   const calibration = record(diagnosis.calibration);
   const problems = items(diagnosis.problem_sentences);
   const gaps = items(diagnosis.confirmed_gaps);
@@ -169,13 +170,23 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
           {text(diagnosis.task_type_label || diagnosis.task_type) ||
             "undetermined"}
         </p>
+        {Object.keys(diagnosisRequests).length > 0 && (
+          <p>
+            Diagnosis requests: {text(diagnosisRequests.provider_requests ?? 0)}
+            .
+            {diagnosisRequests.mode === "bounded_sequential_fallback" &&
+              " Bounded sequential fallback was used."}
+            {diagnosisRequests.complete === false &&
+              " Diagnosis evidence is incomplete; the original prompt was kept."}
+          </p>
+        )}
         {gaps.length > 0 ? (
           <ul>
             {gaps.map((gap, index) => (
               <li key={text(gap.key) || index}>{text(gap.label || gap.key)}</li>
             ))}
           </ul>
-        ) : (
+        ) : diagnosisRequests.complete === false ? null : (
           <p>No confirmed missing pieces.</p>
         )}
         {problems.length > 0 && (

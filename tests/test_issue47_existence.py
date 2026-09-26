@@ -100,7 +100,10 @@ def _gateway(
 
 def _optimize(prompt: str, gateway: ScriptedGateway, **kwargs):
     return PromptOptimizer(
-        store=RunStore(":memory:"), gateway=gateway, **kwargs
+        store=RunStore(":memory:"),
+        gateway=gateway,
+        speculative_diagnosis=False,
+        **kwargs,
     ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
 
 

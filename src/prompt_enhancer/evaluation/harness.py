@@ -296,6 +296,7 @@ class CaseEvaluation:
     task_taxonomy_provider_requests: int | None = None
     task_taxonomy_provider_request_delta_vs_legacy: int | None = None
     task_taxonomy_latency_ms: float | None = None
+    diagnosis_request_evidence: Mapping[str, Any] = field(default_factory=dict)
     lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
     lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
 
@@ -333,6 +334,7 @@ class CaseEvaluation:
             "task_taxonomy_provider_requests": self.task_taxonomy_provider_requests,
             "task_taxonomy_provider_request_delta_vs_legacy": self.task_taxonomy_provider_request_delta_vs_legacy,
             "task_taxonomy_latency_ms": self.task_taxonomy_latency_ms,
+            "diagnosis_request_evidence": dict(self.diagnosis_request_evidence),
             "lossless_restructuring": dict(self.lossless_restructuring),
             "lossless_strong_check": dict(self.lossless_strong_check),
         }
@@ -395,6 +397,8 @@ class _ReplayBundle:
     checklist_impacts: Mapping[str, str] | None = None
     sentence_diagnosis_version: int = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
     task_taxonomy_version: int = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
+    speculative_diagnosis: bool = False
+    observe_sequential_diagnosis: bool = False
     pricing_models: tuple[Mapping[str, Any], ...] = ()
     decision_policy_artifacts: tuple[Mapping[str, Any], ...] = ()
     decision_policy_version: str | None = None
@@ -414,6 +418,7 @@ class _CaseObservation:
     task_taxonomy_provider_requests: int | None = None
     task_taxonomy_provider_request_delta_vs_legacy: int | None = None
     task_taxonomy_latency_ms: float | None = None
+    diagnosis_request_evidence: Mapping[str, Any] = field(default_factory=dict)
     lossless_restructuring: Mapping[str, Any] = field(default_factory=dict)
     lossless_strong_check: Mapping[str, Any] = field(default_factory=dict)
     labels_present: bool = False
@@ -471,6 +476,7 @@ class _CaseObservation:
             task_taxonomy_provider_requests=self.task_taxonomy_provider_requests,
             task_taxonomy_provider_request_delta_vs_legacy=self.task_taxonomy_provider_request_delta_vs_legacy,
             task_taxonomy_latency_ms=self.task_taxonomy_latency_ms,
+            diagnosis_request_evidence=dict(self.diagnosis_request_evidence),
             lossless_restructuring=dict(self.lossless_restructuring),
             lossless_strong_check=dict(self.lossless_strong_check),
         )
@@ -604,6 +610,9 @@ class EvaluationHarness:
                 report
             )
             diagnosis = _as_mapping(report.get("diagnosis", {}))
+            request_evidence = diagnosis.get("request_evidence")
+            if isinstance(request_evidence, Mapping):
+                observation.diagnosis_request_evidence = dict(request_evidence)
             observation.predicted_task_type = _optional_string(
                 diagnosis.get("task_type")
             )
@@ -751,6 +760,8 @@ def default_engine_factory(
         faithfulness_threshold=bundle.faithfulness_threshold,
         sentence_diagnosis_version=bundle.sentence_diagnosis_version,
         task_taxonomy_version=bundle.task_taxonomy_version,
+        speculative_diagnosis=bundle.speculative_diagnosis,
+        observe_sequential_diagnosis=bundle.observe_sequential_diagnosis,
         decision_policy=DecisionPolicy(
             artifacts=bundle.decision_policy_artifacts,
             policy_version=bundle.decision_policy_version or "issue-50-v1",
@@ -793,6 +804,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
             "task_taxonomy_version",
             HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
         )
+        speculative_diagnosis = raw.get("speculative_diagnosis", False)
+        observe_sequential_diagnosis = raw.get("observe_sequential_diagnosis", False)
         raw_pricing_models = raw.get("pricing_models", [])
         raw_policy_artifacts = raw.get("decision_policy_artifacts", [])
         raw_policy_version = raw.get("decision_policy_version")
@@ -810,6 +823,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_impacts = None
         sentence_diagnosis_version = HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
         task_taxonomy_version = HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION
+        speculative_diagnosis = False
+        observe_sequential_diagnosis = False
         raw_pricing_models = []
         raw_policy_artifacts = []
         raw_policy_version = None
@@ -908,6 +923,10 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         TASK_TAXONOMY_PROTOCOL_VERSION,
     }:
         raise EvaluationError("replay task_taxonomy_version is not supported")
+    if not isinstance(speculative_diagnosis, bool):
+        raise EvaluationError("replay speculative_diagnosis must be a boolean")
+    if not isinstance(observe_sequential_diagnosis, bool):
+        raise EvaluationError("replay observe_sequential_diagnosis must be a boolean")
     if (
         isinstance(writer_version, bool)
         or writer_version not in WRITER_INSTRUCTION_VERSIONS
@@ -985,6 +1004,8 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         checklist_impacts=dict(raw_impacts) if raw_impacts is not None else None,
         sentence_diagnosis_version=sentence_diagnosis_version,
         task_taxonomy_version=task_taxonomy_version,
+        speculative_diagnosis=speculative_diagnosis,
+        observe_sequential_diagnosis=observe_sequential_diagnosis,
         pricing_models=tuple(raw_pricing_models),
         decision_policy_artifacts=tuple(raw_policy_artifacts),
         decision_policy_version=raw_policy_version,
@@ -1715,6 +1736,7 @@ def _report_from_dict(value: Mapping[str, Any]) -> HarnessReport:
                 "task_taxonomy_provider_request_delta_vs_legacy"
             ),
             task_taxonomy_latency_ms=item.get("task_taxonomy_latency_ms"),
+            diagnosis_request_evidence=item.get("diagnosis_request_evidence", {}),
             lossless_restructuring=item.get("lossless_restructuring", {}),
             lossless_strong_check=item.get("lossless_strong_check", {}),
         )

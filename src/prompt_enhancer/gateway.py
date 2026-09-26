@@ -368,6 +368,7 @@ class HttpGateway:
             "muse-spark-1.3-contributor",
         } | {item if isinstance(item, str) else item.id for item in (go_models or ())}
         self.calls: list[dict[str, Any]] = []
+        self.transport_attempts_by_role: dict[str, int] = {}
         self.decision_log: list[dict[str, Any]] = []
         self._provider_status: dict[str, dict[str, Any]] = {}
 
@@ -393,6 +394,7 @@ class HttpGateway:
         """Set a stable Go session value and return it."""
         self.usage = UsageLedger()
         self.decision_log = []
+        self.transport_attempts_by_role = {}
         if run_id:
             session = str(run_id)
         else:
@@ -483,6 +485,9 @@ class HttpGateway:
         last_status: int | None = None
         for attempt in range(attempts):
             try:
+                self.transport_attempts_by_role[role] = (
+                    self.transport_attempts_by_role.get(role, 0) + 1
+                )
                 response = self._attempt(decision, payload)
                 status = _response_status(response)
                 last_status = status

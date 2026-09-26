@@ -383,6 +383,12 @@ def _parser() -> argparse.ArgumentParser:
         help="capture live responses for strict replay; use with --live",
     )
     parser.add_argument(
+        "--diagnosis-dispatch",
+        choices=("speculative", "sequential"),
+        default="speculative",
+        help="live diagnosis request schedule; sequential records a matched baseline",
+    )
+    parser.add_argument(
         "--allow-snapshot-mismatch",
         action="store_true",
         help="replay decisions recorded with a different Jev snapshot",
@@ -470,6 +476,8 @@ def main(
             raise EvaluationError("--record cannot be combined with --engine-factory")
         if args.allow_snapshot_mismatch and not args.replay:
             raise EvaluationError("--allow-snapshot-mismatch requires --replay")
+        if args.diagnosis_dispatch != "speculative" and not args.live:
+            raise EvaluationError("--diagnosis-dispatch sequential requires --live")
         recording = None
         if args.engine_factory:
             harness = EvaluationHarness(engine_factory=_factory(args.engine_factory))
@@ -477,7 +485,10 @@ def main(
             from ..diagnosis import checklist_impacts, checklist_keys
             from ..optimizer import PromptOptimizer
 
-            engine = PromptOptimizer()
+            engine = PromptOptimizer(
+                speculative_diagnosis=args.diagnosis_dispatch == "speculative",
+                observe_sequential_diagnosis=args.diagnosis_dispatch == "sequential",
+            )
             if args.record:
                 recording = RecordingGateway(engine.gateway, args.record)
                 recording.rubric_thresholds = dict(
@@ -487,6 +498,10 @@ def main(
                 recording.faithfulness_threshold = engine.faithfulness_threshold
                 recording.sentence_diagnosis_version = engine.sentence_diagnosis_version
                 recording.task_taxonomy_version = engine.task_taxonomy_version
+                recording.speculative_diagnosis = engine.speculative_diagnosis
+                recording.observe_sequential_diagnosis = (
+                    engine.observe_sequential_diagnosis
+                )
                 recording.checklist_keys = list(checklist_keys(engine.diagnosis_rubric))
                 recording.checklist_impacts = checklist_impacts(engine.diagnosis_rubric)
                 engine.gateway = recording

@@ -69,6 +69,7 @@ def _optimizer(
             gateway=gateway,
             diagnosis_rubric=rubric,
             task_taxonomy_version=task_taxonomy_version,
+            speculative_diagnosis=False,
         ),
         gateway,
     )

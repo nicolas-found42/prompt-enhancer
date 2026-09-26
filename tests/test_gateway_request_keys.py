@@ -210,7 +210,10 @@ def _recorded_keys(tmp_path: Path, name: str) -> list[str]:
     recording = RecordingGateway(make_gateway(), tmp_path / f"{name}.json")
     run(
         PromptOptimizer(
-            gateway=recording, store=RunStore(":memory:"), writer_instruction_version=4
+            gateway=recording,
+            store=RunStore(":memory:"),
+            writer_instruction_version=4,
+            speculative_diagnosis=False,
         )
     )
     return sorted(recording.responses)

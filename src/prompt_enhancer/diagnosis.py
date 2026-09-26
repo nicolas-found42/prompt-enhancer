@@ -18,12 +18,13 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from .evaluation.calibration import DecisionPolicy, PolicyDecision
 from . import jev_questions
-from .gateway import Gateway
+from .gateway import Gateway, HttpGateway, ProviderError
 from .jev import (
     ChoiceDecision,
     JevDecision,
     JevResponseError,
     NoulDecision,
+    batch_decision_payload,
     parse_decision,
 )
 
@@ -37,6 +38,10 @@ DEFAULT_TASK_BEAM_WIDTH = 2
 DEFAULT_TASK_TYPE_CONFIDENCE_THRESHOLD = 0.8
 DEFAULT_EXISTENCE_THRESHOLD = 0.8
 DEFAULT_EXISTENCE_THRESHOLD_VERSION = "existence-cutoffs-v1"
+MAX_DIAGNOSIS_INPUT_CHARACTERS = 20_000
+MAX_DIAGNOSIS_REQUEST_BYTES = 96_000
+MAX_DIAGNOSIS_QUESTIONS_PER_REQUEST = 40
+MAX_DIAGNOSIS_PROVIDER_REQUESTS = 8
 
 
 class GapImpact(StrEnum):
@@ -141,6 +146,7 @@ class DiagnosisReport:
     task_type_fallback_reason: str | None = None
     effective_checklist: tuple[Mapping[str, Any], ...] = ()
     taxonomy_evidence: Mapping[str, Any] | None = None
+    request_evidence: Mapping[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         result = asdict(self)
@@ -172,6 +178,10 @@ class DiagnosisReport:
             result.pop("taxonomy_evidence", None)
         else:
             result["taxonomy_evidence"] = dict(self.taxonomy_evidence)
+        if self.request_evidence is None:
+            result.pop("request_evidence", None)
+        else:
+            result["request_evidence"] = dict(self.request_evidence)
         return result
 
 
@@ -561,6 +571,9 @@ class Diagnoser:
         rubric_version: str | None = "default-v1",
         sentence_protocol_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         task_taxonomy_version: int = TASK_TAXONOMY_PROTOCOL_VERSION,
+        speculative_fanout: bool = True,
+        record_request_evidence: bool | None = None,
+        additional_requests: Sequence[Mapping[str, Any]] = (),
     ) -> None:
         if sentence_protocol_version not in {
             HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
@@ -579,6 +592,22 @@ class Diagnoser:
             raise ValueError("unsupported task taxonomy protocol version")
         self.task_taxonomy_version = task_taxonomy_version
         self._calibration_evidence: dict[str, Any] = {}
+        self.speculative_fanout = speculative_fanout
+        self.record_request_evidence = (
+            speculative_fanout
+            if record_request_evidence is None
+            else record_request_evidence
+        )
+        self.additional_requests = tuple(
+            dict(request) for request in additional_requests
+        )
+        self._prefetched: dict[str, _DecisionObservation] | None = None
+        self._bounded_fallback = False
+        self._provider_requests = 0
+        self._request_latencies_ms: list[float] = []
+        self._incomplete = False
+        self._fallback_reason: str | None = None
+        self._dispatch_blocked = False
 
     @property
     def rubric(self) -> DiagnosisRubric:
@@ -589,9 +618,114 @@ class Diagnoser:
     def _observe(
         self, requests: Sequence[Mapping[str, Any]]
     ) -> tuple[_DecisionObservation, ...]:
+        if self._prefetched is not None:
+            selected: list[_DecisionObservation] = []
+            for request in requests:
+                observation = self._prefetched.get(self._request_identity(request))
+                if observation is None and str(request.get("key", "")).startswith(
+                    "problem:"
+                ):
+                    return self._observe_direct(requests)
+                if observation is None:
+                    self._incomplete = True
+                    observation = _DecisionObservation(dict(request), None, None, None)
+                elif observation.raw_answer is None:
+                    self._incomplete = True
+                selected.append(observation)
+            return tuple(selected)
+        return self._observe_direct(requests)
+
+    @staticmethod
+    def _request_identity(request: Mapping[str, Any]) -> str:
+        return json.dumps(request, ensure_ascii=False, sort_keys=True)
+
+    def _observe_direct(
+        self, requests: Sequence[Mapping[str, Any]]
+    ) -> tuple[_DecisionObservation, ...]:
+        if not requests:
+            return ()
+        if self._bounded_fallback:
+            observations: list[_DecisionObservation] = []
+            chunk: list[Mapping[str, Any]] = []
+            for request in requests:
+                proposal = [*chunk, request]
+                if chunk and not self._request_fits(proposal):
+                    observations.extend(self._dispatch(chunk))
+                    chunk = []
+                if self._request_fits([request]):
+                    chunk.append(request)
+                else:
+                    self._incomplete = True
+                    observations.append(
+                        _DecisionObservation(dict(request), None, None, None)
+                    )
+            if chunk:
+                observations.extend(self._dispatch(chunk))
+            return tuple(observations)
+        return self._dispatch(requests)
+
+    def _request_fits(self, requests: Sequence[Mapping[str, Any]]) -> bool:
+        if len(requests) > MAX_DIAGNOSIS_QUESTIONS_PER_REQUEST:
+            return False
+        try:
+            _, envelope = batch_decision_payload(requests, model=self.gateway.jev_model)
+        except ValueError:
+            return False
+        return (
+            len(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
+            <= MAX_DIAGNOSIS_REQUEST_BYTES
+        )
+
+    def _dispatch(
+        self, requests: Sequence[Mapping[str, Any]]
+    ) -> tuple[_DecisionObservation, ...]:
+        if self._dispatch_blocked:
+            self._incomplete = True
+            return tuple(
+                _DecisionObservation(dict(request), None, None, None)
+                for request in requests
+            )
+        gateway = getattr(self.gateway, "gateway", self.gateway)
+        attempt_reservation = (
+            max(0, gateway.config.max_retries) + 1
+            if isinstance(gateway, HttpGateway)
+            else 1
+        )
+        if (
+            self._bounded_fallback
+            and self._provider_requests + attempt_reservation
+            > MAX_DIAGNOSIS_PROVIDER_REQUESTS
+        ):
+            self._incomplete = True
+            return tuple(
+                _DecisionObservation(dict(request), None, None, None)
+                for request in requests
+            )
         log = getattr(self.gateway, "decision_log", ())
         before = len(log) if isinstance(log, Sequence) else 0
-        raw_responses = list(self.gateway.decide_batch(requests))
+        transport_before = self._transport_attempt_count()
+        started = perf_counter()
+        self._provider_requests += 1
+        try:
+            raw_responses = list(self.gateway.decide_batch(requests))
+        except ProviderError:
+            if not (
+                self.speculative_fanout
+                and self.sentence_protocol_version >= 2
+                and self.task_taxonomy_version >= 2
+            ):
+                raise
+            self._incomplete = True
+            self._dispatch_blocked = True
+            self._fallback_reason = "diagnosis_provider_error"
+            raw_responses = []
+        finally:
+            transport_after = self._transport_attempt_count()
+            if transport_before is not None and transport_after is not None:
+                self._provider_requests += max(
+                    0, transport_after - transport_before - 1
+                )
+        self._request_latencies_ms.append((perf_counter() - started) * 1000)
         entries = list(log)[before:] if isinstance(log, Sequence) else []
         observations: list[_DecisionObservation] = []
         for index, request in enumerate(requests):
@@ -615,6 +749,12 @@ class Diagnoser:
                 )
             )
         return tuple(observations)
+
+    def _transport_attempt_count(self) -> int | None:
+        gateway = getattr(self.gateway, "gateway", self.gateway)
+        if not isinstance(gateway, HttpGateway):
+            return None
+        return gateway.transport_attempts_by_role.get("judge", 0)
 
     def _decide(
         self, requests: Sequence[Mapping[str, Any]]
@@ -1187,9 +1327,200 @@ class Diagnoser:
             },
         )
 
+    def _speculative_requests(
+        self, prompt: str, rubric: DiagnosisRubric
+    ) -> tuple[tuple[Mapping[str, Any], str], ...]:
+        """Plan existing question meanings before the selected path is known."""
+        state = {"prompt": prompt}
+        task_by_key = {task.key: task for task in rubric.task_types}
+        general = task_by_key.get("general") or task_by_key.get(
+            rubric.default_task_type
+        )
+        if general is None:
+            general = rubric.task_types[0]
+        branches = _active_task_branches(rubric)
+        branched = {key for branch in branches for key in branch.children}
+        options: dict[str, str] = {"general": jev_questions.GENERAL_TASK_DESCRIPTION}
+        for branch in branches:
+            options[branch.key] = jev_questions.task_branch_description(
+                label=branch.label,
+                description=branch.description,
+                scope=branch.scope,
+                children=[
+                    _task_description(task_by_key[key]) for key in branch.children
+                ],
+            )
+        options.update(
+            {
+                task.key: _task_description(task)
+                for task in rubric.task_types
+                if task.key not in branched and task.key != general.key
+            }
+        )
+        options["unknown"] = jev_questions.UNKNOWN_TASK_DESCRIPTION
+        planned: list[Mapping[str, Any]] = [
+            _request(
+                jev_questions.TASK_TYPE_QUESTION,
+                state,
+                type="choice",
+                options=options,
+                key="task_type",
+                question_schema={
+                    "protocol": TASK_TAXONOMY_PROTOCOL_VERSION,
+                    "question": 1,
+                },
+            )
+        ]
+        for branch in branches:
+            planned.append(
+                _request(
+                    jev_questions.task_leaf_question(branch.key),
+                    state,
+                    type="choice",
+                    options={
+                        task_key: _task_description(task_by_key[task_key])
+                        for task_key in branch.children
+                    }
+                    | {"unknown": jev_questions.UNKNOWN_LEAF_DESCRIPTION},
+                    key=f"task_type:{branch.key}",
+                    question_schema={
+                        "protocol": TASK_TAXONOMY_PROTOCOL_VERSION,
+                        "question": 2,
+                        "branch": branch.key,
+                    },
+                )
+            )
+        checklist_items = [
+            item for task in rubric.task_types for item in task.checklist
+        ] + [item for branch in branches for item in (branch.checklist or ())]
+        for item in checklist_items:
+            planned.append(
+                _request(gap_question(item), state, type="noul", key=f"gap:{item.key}")
+            )
+        sentences = split_sentences(prompt)
+        for window_index, start in enumerate(range(0, len(sentences), 254)):
+            window = sentences[start : start + 254]
+            window_state = {
+                **state,
+                "sentences": [{"id": item.id, "text": item.text} for item in window],
+                "candidate_sentence_ids": [item.id for item in window],
+                "sentence_window": {
+                    "protocol_version": self.sentence_protocol_version,
+                    "index": window_index,
+                    "first_sentence_id": window[0].id,
+                    "last_sentence_id": window[-1].id,
+                },
+            }
+            for kind in _PROBLEM_QUESTIONS:
+                planned.append(
+                    _request(
+                        jev_questions.sentence_pointer_question(
+                            kind.value.replace("_", " ")
+                        ),
+                        window_state,
+                        type="choice",
+                        options=[item.id for item in window] + ["none"],
+                        key=f"pointer:{kind.value}:{window_index}",
+                    )
+                )
+                planned.append(
+                    _request(
+                        jev_questions.sentence_existence_question(
+                            kind.value.replace("_", " ")
+                        ),
+                        window_state,
+                        type="noul",
+                        key=f"existence:{kind.value}:{window_index}",
+                        question_schema={
+                            "protocol": self.sentence_protocol_version,
+                            "question": SENTENCE_EXISTENCE_QUESTION_VERSION,
+                        },
+                    )
+                )
+        planned.extend(self.additional_requests)
+        seen: set[str] = set()
+        used_keys: set[str] = set()
+        unique: list[tuple[Mapping[str, Any], str]] = []
+        for request in planned:
+            identity = self._request_identity(request)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            dispatched = dict(request)
+            key = str(dispatched["key"])
+            if key in used_keys:
+                suffix = 1
+                while f"{key}:fanout:{suffix}" in used_keys:
+                    suffix += 1
+                dispatched["key"] = f"{key}:fanout:{suffix}"
+            used_keys.add(str(dispatched["key"]))
+            unique.append((dispatched, identity))
+        return tuple(unique)
+
+    def observe_additional(
+        self, requests: Sequence[Mapping[str, Any]]
+    ) -> tuple[_DecisionObservation, ...]:
+        return self._observe(requests)
+
+    def _prefetch_diagnosis(self, prompt: str, rubric: DiagnosisRubric) -> None:
+        planned = self._speculative_requests(prompt, rubric)
+        requests = [request for request, _identity in planned]
+        if not self._request_fits(requests):
+            self._bounded_fallback = True
+            self._fallback_reason = "speculative_request_exceeds_provider_limits"
+            return
+        observations = self._dispatch(requests)
+        self._prefetched = {}
+        for (_request, identity), observation in zip(
+            planned, observations, strict=True
+        ):
+            original = json.loads(identity)
+            self._prefetched[identity] = replace(observation, request=original)
+
     def diagnose(self, prompt: str) -> DiagnosisReport:
         self._calibration_evidence = {}
+        self._provider_requests = 0
+        self._request_latencies_ms = []
+        self._incomplete = False
+        self._fallback_reason = None
+        self._prefetched = None
+        self._bounded_fallback = False
+        self._dispatch_blocked = False
         rubric = self.rubric
+        if (
+            self.speculative_fanout
+            and self.sentence_protocol_version >= 2
+            and self.task_taxonomy_version >= 2
+        ):
+            if len(prompt) > MAX_DIAGNOSIS_INPUT_CHARACTERS:
+                general = next(
+                    (
+                        task
+                        for task in rubric.task_types
+                        if task.key == rubric.default_task_type
+                    ),
+                    rubric.task_types[0],
+                )
+                return DiagnosisReport(
+                    task_type=general.key,
+                    task_type_label=general.label,
+                    task_type_confidence=0.0,
+                    confirmed_gaps=(),
+                    problem_sentences=(),
+                    rubric_version=self.rubric_version,
+                    request_evidence={
+                        "protocol": "diagnosis-fanout-v1",
+                        "complete": False,
+                        "mode": "input_cap_hold",
+                        "reason": "draft_character_cap_exceeded",
+                        "provider_requests": 0,
+                        "request_latencies_ms": [],
+                        "latency_source": "unavailable",
+                        "input_characters": len(prompt),
+                        "question_count": 0,
+                    },
+                )
+            self._prefetch_diagnosis(prompt, rubric)
         state = {"prompt": prompt}
         classification_started = perf_counter()
         selection = self._classify_task(prompt, state, rubric)
@@ -1228,7 +1559,33 @@ class Diagnoser:
             task_type_fallback_reason=selection.fallback_reason,
             effective_checklist=_checklist_payload(task.checklist),
             taxonomy_evidence=taxonomy_evidence,
+            request_evidence=self.request_evidence(prompt)
+            if self.record_request_evidence
+            else None,
         )
+
+    def request_evidence(self, prompt: str) -> dict[str, Any]:
+        return {
+            "protocol": "diagnosis-fanout-v1",
+            "complete": not self._incomplete,
+            "mode": "bounded_sequential_fallback"
+            if self._bounded_fallback
+            else "speculative_fanout"
+            if self._prefetched is not None
+            else "sequential",
+            "reason": self._fallback_reason
+            if self._fallback_reason is not None
+            else "required_evidence_missing"
+            if self._incomplete
+            else None,
+            "provider_requests": self._provider_requests,
+            "request_latencies_ms": list(self._request_latencies_ms),
+            "latency_source": "measured_provider"
+            if isinstance(getattr(self.gateway, "gateway", self.gateway), HttpGateway)
+            else "deterministic_or_replay",
+            "input_characters": len(prompt),
+            "question_count": len(self._prefetched or {}),
+        }
 
     def _diagnose_gaps(
         self,
@@ -1899,6 +2256,7 @@ def model_diagnosis(payload: Mapping[str, Any]) -> dict[str, Any]:
             "task_type_fallback_reason",
             "effective_checklist",
             "taxonomy_evidence",
+            "request_evidence",
         }
     }
 
@@ -1988,6 +2346,11 @@ def diagnosis_from_dict(value: Mapping[str, Any]) -> DiagnosisReport:
         taxonomy_evidence=(
             dict(value["taxonomy_evidence"])
             if isinstance(value.get("taxonomy_evidence"), Mapping)
+            else None
+        ),
+        request_evidence=(
+            dict(value["request_evidence"])
+            if isinstance(value.get("request_evidence"), Mapping)
             else None
         ),
     )
