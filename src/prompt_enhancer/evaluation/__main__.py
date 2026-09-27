@@ -44,7 +44,6 @@ from .order_bias import (
     load_order_bias_manifest,
     load_order_bias_recording,
 )
-from .recording import RecordingGateway
 
 
 def _json_object(raw: str) -> dict[str, object]:
@@ -482,7 +481,6 @@ def main(
         if args.engine_factory:
             harness = EvaluationHarness(engine_factory=_factory(args.engine_factory))
         elif args.live:
-            from ..diagnosis import checklist_impacts, checklist_keys
             from ..optimizer import PromptOptimizer
 
             engine = PromptOptimizer(
@@ -490,21 +488,7 @@ def main(
                 observe_sequential_diagnosis=args.diagnosis_dispatch == "sequential",
             )
             if args.record:
-                recording = RecordingGateway(engine.gateway, args.record)
-                recording.rubric_thresholds = dict(
-                    engine.diagnosis_rubric.gap_thresholds
-                )
-                recording.writer_instruction_version = engine.writer_instruction_version
-                recording.faithfulness_threshold = engine.faithfulness_threshold
-                recording.sentence_diagnosis_version = engine.sentence_diagnosis_version
-                recording.task_taxonomy_version = engine.task_taxonomy_version
-                recording.speculative_diagnosis = engine.speculative_diagnosis
-                recording.observe_sequential_diagnosis = (
-                    engine.observe_sequential_diagnosis
-                )
-                recording.checklist_keys = list(checklist_keys(engine.diagnosis_rubric))
-                recording.checklist_impacts = checklist_impacts(engine.diagnosis_rubric)
-                engine.gateway = recording
+                recording = engine.attach_recording_gateway(args.record)
             harness = EvaluationHarness(engine)
         else:
             # With no custom factory, the harness lazily creates ReplayGateway.

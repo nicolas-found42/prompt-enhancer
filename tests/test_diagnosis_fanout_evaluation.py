@@ -44,3 +44,31 @@ def test_matched_diagnosis_comparison_separates_real_latency_from_replay() -> No
     assert result["sequential"]["latency_p50_ms"] == 30.0
     assert result["speculative"]["latency_p50_ms"] is None
     assert result["speculative"]["gap_precision"] == 1.0
+
+
+def test_mixed_latency_provenance_has_no_comparable_percentiles() -> None:
+    cases = [
+        {
+            "case_id": "measured",
+            "diagnosis_request_evidence": {
+                "provider_requests": 1,
+                "request_latencies_ms": [25.0],
+                "latency_source": "measured_provider",
+            },
+        },
+        {
+            "case_id": "replayed",
+            "diagnosis_request_evidence": {
+                "provider_requests": 1,
+                "request_latencies_ms": [1.0],
+                "latency_source": "deterministic_or_replay",
+            },
+        },
+    ]
+
+    result = compare_diagnosis_reports({"cases": cases}, {"cases": cases})
+
+    for stage in ("sequential", "speculative"):
+        assert result[stage]["latency_source"] == "unavailable_or_deterministic"
+        assert result[stage]["latency_p50_ms"] is None
+        assert result[stage]["latency_p95_ms"] is None

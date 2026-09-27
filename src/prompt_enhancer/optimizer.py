@@ -76,6 +76,7 @@ from .success_tests import (
 if TYPE_CHECKING:
     from .evaluation.calibration import CalibrationArtifact, DecisionPolicy
     from .evaluation.order_bias import OrderBiasPolicy
+    from .evaluation.recording import RecordingGateway
 
 
 class RunNotFoundError(KeyError):
@@ -203,40 +204,7 @@ class PromptOptimizer:
         self.gateway: Gateway = (
             gateway if gateway is not None else self._default_gateway()
         )
-        from .evaluation.recording import RecordingGateway
-
-        if isinstance(self.gateway, RecordingGateway):
-            self.gateway.speculative_diagnosis = self.speculative_diagnosis
-            self.gateway.observe_sequential_diagnosis = (
-                self.observe_sequential_diagnosis
-            )
-            self.gateway.sentence_diagnosis_version = self.sentence_diagnosis_version
-            self.gateway.task_taxonomy_version = self.task_taxonomy_version
-        if (
-            isinstance(self.gateway, RecordingGateway)
-            and self.decision_policy is not None
-        ):
-            self.gateway.decision_policy_artifacts = list(
-                self.decision_policy.artifact_dicts
-            )
-            self.gateway.decision_policy_version = self.decision_policy.policy_version
-        if (
-            isinstance(self.gateway, RecordingGateway)
-            and self.writer_instruction_version >= 7
-        ):
-            self.gateway.cascade_settings = {
-                "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,
-                "grading_cascade_dollar_cap": self.config.grading_cascade_dollar_cap,
-                "grading_confirmation_reservation_usd": self.config.grading_confirmation_reservation_usd,
-                **(
-                    {
-                        "attribution_pair_cap": self.config.attribution_pair_cap,
-                        "attribution_dollar_cap": self.config.attribution_dollar_cap,
-                    }
-                    if self.writer_instruction_version >= 8
-                    else {}
-                ),
-            }
+        self._configure_recording_gateway()
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (
             SQLiteRubricStore(self.store.path)
@@ -261,6 +229,52 @@ class PromptOptimizer:
             if grading_policy is None or isinstance(grading_policy, OrderBiasPolicy)
             else OrderBiasPolicy(grading_policy)
         )
+
+    def _configure_recording_gateway(self) -> None:
+        from .diagnosis import checklist_impacts, checklist_keys
+        from .evaluation.recording import RecordingGateway
+
+        recording = self.gateway
+        if not isinstance(recording, RecordingGateway):
+            return
+        recording.rubric_thresholds = dict(self.diagnosis_rubric.gap_thresholds)
+        recording.writer_instruction_version = self.writer_instruction_version
+        recording.faithfulness_threshold = self.faithfulness_threshold
+        recording.sentence_diagnosis_version = self.sentence_diagnosis_version
+        recording.task_taxonomy_version = self.task_taxonomy_version
+        recording.speculative_diagnosis = self.speculative_diagnosis
+        recording.observe_sequential_diagnosis = self.observe_sequential_diagnosis
+        recording.checklist_keys = list(checklist_keys(self.diagnosis_rubric))
+        recording.checklist_impacts = checklist_impacts(self.diagnosis_rubric)
+        if self.decision_policy is not None:
+            recording.decision_policy_artifacts = list(
+                self.decision_policy.artifact_dicts
+            )
+            recording.decision_policy_version = self.decision_policy.policy_version
+        if self.writer_instruction_version >= 7:
+            recording.cascade_settings = {
+                "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,
+                "grading_cascade_dollar_cap": self.config.grading_cascade_dollar_cap,
+                "grading_confirmation_reservation_usd": self.config.grading_confirmation_reservation_usd,
+                **(
+                    {
+                        "attribution_pair_cap": self.config.attribution_pair_cap,
+                        "attribution_dollar_cap": self.config.attribution_dollar_cap,
+                    }
+                    if self.writer_instruction_version >= 8
+                    else {}
+                ),
+            }
+
+    def attach_recording_gateway(self, path: Path) -> RecordingGateway:
+        from .evaluation.recording import RecordingGateway
+
+        if isinstance(self.gateway, RecordingGateway):
+            raise ValueError("a recording gateway is already attached")
+        recording = RecordingGateway(self.gateway, path)
+        self.gateway = recording
+        self._configure_recording_gateway()
+        return recording
 
     def get_model_settings(self) -> dict[str, Any]:
         return self.config.public_dict()

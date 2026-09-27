@@ -7,6 +7,11 @@ from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.config import Settings
 from prompt_enhancer.evaluation import Dataset, EvaluationHarness
 from prompt_enhancer.evaluation.__main__ import main as evaluation_main
+from prompt_enhancer.evaluation.calibration import (
+    CalibrationArtifact,
+    DecisionPolicy,
+    runtime_question_identity,
+)
 from prompt_enhancer.evaluation.harness import default_engine_factory
 from prompt_enhancer.evaluation.recording import RecordingGateway
 from prompt_enhancer.gateway import ReplayGateway, ScriptedGateway
@@ -36,6 +41,61 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     assert report["diagnosis"]["excluded_failed_cases"] == 0
     assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
     assert report["diagnosis"]["problem_sentences"]["precision"] is None
+
+
+def test_attached_cli_recording_carries_cascade_and_calibration_metadata(
+    tmp_path: Path,
+) -> None:
+    request = {
+        "type": "noul",
+        "question": "Is the task clear?",
+        "state": {"prompt": "Write a note."},
+    }
+    identity = runtime_question_identity(
+        "prompt_health:test",
+        request,
+        family="prompt_health",
+        rubric_version="test-v1",
+        snapshot=JEV_MODEL,
+    )
+    policy = DecisionPolicy.from_artifact(
+        CalibrationArtifact.from_dict(
+            {
+                "kind": "calibration-artifact",
+                "name": "recording-test",
+                "input_digest": "fixture",
+                "questions": {
+                    identity.question_id: {
+                        "identity": identity.to_dict(),
+                        "verdict": "gate",
+                        "threshold": 0.8,
+                    }
+                },
+            }
+        )
+    )
+    engine = PromptOptimizer(
+        gateway=ScriptedGateway(),
+        store=RunStore(":memory:"),
+        config=Settings(
+            grading_cascade_pair_cap=2,
+            grading_cascade_dollar_cap=0.012,
+            attribution_pair_cap=3,
+            attribution_dollar_cap=0.02,
+        ),
+        decision_policy=policy,
+        writer_instruction_version=8,
+    )
+    destination = tmp_path / "cli-recording.json"
+
+    recording = engine.attach_recording_gateway(destination)
+    recording.save()
+    bundle = json.loads(destination.read_text(encoding="utf-8"))
+
+    assert bundle["cascade_settings"]["grading_cascade_pair_cap"] == 2
+    assert bundle["cascade_settings"]["attribution_pair_cap"] == 3
+    assert bundle["decision_policy_artifacts"] == list(policy.artifact_dicts)
+    assert bundle["decision_policy_version"] == policy.policy_version
 
 
 def test_harness_compares_problem_sentence_predictions_with_explicit_labels() -> None:

@@ -356,14 +356,10 @@ def test_group_leakage_and_evaluation_cap_fail_closed(tmp_path: Path) -> None:
     store = _store(tmp_path / "rubric.sqlite3")
     dataset = _dataset()
     dataset["rows"][1]["group_id"] = dataset["rows"][-1]["group_id"]
-    try:
+    with pytest.raises(ValueError, match="crosses"):
         optimize_reword(
             store, RewordGateway(), "task-clarity", dataset, attempt_id="leak"
         )
-    except ValueError as exc:
-        assert "crosses" in str(exc)
-    else:
-        raise AssertionError("a source group crossed partitions")
 
     capped = optimize_reword(
         store,

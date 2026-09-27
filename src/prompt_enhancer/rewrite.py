@@ -18,6 +18,10 @@ from .gateway import Gateway, completion_text, writer_messages
 # version 3 adds explicit edit permissions and treats prior fidelity evidence as
 # an unresolved candidate check rather than a fact about user intent. Version 4
 # enables the separately built lossless restructuring strategy in the Round.
+# Version 5 keeps the writer text and adds shared grading state and test screening.
+# Version 6 keeps the writer text and adds output screening.
+# Version 7 keeps the writer text and adds the bounded grading cascade.
+# Version 8 keeps the writer text and adds failed-pair attribution.
 WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8)
 CURRENT_WRITER_INSTRUCTION_VERSION = 8
 

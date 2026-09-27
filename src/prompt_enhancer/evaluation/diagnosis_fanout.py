@@ -46,6 +46,7 @@ def _stage(
             latencies.append(sum(float(value) for value in values))
     micro = report.get("diagnosis", {})
     micro = micro.get("micro", {}) if isinstance(micro, Mapping) else {}
+    measured = bool(cases) and len(latencies) == len(cases)
     return {
         "cases": len(cases),
         "complete_count": complete,
@@ -57,10 +58,10 @@ def _stage(
         else None,
         "fallback_count": fallbacks,
         "fallback_frequency": fallbacks / len(cases) if cases else None,
-        "latency_p50_ms": _percentile(latencies, 0.5),
-        "latency_p95_ms": _percentile(latencies, 0.95),
+        "latency_p50_ms": _percentile(latencies, 0.5) if measured else None,
+        "latency_p95_ms": _percentile(latencies, 0.95) if measured else None,
         "latency_source": "measured_provider"
-        if len(latencies) == len(cases) and cases
+        if measured
         else "unavailable_or_deterministic",
         "gap_precision": micro.get("precision") if isinstance(micro, Mapping) else None,
         "gap_recall": micro.get("recall") if isinstance(micro, Mapping) else None,

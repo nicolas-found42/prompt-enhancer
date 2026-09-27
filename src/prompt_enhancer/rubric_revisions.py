@@ -1037,10 +1037,17 @@ class SQLiteRubricStore:
                         _json_dump(adopted_rubric),
                     ),
                 )
-                connection.execute(
-                    "UPDATE active_rubric SET version_id = ? WHERE singleton = 1",
-                    (adopted_rubric.version_id,),
+                swapped = connection.execute(
+                    "UPDATE active_rubric SET version_id = ? WHERE singleton = 1 AND version_id = ?",
+                    (
+                        adopted_rubric.version_id,
+                        decision.proposal.base_rubric_version_id,
+                    ),
                 )
+                if swapped.rowcount != 1:
+                    raise StaleProposalError(
+                        "the active rubric changed after evaluation"
+                    )
             elif adopted_rubric is not None:
                 raise ValueError("rejection cannot change the active rubric")
             connection.execute(

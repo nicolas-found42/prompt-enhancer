@@ -89,6 +89,32 @@ def test_unsupported_strong_fallback_quote_cannot_resolve_uncertain_grade() -> N
     )
 
 
+def test_missing_verification_candidate_skips_strong_escalation() -> None:
+    artifact = _verification_policy(
+        "Does the answer satisfy the request?"
+    ).artifact_dicts[0]
+    artifact["questions"].pop("grade-verify:support")
+    incomplete_policy = DecisionPolicy.from_artifact(
+        CalibrationArtifact.from_dict(artifact)
+    )
+
+    result, _ = _run_screened_round(
+        writer_instruction_version=7,
+        tier="standard",
+        grade_pass_probability=0.5,
+        confirmation_answers=(0.95, 0.5, 0.5),
+        generated_test_count=1,
+        priced_catalog=True,
+        decision_policy=incomplete_policy,
+    )
+
+    cascade = result["report"]["grading_cascade"]
+    assert cascade["escalation_count"] == 0
+    assert any(
+        pair["reason"] == "missing_gate_calibration" for pair in cascade["pairs"]
+    )
+
+
 def _verification_policy(criterion: str) -> DecisionPolicy:
     questions = {}
     for name, question in jev_questions.GRADING_VERIFY_QUESTIONS.items():

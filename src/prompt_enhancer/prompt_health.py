@@ -377,7 +377,7 @@ class PromptHealthService:
                 else default_threshold
             )
             return (
-                True if resolved.may_gate else None,
+                probability >= threshold if resolved.may_gate else None,
                 threshold,
                 "calibrated" if resolved.may_gate else "calibration_abstained",
             )

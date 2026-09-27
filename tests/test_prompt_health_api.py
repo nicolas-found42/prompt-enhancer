@@ -565,3 +565,26 @@ def test_rank_only_calibration_cannot_become_an_applicability_or_flag_gate(
     assert result["composite"] is None
     assert result["coverage"]["unknown"] == 4
     assert result["flags"] == []
+
+
+def test_calibrated_prompt_health_gate_checks_probability_threshold(
+    tmp_path: Path,
+) -> None:
+    class Calibrated(DecisionPolicy):
+        def has_candidate(self, _question_id: str) -> bool:
+            return True
+
+        def apply(self, **_kwargs) -> PolicyDecision:
+            return PolicyDecision(disposition="gate", threshold=0.9, verdict="gate")
+
+    service = PromptHealthService(
+        ScriptedGateway(decision=_answer),
+        PromptHealthStore(tmp_path / "calibrated.sqlite3"),
+        decision_policy=Calibrated(),
+    )
+    request = {"key": "sentence:s0001:vagueness", "type": "noul"}
+    raw = {"type": "noul", "probability_true": 0.6}
+
+    assert service._gate(request, raw, 0.6, 0.8) == (False, 0.9, "calibrated")
+    raw = {"type": "noul", "probability_true": 0.95}
+    assert service._gate(request, raw, 0.95, 0.8) == (True, 0.9, "calibrated")
