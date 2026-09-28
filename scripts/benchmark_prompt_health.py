@@ -87,9 +87,27 @@ def _digest(value: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _source_provenance() -> tuple[str | None, bool | None]:
+    root = Path(__file__).resolve().parent.parent
+    try:
+        revision = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        dirty = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None, None
+    return revision, bool(dirty)
+
+
 def benchmark(
     cases: list[dict[str, Any]], recording: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    source_revision, source_dirty = _source_provenance()
     with tempfile.TemporaryDirectory(prefix="prompt-health-benchmark-") as folder:
         root = Path(folder)
         benchmark_policy = PromptHealthPolicy(
@@ -164,18 +182,8 @@ def benchmark(
                 )
             },
             "latency_provenance": "local_replay_execution",
-            "source_revision": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
-                cwd=Path(__file__).resolve().parent.parent,
-                text=True,
-            ).strip(),
-            "source_dirty": bool(
-                subprocess.check_output(
-                    ["git", "status", "--porcelain"],
-                    cwd=Path(__file__).resolve().parent.parent,
-                    text=True,
-                ).strip()
-            ),
+            "source_revision": source_revision,
+            "source_dirty": source_dirty,
             "case_set_digest": _digest(cases),
             "recording_digest": _digest(recording),
             "cost_usd": None,

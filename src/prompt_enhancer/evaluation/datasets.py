@@ -303,9 +303,11 @@ class EvaluationCase:
             "prompt": self.prompt,
             "source": self.source,
             "labels_present": self.labels_present,
-            "problem_sentence_labels_present": self.problem_sentence_labels_present,
-            "task_type_labels_present": self.task_type_labels_present,
         }
+        if self.problem_sentence_labels_present:
+            value["problem_sentence_labels_present"] = True
+        if self.task_type_labels_present:
+            value["task_type_labels_present"] = True
         if self.expected_gaps:
             value["expected_gaps"] = list(self.expected_gaps)
         if self.problem_sentence_labels_present:

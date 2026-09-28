@@ -547,6 +547,61 @@ def test_dataset_round_trip_preserves_evaluation_scope_and_source_answers() -> N
     assert restored.digest == dataset.digest
 
 
+def test_unlabeled_dataset_omits_new_label_presence_flags() -> None:
+    dataset = Dataset.from_dict(
+        {"name": "historical", "cases": [{"id": "one", "prompt": "Draft a note."}]}
+    )
+
+    serialized_case = dataset.to_dict()["cases"][0]
+    assert "problem_sentence_labels_present" not in serialized_case
+    assert "task_type_labels_present" not in serialized_case
+    assert Dataset.from_dict(dataset.to_dict()).digest == dataset.digest
+
+
+def test_incomplete_diagnosis_is_excluded_from_labeled_metrics() -> None:
+    dataset = Dataset.from_dict(
+        {
+            "name": "incomplete",
+            "cases": [
+                {
+                    "id": "one",
+                    "prompt": "Draft a note.",
+                    "expected_gaps": ["context"],
+                    "expected_problem_sentences": [
+                        {"kind": "vagueness", "sentence_id": "s0001"}
+                    ],
+                    "expected_task_type": "writing",
+                }
+            ],
+        }
+    )
+
+    class IncompleteEngine:
+        def optimize(self, prompt, _options):
+            return {
+                "status": "completed",
+                "final_prompt": prompt,
+                "original_kept": True,
+                "report": {
+                    "diagnosis": {
+                        "task_type": "general",
+                        "confirmed_gaps": [],
+                        "problem_sentences": [],
+                        "request_evidence": {"complete": False},
+                    }
+                },
+            }
+
+    summary = EvaluationHarness(IncompleteEngine()).run(dataset).diagnosis
+
+    assert summary.labeled_cases == 0
+    assert summary.per_gap == {}
+    assert summary.problem_sentences.status == "unavailable"
+    assert summary.problem_sentences.labeled_cases == 0
+    assert summary.task_classification.status == "unavailable"
+    assert summary.task_classification.labeled_cases == 0
+
+
 def test_harness_retains_engine_failure_reason() -> None:
     class FailedEngine:
         def optimize(self, prompt, options):

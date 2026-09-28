@@ -1255,6 +1255,10 @@ def _restructuring_summary(cases: Sequence[CaseEvaluation]) -> RestructuringSumm
     )
 
 
+def _diagnosis_complete(case: CaseEvaluation) -> bool:
+    return case.diagnosis_request_evidence.get("complete") is not False
+
+
 def _diagnosis_summary(cases: Sequence[CaseEvaluation]) -> DiagnosisSummary:
     counts: dict[str, Counter[str]] = {}
     labeled_cases = 0
@@ -1266,6 +1270,8 @@ def _diagnosis_summary(cases: Sequence[CaseEvaluation]) -> DiagnosisSummary:
             continue
         if case.status in {"failed", "error"}:
             excluded_failed_cases += 1
+            continue
+        if not _diagnosis_complete(case):
             continue
         labeled_cases += 1
         expected = set(case.expected_gaps)
@@ -1305,13 +1311,19 @@ def _task_classification_metrics(
     cases: Sequence[CaseEvaluation],
 ) -> TaskClassificationMetrics:
     task_labeled = [case for case in cases if case.task_type_labels_present]
-    usable = [case for case in task_labeled if case.status not in {"failed", "error"}]
-    excluded_failed = len(task_labeled) - len(usable)
+    excluded_failed = sum(case.status in {"failed", "error"} for case in task_labeled)
+    usable = [
+        case
+        for case in task_labeled
+        if case.status not in {"failed", "error"} and _diagnosis_complete(case)
+    ]
     if not usable:
         reason = (
             "No evaluation cases include expected_task_type labels."
             if not task_labeled
             else "All task type labeled cases failed or errored."
+            if excluded_failed == len(task_labeled)
+            else "No complete task type labeled cases were available."
         )
         return TaskClassificationMetrics(
             status="unavailable",
@@ -1417,6 +1429,8 @@ def _problem_sentence_metrics(
         if case.status in {"failed", "error"}:
             excluded_failed_cases += 1
             continue
+        if not _diagnosis_complete(case):
+            continue
         labeled_cases += 1
         expected = set(case.expected_problem_sentences)
         predicted = set(case.predicted_problem_sentences)
@@ -1440,7 +1454,11 @@ def _problem_sentence_metrics(
             recall=None,
             f1=None,
             false_flags=None,
-            reason="No evaluation cases include expected_problem_sentences labels.",
+            reason=(
+                "No evaluation cases include expected_problem_sentences labels."
+                if not any(case.problem_sentence_labels_present for case in cases)
+                else "No complete problem sentence labeled cases were available."
+            ),
         )
     per_kind = {
         kind: _gap_metrics(counter["tp"], counter["fp"], counter["fn"])

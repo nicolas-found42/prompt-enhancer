@@ -8,7 +8,7 @@ draft revision. Hidden pages and empty drafts do not start checks. Assessment
 errors leave the editor usable and hide old findings.
 
 `POST /api/prompt-health` takes `prompt`, a nonnegative `revision`, and a local
-`session_id`. It returns a draft hash and revision, status, four dimension
+`session_id`. It returns a draft hash and revision, status, four-dimension
 judgments, a provisional Prompt clarity score when complete, coverage, source
 sentence flags with exact offsets, cache counts, and separate live-health usage.
 `GET /api/prompt-health/settings` reports availability and the current rolling
