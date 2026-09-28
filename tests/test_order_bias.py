@@ -135,6 +135,29 @@ def test_manifest_accepts_zero_recorded_token_counts() -> None:
     assert parsed.cases[0].recorded_output_tokens == 0
 
 
+def test_manifest_rejects_duplicate_group_and_schema() -> None:
+    case = _manifest().cases[0].to_dict()
+    duplicate = {**case, "id": "duplicate"}
+    with pytest.raises(OrderBiasError, match="question schema must be unique"):
+        OrderBiasManifest.from_dict({"cases": [case, duplicate]})
+
+
+@pytest.mark.parametrize("tokens", ["bad", -1, 1.5, True])
+def test_analysis_rejects_invalid_live_token_usage(tokens: object) -> None:
+    manifest = _manifest()
+    events = _events_for(
+        manifest,
+        lambda _request: {
+            "type": "choice",
+            "choice": "pass",
+            "probabilities": {"pass": 1.0, "fail": 0.0, "unknown": 0.0},
+        },
+    )
+    events[0]["usage"]["input_tokens"] = tokens
+    with pytest.raises(OrderBiasError, match="live input tokens"):
+        analyze_order_bias(manifest, events)
+
+
 def _events_for(manifest, answer_for):
     events = []
     for request in build_order_bias_requests(manifest, repetitions=3):

@@ -212,6 +212,7 @@ class OrderBiasManifest:
             )
         cases: list[OrderBiasCase] = []
         seen_ids: set[str] = set()
+        seen_group_schemas: set[tuple[str, str]] = set()
         group_sources: dict[str, tuple[str, str]] = {}
         for position, raw in enumerate(raw_cases, start=1):
             if not isinstance(raw, Mapping):
@@ -258,6 +259,15 @@ class OrderBiasManifest:
                 raise OrderBiasError(
                     f"case {case_id!r} success test ids must be unique"
                 )
+            for test in tests:
+                if test["kind"] not in {"choice", "score"}:
+                    continue
+                group_schema = (source_group, question_schema_digest(test))
+                if group_schema in seen_group_schemas:
+                    raise OrderBiasError(
+                        "source_group and choice/score question schema must be unique"
+                    )
+                seen_group_schemas.add(group_schema)
             cost = raw.get("recorded_cost_usd")
             cases.append(
                 OrderBiasCase(
@@ -718,11 +728,19 @@ def analyze_order_bias(
                 live_cost += _number(cost, field_name="recorded cost")
             usage = event.get("usage", {})
             if isinstance(usage, Mapping):
-                live_input_tokens += int(
-                    usage.get("input_tokens", usage.get("prompt_tokens", 0)) or 0
+                live_input_tokens += (
+                    _token_count(
+                        usage.get("input_tokens", usage.get("prompt_tokens")),
+                        field_name="live input tokens",
+                    )
+                    or 0
                 )
-                live_output_tokens += int(
-                    usage.get("output_tokens", usage.get("completion_tokens", 0)) or 0
+                live_output_tokens += (
+                    _token_count(
+                        usage.get("output_tokens", usage.get("completion_tokens")),
+                        field_name="live output tokens",
+                    )
+                    or 0
                 )
             latency = event.get("latency_ms")
             if latency is not None:

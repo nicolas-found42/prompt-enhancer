@@ -109,7 +109,7 @@ def test_version_two_writer_keeps_its_recorded_strategy_request_shape() -> None:
             "Keep it short. Keep it short. Then summarize.",
             "Keep it short. Then summarize.",
             "delete",
-            ["source-s0002"],
+            ["source-s0001"],
             [],
             None,
         ),
@@ -144,6 +144,18 @@ def test_sentence_edit_script_rejects_ambiguous_sentence_correspondence() -> Non
     assert script["correspondence_errors"] == [
         "sentence correspondence could not be established for A single combined request."
     ]
+
+
+def test_sentence_edit_script_keeps_later_duplicate_anchor_after_earlier_edit() -> None:
+    script = sentence_edit_script("X. A. Y. A.", "X. Changed. Y. A.")
+    assert script["correspondence_errors"] == []
+    assert len(script["edits"]) == 1
+    assert script["edits"][0]["source_sentence_ids"] == ["source-s0002"]
+    assert any(
+        anchor["source_sentence_id"] == "source-s0004"
+        and anchor["candidate_sentence_id"] == "candidate-s0004"
+        for anchor in script["unchanged_anchors"]
+    )
 
 
 def test_sentence_edit_script_records_exact_unchanged_anchors() -> None:

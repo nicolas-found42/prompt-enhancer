@@ -7,12 +7,65 @@ from prompt_enhancer.evaluation import Dataset, EvaluationHarness
 from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.lossless_restructuring import (
     RoleAssignment,
+    build_lossless_candidate,
     render_lossless_candidate,
     segment_source_units,
     verify_lossless_proof,
 )
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.store import RunStore
+
+
+def test_current_role_requests_share_state_and_historical_requests_replay() -> None:
+    requests: list[dict] = []
+
+    def decide(request, **_kwargs):
+        requests.append(request)
+        return {"type": "choice", "choice": "task", "probabilities": {"task": 1.0}}
+
+    gateway = ScriptedGateway(decision=decide)
+    prompt = "Read the notes. Summarize the report."
+    build_lossless_candidate(
+        prompt,
+        gateway,
+        judge_model="jev-test",
+        run_id="current",
+        writer_instruction_version=9,
+    )
+    assert len(requests) >= 2
+    assert all(request["state"] == requests[0]["state"] for request in requests)
+    assert all("target_unit_text" not in request["state"] for request in requests)
+    assert all(isinstance(request["query"], dict) for request in requests)
+
+    requests.clear()
+    build_lossless_candidate(
+        prompt,
+        gateway,
+        judge_model="jev-test",
+        run_id="historical",
+        writer_instruction_version=4,
+    )
+    assert requests
+    assert all("target_unit_text" in request["state"] for request in requests)
+    assert all(isinstance(request["query"], str) for request in requests)
+
+
+def test_oversized_role_request_declines_before_dispatch() -> None:
+    gateway = ScriptedGateway(
+        decision=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("oversized request must not dispatch")
+        )
+    )
+    result = build_lossless_candidate(
+        "A" * 100_000,
+        gateway,
+        judge_model="jev-test",
+        run_id="oversized",
+        writer_instruction_version=9,
+    )
+    assert result.text is None
+    assert "exceeds" in (result.decline_reason or "")
+    assert not gateway.calls
 
 
 def test_lossless_renderer_preserves_exact_units_duplicates_and_fixed_order() -> None:

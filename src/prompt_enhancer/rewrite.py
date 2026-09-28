@@ -22,8 +22,9 @@ from .gateway import Gateway, completion_text, writer_messages
 # Version 6 keeps the writer text and adds output screening.
 # Version 7 keeps the writer text and adds the bounded grading cascade.
 # Version 8 keeps the writer text and adds failed-pair attribution.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8)
-CURRENT_WRITER_INSTRUCTION_VERSION = 8
+# Version 9 keeps the writer text and shares lossless role-assignment state.
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9)
+CURRENT_WRITER_INSTRUCTION_VERSION = 9
 
 
 class CandidateWriter:
@@ -92,6 +93,7 @@ class CandidateWriter:
             6: current_instructions,
             7: current_instructions,
             8: current_instructions,
+            9: current_instructions,
         }[self.instruction_version]
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"

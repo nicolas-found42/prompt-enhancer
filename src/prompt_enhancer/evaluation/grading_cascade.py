@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,15 @@ def evaluate_cascade_cases(manifest: Mapping[str, Any]) -> dict[str, Any]:
             or not 0 <= probability <= 1
         ):
             raise ValueError("initial_pass_probability must be between zero and one")
-        if isinstance(cost, bool) or not isinstance(cost, (int, float)) or cost < 0:
+        try:
+            finite_cost = (
+                float(cost)
+                if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+                else float("nan")
+            )
+        except OverflowError:
+            finite_cost = float("inf")
+        if not math.isfinite(finite_cost) or finite_cost < 0:
             raise ValueError("measured_cost_usd must be non-negative")
         seen.add(case_id)
         direct = (
@@ -68,7 +77,7 @@ def evaluate_cascade_cases(manifest: Mapping[str, Any]) -> dict[str, Any]:
                 "confirmation": direct if direct is not None else confirmation,
                 "full_cascade": direct if direct is not None else full,
                 "escalated": raw.get("escalated") is True,
-                "measured_cost_usd": float(cost),
+                "measured_cost_usd": finite_cost,
             }
         )
     negatives = sum(case["label_pass"] is False for case in cases)

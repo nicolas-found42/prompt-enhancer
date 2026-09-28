@@ -540,6 +540,7 @@ def run_round(
                 gateway,
                 judge_model=settings.judge_model,
                 run_id=plan.run_id,
+                writer_instruction_version=plan.writer_instruction_version,
             )
             generated["restructure_lossless"] = lossless_build.text or working_prompt
         return generated
@@ -660,6 +661,7 @@ def run_round(
                     assumptions=plan.assumptions,
                     support_prompt=plan.prompt,
                     preservation_proof=candidate.metadata.get("lossless_proof"),
+                    legacy_protocol=plan.writer_instruction_version < 4,
                 )
             ).passed
             and panel_grades[candidate.candidate_id].ungradable_outputs == 0

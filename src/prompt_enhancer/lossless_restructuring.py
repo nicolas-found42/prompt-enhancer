@@ -8,6 +8,7 @@ asks a model to generate or revise source text.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -16,12 +17,18 @@ from typing import Any
 from . import jev_questions
 from .diagnosis import Sentence, split_sentences
 from .gateway import Gateway, ProviderError
-from .jev import ChoiceDecision, JevResponseError, parse_decision
+from .jev import (
+    ChoiceDecision,
+    JevResponseError,
+    batch_decision_payload,
+    parse_decision,
+)
 
 ROLE_ORDER = ("context", "task", "constraint", "output_format", "example", "other")
 ROLE_LABELS = (*ROLE_ORDER, "unknown")
 ROLE_CONFIDENCE_THRESHOLD = 0.8
 MAX_RESTRUCTURE_UNITS = 40
+MAX_RESTRUCTURE_REQUEST_BYTES = 96_000
 PROOF_KIND = "lossless-restructure-v1"
 
 ROLE_DESCRIPTIONS = jev_questions.RESTRUCTURE_ROLE_DESCRIPTIONS
@@ -450,6 +457,7 @@ def build_lossless_candidate(
     *,
     judge_model: str,
     run_id: str,
+    writer_instruction_version: int = 9,
 ) -> LosslessBuild:
     """Classify source units, render them, and return preservation evidence."""
     before = gateway.usage_report()
@@ -460,25 +468,43 @@ def build_lossless_candidate(
         return _declined(
             f"source has {len(units)} units; role-assignment limit is {MAX_RESTRUCTURE_UNITS}"
         )
+    source_units = [
+        {"id": source_unit.id, "text": source_unit.text} for source_unit in units
+    ]
+    shared_state = {"source_prompt": prompt, "source_units": source_units}
     requests = [
         {
             "model": judge_model,
             "key": f"restructure_lossless:role:{unit.id}",
             "type": "choice",
-            "query": jev_questions.RESTRUCTURE_ROLE_QUESTION,
+            "query": {
+                "item": f"state.source_units[{index}].text",
+                "question": jev_questions.RESTRUCTURE_ROLE_QUESTION,
+            }
+            if writer_instruction_version >= 9
+            else jev_questions.RESTRUCTURE_ROLE_QUESTION,
             "criteria": ROLE_DESCRIPTIONS,
-            "state": {
-                "source_prompt": prompt,
-                "source_units": [
-                    {"id": source_unit.id, "text": source_unit.text}
-                    for source_unit in units
-                ],
+            "state": shared_state
+            if writer_instruction_version >= 9
+            else {
+                **shared_state,
                 "target_unit_id": unit.id,
                 "target_unit_text": unit.text,
             },
         }
-        for unit in units
+        for index, unit in enumerate(units)
     ]
+    try:
+        _, envelope = batch_decision_payload(
+            requests, model=getattr(gateway, "jev_model", judge_model)
+        )
+        request_bytes = len(json.dumps(envelope, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        return _declined("role-assignment request could not be serialized")
+    if request_bytes > MAX_RESTRUCTURE_REQUEST_BYTES:
+        return _declined(
+            f"role-assignment request exceeds {MAX_RESTRUCTURE_REQUEST_BYTES} bytes"
+        )
     try:
         raw_answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
     except (ProviderError, JevResponseError, TypeError, ValueError) as exc:

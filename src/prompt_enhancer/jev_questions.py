@@ -49,6 +49,11 @@ def sentence_pointer_question(problem: str) -> str:
 
 
 FIDELITY_MEANING_QUESTION = "Does the candidate preserve the original prompt's meaning and all stated constraints?"
+FIDELITY_CHECKS = {
+    "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
+    "no_invention": "Does the candidate avoid facts or requirements not given by the user?",
+    "edits_confined": "Are edits limited to diagnosed problems or changes required by the named rewrite strategy?",
+}
 FIDELITY_SUPPORT_OPTIONS = {
     "supported_by_original": "The original prompt states or clearly entails this sentence.",
     "supported_by_assumption": "A confirmed user answer in state.confirmed_assumptions supports this sentence.",

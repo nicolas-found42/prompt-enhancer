@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
@@ -59,8 +60,8 @@ def sentence_edit_script(original_prompt: str, candidate_prompt: str) -> dict[st
     source = _sentence_entries(original_prompt, "source")
     candidate = _sentence_entries(candidate_prompt, "candidate")
     matcher = SequenceMatcher(
-        a=[(item["text"], item["occurrence"]) for item in source],
-        b=[(item["text"], item["occurrence"]) for item in candidate],
+        a=[item["text"] for item in source],
+        b=[item["text"] for item in candidate],
         autojunk=False,
     )
     edits: list[dict[str, Any]] = []
@@ -319,6 +320,7 @@ def check_candidate_fidelity(
     assumptions: Sequence[Any] = (),
     support_prompt: str | None = None,
     preservation_proof: Mapping[str, Any] | None = None,
+    legacy_protocol: bool = False,
 ) -> FidelityResult:
     """Check deterministic edit confinement, then semantic support and meaning.
 
@@ -327,6 +329,53 @@ def check_candidate_fidelity(
     sentence and one whole-prompt meaning decision. Responses follow ADR-0001:
     the Gateway returns raw values and this caller parses them fail-closed.
     """
+    if legacy_protocol:
+        stable_diagnosis = deepcopy(dict(diagnosis))
+        request_evidence = stable_diagnosis.get("request_evidence")
+        if isinstance(request_evidence, dict):
+            request_evidence.pop("request_latencies_ms", None)
+        taxonomy_evidence = stable_diagnosis.get("taxonomy_evidence")
+        if isinstance(taxonomy_evidence, dict):
+            taxonomy_evidence.pop("classification_latency_ms", None)
+        state = {
+            "original_prompt": original_prompt,
+            "candidate_prompt": candidate_prompt,
+            "diagnosis": stable_diagnosis,
+            "strategy": str(getattr(strategy, "name", strategy)),
+        }
+        requests = [
+            {
+                "model": judge_model,
+                "key": name,
+                "type": "noul",
+                "query": question,
+                "state": state,
+            }
+            for name, question in jev_questions.FIDELITY_CHECKS.items()
+        ]
+        try:
+            answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
+            decisions = [parse_decision(answer) for answer in answers]
+            if len(decisions) != len(jev_questions.FIDELITY_CHECKS) or any(
+                not isinstance(answer, NoulDecision) for answer in decisions
+            ):
+                raise JevResponseError("incomplete fidelity response")
+        except (ProviderError, JevResponseError) as exc:
+            return FidelityResult(False, False, False, {"error": type(exc).__name__})
+        probabilities = {
+            name: decision.probability
+            for name, decision in zip(
+                jev_questions.FIDELITY_CHECKS, decisions, strict=True
+            )
+            if isinstance(decision, NoulDecision)
+        }
+        return FidelityResult(
+            meaning_preserved=probabilities["meaning_preserved"] >= FIDELITY_THRESHOLD,
+            no_invention=probabilities["no_invention"] >= FIDELITY_THRESHOLD,
+            edits_confined=probabilities["edits_confined"] >= FIDELITY_THRESHOLD,
+            evidence=probabilities,
+        )
+
     script = sentence_edit_script(original_prompt, candidate_prompt)
     edits = script["edits"]
     strategy_value = _strategy_metadata(strategy)
