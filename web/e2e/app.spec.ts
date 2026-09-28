@@ -650,6 +650,10 @@ test("clarification, assumption editing, history, and feedback use the local API
     page.getByRole("heading", { name: "Optimized prompt" })
   ).toBeVisible();
   await expect(page.locator(".final-prompt")).toContainText("goal: Summarize");
+  const copyGuidance = page.getByText(
+    "After copying, paste this prompt into an AI chat or another tool that accepts prompts."
+  );
+  await expect(copyGuidance).toBeVisible();
 
   await page.getByText("View report").click();
   const assumption = page.getByLabel("Goal");
@@ -663,6 +667,7 @@ test("clarification, assumption editing, history, and feedback use the local API
 
   await page.getByRole("button", { name: "Copy prompt" }).click();
   await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(copyGuidance).toBeVisible();
   const runs = page
     .getByRole("list", { name: "Saved optimization runs" })
     .getByRole("button");
@@ -678,6 +683,13 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(
     page.locator("#selected-run").getByText(/goal: Analyze/)
+  ).toBeVisible();
+  await page
+    .locator("#selected-run")
+    .getByRole("button", { name: "Copy prompt" })
+    .click();
+  await expect(
+    page.locator("#selected-run").getByRole("button", { name: "Copied" })
   ).toBeVisible();
   await page.getByRole("button", { name: "Yes", exact: true }).click();
   await expect(page.getByText("Thanks, saved as helpful.")).toBeVisible();
@@ -1081,11 +1093,22 @@ test("a refused provider shows a banner that switches to fallback models", async
   );
 
   await page.goto("/");
-  await expect(page.getByText("OpenCode Go isn't active")).toBeVisible();
-  await page
-    .getByRole("button", { name: "Switch to OpenRouter models" })
-    .click();
-  await expect(page.getByText("OpenCode Go isn't active")).toBeHidden();
+  const banner = page.locator(".banner");
+  const mainWarning = banner.getByText(
+    /Some models selected for this app can't be reached/
+  );
+  await expect(mainWarning).toBeVisible();
+  await expect(mainWarning).not.toContainText(
+    /OpenCode Go|HTTP|go-writer|go-strong/
+  );
+  await expect(banner.getByText("Provider: OpenCode Go")).not.toBeVisible();
+  await banner.getByText("Show troubleshooting details").click();
+  await expect(banner.getByText("Provider: OpenCode Go")).toBeVisible();
+  await expect(banner.getByText("Provider response: HTTP 403")).toBeVisible();
+  await expect(banner.getByText(/writer \(go-writer\)/)).toBeVisible();
+  await expect(banner.getByText(/strong check \(go-strong\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Try different models" }).click();
+  await expect(banner).toHaveCount(0);
   await page.getByText("Model choices").click();
   await expect(page.getByLabel("Writer", { exact: true })).toHaveValue(
     "or-writer"

@@ -15,7 +15,59 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+const originalClipboard = Object.getOwnPropertyDescriptor(
+  navigator,
+  "clipboard"
+);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalClipboard)
+    Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
+});
+
+it("copies the final prompt from completed run details", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  const completedRun = {
+    ...savedRun,
+    status: "completed",
+    original_prompt: "Write the original prompt.",
+    final_prompt: "Write the improved prompt.",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return jsonResponse(
+        url.endsWith(`/api/runs/${completedRun.run_id}`)
+          ? completedRun
+          : [completedRun]
+      );
+    })
+  );
+  const user = userEvent.setup();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History />);
+
+  await user.click(
+    await screen.findByRole("button", { name: /Write a supplier reply/ })
+  );
+  expect(await screen.findByText("Write the improved prompt.")).toBeVisible();
+  expect(navigator.clipboard.writeText).toBe(writeText);
+  await user.click(screen.getByRole("button", { name: "Copy prompt" }));
+
+  expect(writeText).toHaveBeenCalledWith("Write the improved prompt.");
+  expect(screen.getByRole("button", { name: "Copied" })).toBeVisible();
+});
 
 it("explains how to answer a paused run from its History details", async () => {
   const result = {
