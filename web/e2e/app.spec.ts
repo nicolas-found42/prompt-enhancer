@@ -1076,11 +1076,22 @@ test("a refused provider shows a banner that switches to fallback models", async
   );
 
   await page.goto("/");
-  await expect(page.getByText("OpenCode Go isn't active")).toBeVisible();
-  await page
-    .getByRole("button", { name: "Switch to OpenRouter models" })
-    .click();
-  await expect(page.getByText("OpenCode Go isn't active")).toBeHidden();
+  const banner = page.locator(".banner");
+  const mainWarning = banner.getByText(
+    /Some models selected for this app can't be reached/
+  );
+  await expect(mainWarning).toBeVisible();
+  await expect(mainWarning).not.toContainText(
+    /OpenCode Go|HTTP|go-writer|go-strong/
+  );
+  await expect(banner.getByText("Provider: OpenCode Go")).not.toBeVisible();
+  await banner.getByText("Show troubleshooting details").click();
+  await expect(banner.getByText("Provider: OpenCode Go")).toBeVisible();
+  await expect(banner.getByText("Provider response: HTTP 403")).toBeVisible();
+  await expect(banner.getByText(/writer \(go-writer\)/)).toBeVisible();
+  await expect(banner.getByText(/strong check \(go-strong\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Try different models" }).click();
+  await expect(banner).toHaveCount(0);
   await page.getByText("Model choices").click();
   await expect(page.getByLabel("Writer", { exact: true })).toHaveValue(
     "or-writer"

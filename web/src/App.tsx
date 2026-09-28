@@ -530,6 +530,20 @@ export default function App() {
           : null,
       ].filter((item): item is string => item !== null)
     : [];
+  const fallbackProviderUnavailable =
+    providers?.providers.openrouter?.status === "unavailable";
+  const canSwitchToFallbackModels = Boolean(
+    selection &&
+    providers &&
+    goRoles.length > 0 &&
+    !fallbackProviderUnavailable &&
+    (!goIds.has(selection.writer) ||
+      (providers.fallback.writer.trim() &&
+        !goIds.has(providers.fallback.writer))) &&
+    (!goIds.has(selection.strong) ||
+      (providers.fallback.strong.trim() &&
+        !goIds.has(providers.fallback.strong)))
+  );
 
   function switchToFallbackModels() {
     if (!selection || !providers) return;
@@ -586,18 +600,34 @@ export default function App() {
 
       {goUnavailable && goRoles.length > 0 && (
         <div className="banner" role="status">
-          <p>
-            <strong>OpenCode Go isn't active</strong> (HTTP{" "}
-            {providers?.providers.go?.http_status ?? "403"}). Your{" "}
-            {goRoles.join(" and ")} use it, so runs will fail.
-          </p>
-          <button
-            className="primary"
-            type="button"
-            onClick={switchToFallbackModels}
-          >
-            Switch to OpenRouter models
-          </button>
+          <div>
+            <p>
+              Some models selected for this app can&apos;t be reached, so your
+              prompt can&apos;t run.{" "}
+              {canSwitchToFallbackModels
+                ? "Use the button to try a different set of models."
+                : "Open Model choices below to choose different models."}
+            </p>
+            <details className="provider-warning-details">
+              <summary>Show troubleshooting details</summary>
+              <p>Provider: OpenCode Go</p>
+              {providers?.providers.go?.http_status != null && (
+                <p>
+                  Provider response: HTTP {providers.providers.go.http_status}
+                </p>
+              )}
+              <p>Selected models: {goRoles.join(" and ")}</p>
+            </details>
+          </div>
+          {canSwitchToFallbackModels && (
+            <button
+              className="primary"
+              type="button"
+              onClick={switchToFallbackModels}
+            >
+              Try different models
+            </button>
+          )}
         </div>
       )}
 
