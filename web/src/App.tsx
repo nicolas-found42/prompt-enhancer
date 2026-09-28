@@ -300,6 +300,7 @@ export default function App() {
   const [tier, setTier] = useState<Tier>("standard");
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
+  const [historyNavigation, setHistoryNavigation] = useState(0);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clarificationError, setClarificationError] =
@@ -649,8 +650,18 @@ export default function App() {
     setClarificationError(null);
     changeDraft(prompt);
     setViewingHistoryResult(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setHistoryNavigation((current) => current + 1);
+    if (opened.status !== "needs_input")
+      window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  useEffect(() => {
+    if (!viewingHistoryResult || result?.status !== "needs_input") return;
+    const panel = document.getElementById("clarification-panel");
+    if (!panel) return;
+    panel.focus({ preventScroll: true });
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [historyNavigation, result?.status, viewingHistoryResult]);
 
   const goIds = useMemo(
     () => new Set((catalog?.providers.go ?? []).map((model) => model.id)),
