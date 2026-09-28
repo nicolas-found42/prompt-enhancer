@@ -721,9 +721,19 @@ export default function App() {
               )}
             </div>
             {result.final_prompt && (
-              <button className="secondary" type="button" onClick={copyPrompt}>
-                {copied ? "Copied" : "Copy prompt"}
-              </button>
+              <div className="copy-guidance">
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={copyPrompt}
+                >
+                  {copied ? "Copied" : "Copy prompt"}
+                </button>
+                <p>
+                  After copying, paste this prompt into an AI chat or another
+                  tool that accepts prompts.
+                </p>
+              </div>
             )}
           </div>
           {gaps.length > 0 && (

@@ -189,6 +189,20 @@ button:disabled {
   gap: 16px;
 }
 
+.copy-guidance {
+  display: grid;
+  justify-items: end;
+  max-width: 280px;
+}
+
+.copy-guidance p {
+  color: #8b949e;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  text-align: right;
+}
+
 .final-prompt,
 .report pre {
   background: #0d1117;
@@ -713,6 +727,14 @@ input:focus {
   .model-picker-intro {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .copy-guidance {
+    justify-items: start;
+  }
+
+  .copy-guidance p {
+    text-align: left;
   }
 
   .assumption-row {
