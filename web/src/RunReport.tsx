@@ -518,7 +518,7 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
             Role assignment requests:{" "}
             {text(restructuring.role_assignment_requests || 0)}. Reported role
             assignment cost:{" "}
-            {Object.keys(restructureCost).length > 0
+            {restructureCost.status === "reported"
               ? `$${Object.values(record(restructureCost.cost_by_role))
                   .reduce<number>(
                     (total, value) =>

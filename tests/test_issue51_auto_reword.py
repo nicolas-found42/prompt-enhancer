@@ -173,7 +173,7 @@ def test_equivalent_reword_adopts_without_human_identity_and_rolls_back(
         question.calibration_artifact["questions"]["rubric:task-clarity"]["verdict"]
         == "gate"
     )
-    with pytest.raises(ValueError, match="snapshot"):
+    with pytest.raises(ValueError, match="artifact"):
         replace(question, calibration_snapshot="typesafe/jev-moving-alias")
     rank_only = json.loads(json.dumps(question.calibration_artifact))
     rank_only["questions"]["rubric:task-clarity"]["verdict"] = "ranker"
@@ -390,6 +390,33 @@ def test_choice_and_score_losses_preserve_full_label_space(tmp_path: Path) -> No
             {"criteria": ["pass", "fail"], "rows": []},
             attempt_id="bad-shape",
         )
+
+
+def test_nonbinary_reword_holds_before_writer_or_jev_requests(tmp_path: Path) -> None:
+    store = SQLiteRubricStore(tmp_path / "choice.sqlite3")
+    store.initialize(
+        RubricVersion(
+            "rubric-v1",
+            (RubricQuestion("task-type", "Which task?", response_type="choice"),),
+        )
+    )
+    dataset = _dataset()
+    dataset["criteria"] = ["clear", "unclear"]
+    for row in dataset["rows"]:
+        row["label"] = "unclear" if row["label"] else "clear"
+    gateway = RewordGateway()
+
+    result = optimize_reword(
+        store, gateway, "task-type", dataset, attempt_id="nonbinary"
+    )
+
+    assert result["status"] == "hold"
+    assert result["reason"] == (
+        "nonbinary calibration mapping is unavailable for automatic adoption"
+    )
+    assert result["budget"]["metric_evaluations"] == 0
+    assert gateway.writer_states == []
+    assert gateway.evaluated == []
 
 
 def test_exact_reword_requests_replay_without_provider_fallback(tmp_path: Path) -> None:

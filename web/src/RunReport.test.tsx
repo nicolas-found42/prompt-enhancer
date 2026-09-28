@@ -442,7 +442,7 @@ it("shows preservation, uncertain roles, and cost for a structural candidate", (
             ],
             unknowns: ["u0002"],
             role_assignment_requests: 2,
-            cost: { cost_by_role: { judge: 0.002 } },
+            cost: { status: "reported", cost_by_role: { judge: 0.002 } },
           },
         },
       }}
@@ -461,6 +461,31 @@ it("shows preservation, uncertain roles, and cost for a structural candidate", (
   );
   expect(section).toHaveTextContent("Role assignment requests: 2.");
   expect(section).toHaveTextContent("Reported role assignment cost: $0.0020.");
+});
+
+it("does not present an unavailable role assignment cost as zero", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          lossless_restructuring: {
+            outcome: "candidate_built",
+            role_assignment_requests: 1,
+            cost: { status: "unavailable", cost_by_role: {} },
+          },
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", {
+    name: "Content preserving structure",
+  });
+  expect(section).toHaveTextContent(
+    "Reported role assignment cost: unavailable."
+  );
 });
 
 it("shows discarded criteria and measured grading request counts", () => {

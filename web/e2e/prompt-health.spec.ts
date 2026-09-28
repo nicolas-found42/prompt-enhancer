@@ -156,3 +156,39 @@ test("late and failed health responses never replace the current draft", async (
   );
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
+
+test("a paused health check retries the same draft", async ({ page }) => {
+  await page.clock.install();
+  await routeSettings(page);
+  let requests = 0;
+  await page.route("**/api/prompt-health", async (route) => {
+    const body = route.request().postDataJSON() as {
+      prompt: string;
+      revision: number;
+    };
+    requests += 1;
+    const response = assessment(body.prompt, body.revision);
+    await route.fulfill({
+      json:
+        requests === 1
+          ? {
+              ...response,
+              status: "paused",
+              composite: null,
+              dimensions: [],
+              flags: [],
+            }
+          : response,
+    });
+  });
+
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Your prompt" })
+    .fill("Write a note.");
+  await page.clock.runFor(600);
+  await expect.poll(() => requests).toBe(1);
+  await page.clock.runFor(3600);
+  await expect.poll(() => requests).toBe(2);
+  await expect(page.getByText("Prompt clarity: 83%")).toBeVisible();
+});

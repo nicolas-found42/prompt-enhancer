@@ -287,6 +287,7 @@ export default function App() {
     null
   );
   const [healthChecking, setHealthChecking] = useState(false);
+  const [healthRetry, setHealthRetry] = useState(0);
   const [pageVisible, setPageVisible] = useState(!document.hidden);
   const [healthSessionId] = useState(healthSession);
   const promptRef = useRef(prompt);
@@ -363,6 +364,7 @@ export default function App() {
     const controller = new AbortController();
     const currentPrompt = prompt;
     const currentRevision = draftRevision;
+    let retryTimer: number | undefined;
     const timer = window.setTimeout(() => {
       setHealthChecking(true);
       void checkPromptHealth(
@@ -379,7 +381,13 @@ export default function App() {
             assessment.draft.revision !== currentRevision
           )
             return;
-          lastAssessed.current = currentPrompt;
+          if (assessment.status === "paused") {
+            retryTimer = window.setTimeout(() => {
+              setHealthRetry((value) => value + 1);
+            }, 3000);
+          } else {
+            lastAssessed.current = currentPrompt;
+          }
           setHealthResult(assessment);
           setHealthChecking(false);
         })
@@ -392,6 +400,7 @@ export default function App() {
     }, healthSettings.debounce_ms);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(retryTimer);
       controller.abort();
     };
   }, [
@@ -401,6 +410,7 @@ export default function App() {
     healthEnabled,
     pageVisible,
     healthSessionId,
+    healthRetry,
   ]);
 
   useEffect(() => {

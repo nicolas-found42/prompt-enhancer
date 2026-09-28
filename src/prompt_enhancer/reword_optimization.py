@@ -516,6 +516,10 @@ def optimize_reword(
         return finish("training, calibration, and sealed final rows are required")
     if any(row.provenance in {"weak", "delegated"} for row in partitions["final"]):
         return finish("insufficient independent evidence")
+    if question.response_type != "noul":
+        return finish(
+            "nonbinary calibration mapping is unavailable for automatic adoption"
+        )
     training_state = {
         "question": asdict(question),
         "criteria": list(criteria),
@@ -805,10 +809,6 @@ def optimize_reword(
             return finish("unchanged baseline selected on training")
         for text in (question.text, finalist):
             evaluate(text, partitions["calibration"])
-        if question.response_type != "noul":
-            return finish(
-                "nonbinary calibration mapping is unavailable for automatic adoption"
-            )
         future_version_id = f"rubric-reword-{attempt_id}"
         identity = runtime_question_identity(
             f"rubric:{question_id}",

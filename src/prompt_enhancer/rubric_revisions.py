@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
-from .catalog import DEFAULT_GO_WRITER, JEV_MODEL
+from .catalog import DEFAULT_GO_WRITER
 from .gateway import Gateway, completion_text, writer_messages
 
 
@@ -76,13 +76,6 @@ class RubricQuestion:
         ):
             raise ValueError(
                 "calibration snapshot and policy version must appear together"
-            )
-        if (
-            self.calibration_snapshot is not None
-            and self.calibration_snapshot != JEV_MODEL
-        ):
-            raise ValueError(
-                "rubric calibration snapshot differs from the pinned Jev model"
             )
         if self.calibration_artifact is not None:
             questions = self.calibration_artifact.get("questions")

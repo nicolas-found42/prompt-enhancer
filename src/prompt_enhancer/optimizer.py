@@ -716,6 +716,15 @@ class PromptOptimizer:
             decision = parse_decision(response)
             if not isinstance(decision, NoulDecision):
                 continue
+            if (
+                item.calibration_snapshot is not None
+                and item.calibration_snapshot != self.gateway.jev_model
+            ):
+                calibration_evidence[f"rubric:{item.question_id}"] = {
+                    "disposition": "abstain",
+                    "reason": "rubric_calibration_snapshot_mismatch",
+                }
+                continue
             entry = entries[index] if index < len(entries) else {}
             snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
             from .evaluation.calibration import (

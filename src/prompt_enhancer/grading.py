@@ -420,7 +420,12 @@ def grade_panel_with_jev(
                 )
                 probability = _noul_probability(raw)
                 raw_probability = probability
-                snapshot = str(metadata.get("answered_by") or gateway.jev_model)
+                answered_by = metadata.get("answered_by")
+                snapshot = (
+                    answered_by
+                    if isinstance(answered_by, str) and answered_by
+                    else None
+                )
                 question_id = f"output-screen:{hazard}"
                 policy_identity: dict[str, Any] | None = None
                 policy_application: dict[str, Any] | None = None
