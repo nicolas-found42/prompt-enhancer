@@ -419,21 +419,30 @@ class PromptHealthService:
 
     def _estimated_cost(
         self, batches: Sequence[Sequence[Mapping[str, Any]]]
-    ) -> float | None:
+    ) -> tuple[float | None, bool]:
         gateway = self.gateway
         if gateway is None:
-            return None
+            return None, False
         if isinstance(gateway, (ScriptedGateway, ReplayGateway)):
-            return 0.0
+            return 0.0, False
         if (
             not isinstance(gateway, HttpGateway)
             or not gateway.config.openrouter_api_key
         ):
-            return None
+            return None, False
+        encoded_lengths = []
+        for batch in batches:
+            _, payload = batch_decision_payload(batch, model=gateway.jev_model)
+            encoded_length = len(
+                json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+            )
+            if encoded_length > 96_000:
+                return None, True
+            encoded_lengths.append(encoded_length)
         try:
             info = gateway.list_models().get(gateway.jev_model)
         except (RuntimeError, ProviderError, TypeError, ValueError):
-            return None
+            return None, False
         if (
             info is None
             or info.input_cost_per_token is None
@@ -443,21 +452,17 @@ class PromptHealthService:
             or info.input_cost_per_token < 0
             or info.output_cost_per_token < 0
         ):
-            return None
+            return None, False
         retries = max(1, gateway.config.max_retries + 1)
         total = 0.0
-        for batch in batches:
-            _, payload = batch_decision_payload(batch, model=gateway.jev_model)
-            encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
-            if len(encoded) > 96_000:
-                return None
+        for batch, encoded_length in zip(batches, encoded_lengths, strict=True):
             # One UTF-8 byte per input token and 256 tokens per answer are
             # deliberately conservative ceilings. Reserve every retry.
             total += retries * (
-                len(encoded) * info.input_cost_per_token
+                encoded_length * info.input_cost_per_token
                 + 256 * len(batch) * info.output_cost_per_token
             )
-        return total
+        return total, False
 
     def assess(self, prompt: str, revision: int, session_id: str) -> dict[str, Any]:
         identity = {"revision": revision, "hash": _digest(prompt)}
@@ -580,7 +585,13 @@ class PromptHealthService:
                 "reason": "provider request cap reached",
                 "cache": {"hits": hits, "misses": misses},
             }
-        estimate = self._estimated_cost(batches)
+        estimate, oversized = self._estimated_cost(batches)
+        if oversized:
+            return {
+                **empty,
+                "reason": "draft too large for one live-health request",
+                "cache": {"hits": hits, "misses": misses},
+            }
         if estimate is None:
             return {
                 **empty,

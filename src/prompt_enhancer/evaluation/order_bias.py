@@ -67,6 +67,14 @@ def _number(value: object, *, field_name: str, minimum: float = 0.0) -> float:
     return result
 
 
+def _token_count(value: object, *, field_name: str) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise OrderBiasError(f"{field_name} must be a non-negative integer")
+    return value
+
+
 def _nonempty_string(value: object, *, field_name: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise OrderBiasError(f"{field_name} must be a non-empty string")
@@ -251,8 +259,6 @@ class OrderBiasManifest:
                     f"case {case_id!r} success test ids must be unique"
                 )
             cost = raw.get("recorded_cost_usd")
-            input_tokens = raw.get("recorded_input_tokens")
-            output_tokens = raw.get("recorded_output_tokens")
             cases.append(
                 OrderBiasCase(
                     id=case_id,
@@ -264,12 +270,14 @@ class OrderBiasManifest:
                     recorded_cost_usd=_number(cost, field_name="recorded_cost_usd")
                     if cost is not None
                     else None,
-                    recorded_input_tokens=int(input_tokens)
-                    if input_tokens is not None
-                    else None,
-                    recorded_output_tokens=int(output_tokens)
-                    if output_tokens is not None
-                    else None,
+                    recorded_input_tokens=_token_count(
+                        raw.get("recorded_input_tokens"),
+                        field_name="recorded_input_tokens",
+                    ),
+                    recorded_output_tokens=_token_count(
+                        raw.get("recorded_output_tokens"),
+                        field_name="recorded_output_tokens",
+                    ),
                     metadata=dict(raw.get("metadata", {}))
                     if isinstance(raw.get("metadata", {}), Mapping)
                     else {},

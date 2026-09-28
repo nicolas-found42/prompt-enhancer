@@ -980,6 +980,65 @@ class Diagnoser:
             },
         )
 
+    @staticmethod
+    def _task_root_request(
+        rubric: DiagnosisRubric,
+        state: Mapping[str, Any],
+        task_by_key: Mapping[str, TaskType],
+        general: TaskType,
+        branches: Sequence[TaskBranch],
+    ) -> dict[str, Any]:
+        branched = {key for branch in branches for key in branch.children}
+        options: dict[str, str] = {"general": jev_questions.GENERAL_TASK_DESCRIPTION}
+        for branch in branches:
+            options[branch.key] = jev_questions.task_branch_description(
+                label=branch.label,
+                description=branch.description,
+                scope=branch.scope,
+                children=[
+                    _task_description(task_by_key[key]) for key in branch.children
+                ],
+            )
+        options.update(
+            {
+                task.key: _task_description(task)
+                for task in rubric.task_types
+                if task.key not in branched and task.key != general.key
+            }
+        )
+        options["unknown"] = jev_questions.UNKNOWN_TASK_DESCRIPTION
+        return _request(
+            jev_questions.TASK_TYPE_QUESTION,
+            state,
+            type="choice",
+            options=options,
+            key="task_type",
+            question_schema={"protocol": TASK_TAXONOMY_PROTOCOL_VERSION, "question": 1},
+        )
+
+    @staticmethod
+    def _task_leaf_request(
+        branch: TaskBranch,
+        task_by_key: Mapping[str, TaskType],
+        state: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return _request(
+            jev_questions.task_leaf_question(branch.key),
+            state,
+            type="choice",
+            options={
+                task_key: _task_description(task_by_key[task_key])
+                for task_key in branch.children
+            }
+            | {"unknown": jev_questions.UNKNOWN_LEAF_DESCRIPTION},
+            key=f"task_type:{branch.key}",
+            question_schema={
+                "protocol": TASK_TAXONOMY_PROTOCOL_VERSION,
+                "question": 2,
+                "branch": branch.key,
+            },
+        )
+
     def _classify_task(
         self, prompt: str, state: Mapping[str, Any], rubric: DiagnosisRubric
     ) -> _TaskSelection:
@@ -993,31 +1052,8 @@ class Diagnoser:
             general = rubric.task_types[0]
         branches = _active_task_branches(rubric)
         branch_by_key = {branch.key: branch for branch in branches}
-        tasks_in_branches = {key for branch in branches for key in branch.children}
-        options: dict[str, str] = {"general": jev_questions.GENERAL_TASK_DESCRIPTION}
-        for branch in branches:
-            children = [task_by_key[key] for key in branch.children]
-            options[branch.key] = jev_questions.task_branch_description(
-                label=branch.label,
-                description=branch.description,
-                scope=branch.scope,
-                children=[_task_description(task) for task in children],
-            )
-        direct_tasks = tuple(
-            task
-            for task in rubric.task_types
-            if task.key not in tasks_in_branches and task.key != general.key
-        )
-        options.update({task.key: _task_description(task) for task in direct_tasks})
-        options["unknown"] = jev_questions.UNKNOWN_TASK_DESCRIPTION
-        request = _request(
-            jev_questions.TASK_TYPE_QUESTION,
-            state,
-            type="choice",
-            options=options,
-            key="task_type",
-            question_schema={"protocol": TASK_TAXONOMY_PROTOCOL_VERSION, "question": 1},
-        )
+        request = self._task_root_request(rubric, state, task_by_key, general, branches)
+        options: dict[str, str] = request["options"]
         root_observation = self._observe((request,))[0]
         root_decision = root_observation.decision
         root_policy = (
@@ -1176,26 +1212,10 @@ class Diagnoser:
         ):
             beam = branch_probabilities[: rubric.task_beam_width]
 
-        requests: list[Mapping[str, Any]] = []
-        for branch, _probability, _index in beam:
-            requests.append(
-                _request(
-                    jev_questions.task_leaf_question(branch.key),
-                    state,
-                    type="choice",
-                    options={
-                        task_key: _task_description(task_by_key[task_key])
-                        for task_key in branch.children
-                    }
-                    | {"unknown": jev_questions.UNKNOWN_LEAF_DESCRIPTION},
-                    key=f"task_type:{branch.key}",
-                    question_schema={
-                        "protocol": TASK_TAXONOMY_PROTOCOL_VERSION,
-                        "question": 2,
-                        "branch": branch.key,
-                    },
-                )
-            )
+        requests: list[Mapping[str, Any]] = [
+            self._task_leaf_request(branch, task_by_key, state)
+            for branch, _probability, _index in beam
+        ]
         leaf_observations = self._observe(requests)
         explored: list[dict[str, Any]] = []
         supported: list[
@@ -1360,6 +1380,53 @@ class Diagnoser:
             },
         )
 
+    def _sentence_request_pairs(
+        self, sentences: Sequence[Sentence], state: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], ...]:
+        pairs: list[dict[str, Any]] = []
+        for window_index, start in enumerate(range(0, len(sentences), 254)):
+            window = tuple(sentences[start : start + 254])
+            candidate_ids = tuple(item.id for item in window)
+            window_state = {
+                **state,
+                "sentences": [{"id": item.id, "text": item.text} for item in window],
+                "candidate_sentence_ids": list(candidate_ids),
+                "sentence_window": {
+                    "protocol_version": self.sentence_protocol_version,
+                    "index": window_index,
+                    "first_sentence_id": window[0].id,
+                    "last_sentence_id": window[-1].id,
+                },
+            }
+            for kind in _PROBLEM_QUESTIONS:
+                wording = kind.value.replace("_", " ")
+                pairs.append(
+                    {
+                        "kind": kind,
+                        "window_index": window_index,
+                        "window": window,
+                        "candidate_sentence_ids": candidate_ids,
+                        "pointer_request": _request(
+                            jev_questions.sentence_pointer_question(wording),
+                            window_state,
+                            type="choice",
+                            options=[*candidate_ids, "none"],
+                            key=f"pointer:{kind.value}:{window_index}",
+                        ),
+                        "existence_request": _request(
+                            jev_questions.sentence_existence_question(wording),
+                            window_state,
+                            type="noul",
+                            key=f"existence:{kind.value}:{window_index}",
+                            question_schema={
+                                "protocol": self.sentence_protocol_version,
+                                "question": SENTENCE_EXISTENCE_QUESTION_VERSION,
+                            },
+                        ),
+                    }
+                )
+        return tuple(pairs)
+
     def _speculative_requests(
         self, prompt: str, rubric: DiagnosisRubric
     ) -> tuple[tuple[Mapping[str, Any], str], ...]:
@@ -1372,57 +1439,11 @@ class Diagnoser:
         if general is None:
             general = rubric.task_types[0]
         branches = _active_task_branches(rubric)
-        branched = {key for branch in branches for key in branch.children}
-        options: dict[str, str] = {"general": jev_questions.GENERAL_TASK_DESCRIPTION}
-        for branch in branches:
-            options[branch.key] = jev_questions.task_branch_description(
-                label=branch.label,
-                description=branch.description,
-                scope=branch.scope,
-                children=[
-                    _task_description(task_by_key[key]) for key in branch.children
-                ],
-            )
-        options.update(
-            {
-                task.key: _task_description(task)
-                for task in rubric.task_types
-                if task.key not in branched and task.key != general.key
-            }
-        )
-        options["unknown"] = jev_questions.UNKNOWN_TASK_DESCRIPTION
         planned: list[Mapping[str, Any]] = [
-            _request(
-                jev_questions.TASK_TYPE_QUESTION,
-                state,
-                type="choice",
-                options=options,
-                key="task_type",
-                question_schema={
-                    "protocol": TASK_TAXONOMY_PROTOCOL_VERSION,
-                    "question": 1,
-                },
-            )
+            self._task_root_request(rubric, state, task_by_key, general, branches)
         ]
         for branch in branches:
-            planned.append(
-                _request(
-                    jev_questions.task_leaf_question(branch.key),
-                    state,
-                    type="choice",
-                    options={
-                        task_key: _task_description(task_by_key[task_key])
-                        for task_key in branch.children
-                    }
-                    | {"unknown": jev_questions.UNKNOWN_LEAF_DESCRIPTION},
-                    key=f"task_type:{branch.key}",
-                    question_schema={
-                        "protocol": TASK_TAXONOMY_PROTOCOL_VERSION,
-                        "question": 2,
-                        "branch": branch.key,
-                    },
-                )
-            )
+            planned.append(self._task_leaf_request(branch, task_by_key, state))
         checklist_items = [
             item for task in rubric.task_types for item in task.checklist
         ] + [item for branch in branches for item in (branch.checklist or ())]
@@ -1430,46 +1451,8 @@ class Diagnoser:
             planned.append(
                 _request(gap_question(item), state, type="noul", key=f"gap:{item.key}")
             )
-        sentences = split_sentences(prompt)
-        for window_index, start in enumerate(range(0, len(sentences), 254)):
-            window = sentences[start : start + 254]
-            window_state = {
-                **state,
-                "sentences": [{"id": item.id, "text": item.text} for item in window],
-                "candidate_sentence_ids": [item.id for item in window],
-                "sentence_window": {
-                    "protocol_version": self.sentence_protocol_version,
-                    "index": window_index,
-                    "first_sentence_id": window[0].id,
-                    "last_sentence_id": window[-1].id,
-                },
-            }
-            for kind in _PROBLEM_QUESTIONS:
-                planned.append(
-                    _request(
-                        jev_questions.sentence_pointer_question(
-                            kind.value.replace("_", " ")
-                        ),
-                        window_state,
-                        type="choice",
-                        options=[item.id for item in window] + ["none"],
-                        key=f"pointer:{kind.value}:{window_index}",
-                    )
-                )
-                planned.append(
-                    _request(
-                        jev_questions.sentence_existence_question(
-                            kind.value.replace("_", " ")
-                        ),
-                        window_state,
-                        type="noul",
-                        key=f"existence:{kind.value}:{window_index}",
-                        question_schema={
-                            "protocol": self.sentence_protocol_version,
-                            "question": SENTENCE_EXISTENCE_QUESTION_VERSION,
-                        },
-                    )
-                )
+        for pair in self._sentence_request_pairs(split_sentences(prompt), state):
+            planned.extend((pair["pointer_request"], pair["existence_request"]))
         planned.extend(self.additional_requests)
         seen: set[str] = set()
         used_keys: set[str] = set()
@@ -1855,55 +1838,12 @@ class Diagnoser:
         if not sentences:
             return (), {}, ()
 
-        pairs: list[dict[str, Any]] = []
-        requests: list[Mapping[str, Any]] = []
-        for window_index, start in enumerate(range(0, len(sentences), 254)):
-            window = sentences[start : start + 254]
-            sentence_values = [{"id": item.id, "text": item.text} for item in window]
-            window_state = {
-                **state,
-                "sentences": sentence_values,
-                "candidate_sentence_ids": [item.id for item in window],
-                "sentence_window": {
-                    "protocol_version": self.sentence_protocol_version,
-                    "index": window_index,
-                    "first_sentence_id": window[0].id,
-                    "last_sentence_id": window[-1].id,
-                },
-            }
-            for kind in _PROBLEM_QUESTIONS:
-                pointer_request = _request(
-                    jev_questions.sentence_pointer_question(
-                        kind.value.replace("_", " ")
-                    ),
-                    window_state,
-                    type="choice",
-                    options=[item.id for item in window] + ["none"],
-                    key=f"pointer:{kind.value}:{window_index}",
-                )
-                existence_request = _request(
-                    jev_questions.sentence_existence_question(
-                        kind.value.replace("_", " ")
-                    ),
-                    window_state,
-                    type="noul",
-                    key=f"existence:{kind.value}:{window_index}",
-                    question_schema={
-                        "protocol": self.sentence_protocol_version,
-                        "question": SENTENCE_EXISTENCE_QUESTION_VERSION,
-                    },
-                )
-                pairs.append(
-                    {
-                        "kind": kind,
-                        "window_index": window_index,
-                        "window": window,
-                        "candidate_sentence_ids": tuple(item.id for item in window),
-                        "pointer_request": pointer_request,
-                        "existence_request": existence_request,
-                    }
-                )
-                requests.extend((pointer_request, existence_request))
+        pairs = self._sentence_request_pairs(sentences, state)
+        requests = [
+            request
+            for pair in pairs
+            for request in (pair["pointer_request"], pair["existence_request"])
+        ]
 
         # Each pair's pointer Choice and existence Noul share one batch request.
         observations = self._observe(requests)

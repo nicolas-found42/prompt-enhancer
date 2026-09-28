@@ -49,15 +49,18 @@ def test_paired_comparison_separates_estimates_charges_and_independent_labels() 
 
 def test_comparison_marks_missing_paired_evidence_unavailable() -> None:
     after, _ = _run_screened_round()
-    before = deepcopy(after)
-    before["report"].pop("grading_observation")
-    before["report"]["per_model"]["panel"]["outputs"][0]["output"] = "different"
+    missing_grade = deepcopy(after)
+    missing_grade["report"].pop("grading_observation")
+    missing_report = compare_grading_results(missing_grade, after)
+    assert missing_report["cases"][0]["grading_requests"]["delta"] is None
+    assert missing_report["grading_agreement"]["rate"] == 1.0
 
-    report = compare_grading_results({"case_id": "single", "result": before}, after)
-
-    assert report["cases"][0]["grading_requests"]["delta"] is None
-    assert report["grading_agreement"]["rate"] is None
-    assert report["screen_false_positive_rate"]["rate"] is None
+    changed_output = deepcopy(after)
+    changed_output["report"]["per_model"]["panel"]["outputs"][0]["output"] = "different"
+    changed_report = compare_grading_results(changed_output, after)
+    assert changed_report["cases"][0]["grading_requests"]["delta"] == 0
+    assert changed_report["grading_agreement"]["rate"] is None
+    assert changed_report["screen_false_positive_rate"]["rate"] is None
 
 
 def test_comparison_requires_matched_case_ids() -> None:

@@ -107,6 +107,34 @@ def _manifest(*, kind: str = "choice", provenance: str = "synthetic_known_answer
     return OrderBiasManifest.from_dict({"name": "order-bias-test", "cases": cases})
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("recorded_input_tokens", "12k"),
+        ("recorded_input_tokens", []),
+        ("recorded_input_tokens", -1),
+        ("recorded_output_tokens", True),
+        ("recorded_output_tokens", 1.5),
+        ("recorded_output_tokens", {}),
+    ],
+)
+def test_manifest_rejects_invalid_recorded_token_counts(
+    field_name: str, value: object
+) -> None:
+    case = _manifest().cases[0].to_dict()
+    case[field_name] = value
+    with pytest.raises(OrderBiasError, match=field_name):
+        OrderBiasManifest.from_dict({"cases": [case]})
+
+
+def test_manifest_accepts_zero_recorded_token_counts() -> None:
+    case = _manifest().cases[0].to_dict()
+    case.update(recorded_input_tokens=0, recorded_output_tokens=0)
+    parsed = OrderBiasManifest.from_dict({"cases": [case]})
+    assert parsed.cases[0].recorded_input_tokens == 0
+    assert parsed.cases[0].recorded_output_tokens == 0
+
+
 def _events_for(manifest, answer_for):
     events = []
     for request in build_order_bias_requests(manifest, repetitions=3):

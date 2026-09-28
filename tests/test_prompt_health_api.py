@@ -367,6 +367,39 @@ def test_missing_or_expensive_pricing_skips_before_transport(tmp_path: Path) -> 
     assert "pricing" in missing["reason"]
 
 
+def test_oversized_live_health_batch_reports_size_before_transport(
+    tmp_path: Path,
+) -> None:
+    class NoTransport:
+        def request(self, *_args, **_kwargs):
+            raise AssertionError("oversized health batch must stop before transport")
+
+    gateway = HttpGateway(
+        transport=NoTransport(),
+        config=GatewayConfig(openrouter_api_key="local-test-key", max_retries=0),
+        catalog=StaticModelCatalog(
+            (),
+            (
+                ModelInfo(
+                    JEV_MODEL,
+                    "openrouter",
+                    input_cost_per_token=0.0000001,
+                    output_cost_per_token=0.0000002,
+                ),
+            ),
+        ),
+    )
+    service = PromptHealthService(
+        gateway,
+        PromptHealthStore(tmp_path / "oversized.sqlite3"),
+        policy=PromptHealthPolicy(max_draft_characters=100_000),
+    )
+    report = service.assess("Write " + "x" * 60_000, 1, "tab")
+    assert report["status"] == "unavailable"
+    assert report["reason"] == "draft too large for one live-health request"
+    assert service.store.usage()["rolling_hour_usd"] == 0
+
+
 def test_live_http_refresh_batches_requests_and_reconciles_usage(
     tmp_path: Path,
 ) -> None:
