@@ -124,8 +124,10 @@ export function ClarificationPanel({
 
   return (
     <section
+      id="clarification-panel"
       className="result clarification-panel"
       aria-labelledby="clarification-heading"
+      tabIndex={-1}
     >
       <h2 id="clarification-heading">A few details will improve the result</h2>
       <p>

@@ -181,6 +181,8 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   }, [refreshKey]);
 
   function renderDetails(run: RunDetail) {
+    const waitingQuestionCount = run.result?.questions?.length ?? 0;
+
     return (
       <article
         id="selected-run"
@@ -215,6 +217,13 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                 {outcomeOf(run.result).headline}
               </p>
             )}
+            {run.status === "needs_input" && (
+              <p className="history-note">
+                {waitingQuestionCount > 0
+                  ? `${waitingQuestionCount} ${waitingQuestionCount === 1 ? "question is" : "questions are"} waiting in the clarification panel above History.`
+                  : "Your answers are needed in the clarification panel above History."}
+              </p>
+            )}
             <h4>Your prompt</h4>
             <pre className="history-text">
               {run.original_prompt ?? run.prompt}
@@ -235,7 +244,9 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
               className="secondary"
               onClick={() => onOpen(run.result as OptimizeResult)}
             >
-              Open this result
+              {run.status === "needs_input"
+                ? "Answer the questions"
+                : "Open this result"}
             </button>
           )}
           {run.status === "completed" && (

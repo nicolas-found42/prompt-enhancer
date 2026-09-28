@@ -17,6 +17,68 @@ function jsonResponse(body: unknown): Response {
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("explains how to answer a paused run from its History details", async () => {
+  const result = {
+    status: "needs_input" as const,
+    run_id: "paused-run",
+    original_prompt: "Write a supplier reply.",
+    questions: [
+      {
+        id: "goal",
+        prompt: "What should the assistant do?",
+        options: [{ value: "summarize", label: "Summarize" }],
+      },
+    ],
+    report: {},
+    cost: { total: 0 },
+    timing: { total_ms: 1 },
+  };
+  const pausedRun = {
+    ...savedRun,
+    run_id: "paused-run",
+    status: "needs_input",
+    result,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return jsonResponse(
+        url.endsWith("/api/runs/paused-run") ? pausedRun : [pausedRun]
+      );
+    })
+  );
+  const onOpen = vi.fn();
+  const user = userEvent.setup();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History onOpen={onOpen} />);
+
+  await user.click(
+    await screen.findByRole("button", { name: /Write a supplier reply/ })
+  );
+  await screen.findByRole("heading", { name: "Run details" });
+  expect(
+    screen.getByText(
+      "1 question is waiting in the clarification panel above History."
+    )
+  ).toBeVisible();
+  const answerButton = screen.getByRole("button", {
+    name: "Answer the questions",
+  });
+  expect(answerButton).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open this result" })
+  ).not.toBeInTheDocument();
+
+  await user.click(answerButton);
+
+  expect(onOpen).toHaveBeenCalledWith(result);
+});
+
 it("distinguishes no matches from empty history and clears the applied search", async () => {
   const requestedUrls: string[] = [];
   let unfilteredRequestCount = 0;

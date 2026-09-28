@@ -353,7 +353,12 @@ test("opening another paused run resets its answers and error", async ({
   await page.goto("/");
   const history = page.getByRole("list", { name: "Saved optimization runs" });
   await history.getByRole("button", { name: /First paused prompt/ }).click();
-  await page.getByRole("button", { name: "Open this result" }).click();
+  await page.getByRole("button", { name: "Answer the questions" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "A few details will improve the result",
+    })
+  ).toBeInViewport();
   await page.getByRole("radio", { name: "Other" }).check();
   await page
     .getByRole("textbox", {
@@ -366,7 +371,7 @@ test("opening another paused run resets its answers and error", async ({
   ).toBeVisible();
 
   await history.getByRole("button", { name: /Second paused prompt/ }).click();
-  await page.getByRole("button", { name: "Open this result" }).click();
+  await page.getByRole("button", { name: "Answer the questions" }).click();
   await expect(page.getByRole("radio", { name: "Review" })).toBeChecked();
   await expect(page.getByText("First run needs a different goal.")).toHaveCount(
     0
@@ -384,7 +389,7 @@ test("opening another paused run resets its answers and error", async ({
   };
   await history.getByRole("button", { name: /Second paused prompt/ }).click();
   await history.getByRole("button", { name: /Second paused prompt/ }).click();
-  await page.getByRole("button", { name: "Open this result" }).click();
+  await page.getByRole("button", { name: "Answer the questions" }).click();
   await expect(page.getByRole("radio", { name: "Summarize" })).toBeChecked();
   await expect(
     page.getByRole("textbox", {
