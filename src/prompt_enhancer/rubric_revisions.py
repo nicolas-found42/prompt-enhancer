@@ -1108,10 +1108,12 @@ class SQLiteRubricStore:
             if (adopted_rubric is None) != (automated_decision is None):
                 raise ValueError("automated adoption requires its decision record")
             if consume_holdout:
-                connection.execute(
-                    "INSERT INTO reword_holdouts VALUES (?, ?)",
+                claimed_digest = connection.execute(
+                    "INSERT OR IGNORE INTO reword_holdouts VALUES (?, ?)",
                     (holdout_digest, _json_dump(payload)),
                 )
+                if claimed_digest.rowcount != 1:
+                    raise HoldoutConsumedError("final holdout was already consumed")
                 for group_id in sorted(set(holdout_groups)):
                     claimed = connection.execute(
                         "INSERT OR IGNORE INTO reword_holdout_groups VALUES (?, ?)",

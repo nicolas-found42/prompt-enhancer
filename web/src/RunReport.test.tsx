@@ -450,7 +450,7 @@ it("shows preservation, uncertain roles, and cost for a structural candidate", (
   );
 
   const section = screen.getByRole("region", {
-    name: "Content preserving structure",
+    name: "Lossless restructuring",
   });
   expect(section).toHaveTextContent(
     "Source preservation: Passed. Outcome: Selected."
@@ -481,7 +481,7 @@ it("does not present an unavailable role assignment cost as zero", () => {
   );
 
   const section = screen.getByRole("region", {
-    name: "Content preserving structure",
+    name: "Lossless restructuring",
   });
   expect(section).toHaveTextContent(
     "Reported role assignment cost: unavailable."

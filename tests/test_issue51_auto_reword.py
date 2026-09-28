@@ -32,6 +32,7 @@ from prompt_enhancer.reword_optimization import (
     optimize_reword,
 )
 from prompt_enhancer.rubric_revisions import (
+    HoldoutConsumedError,
     RevisionKind,
     RubricQuestion,
     RubricQuestionChange,
@@ -149,6 +150,16 @@ def _store(path: Path) -> SQLiteRubricStore:
         RubricVersion("rubric-v1", (RubricQuestion("task-clarity", BASELINE),))
     )
     return store
+
+
+def test_duplicate_holdout_digest_has_typed_error(tmp_path: Path) -> None:
+    store = _store(tmp_path / "rubric.sqlite3")
+    store.record_reword_attempt("first", "sealed-digest", {"status": "rejected"})
+
+    with pytest.raises(HoldoutConsumedError, match="already consumed"):
+        store.record_reword_attempt("second", "sealed-digest", {"status": "rejected"})
+
+    assert store.get_reword_attempt("second") is None
 
 
 def test_equivalent_reword_adopts_without_human_identity_and_rolls_back(

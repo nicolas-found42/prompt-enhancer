@@ -1139,7 +1139,9 @@ class Diagnoser:
                     if isinstance(root_decision, ChoiceDecision)
                     and selected_root == "general"
                     and reason is None
-                    else root_probability
+                    else root_decision.probabilities.get(general.key, 0.0)
+                    if isinstance(root_decision, ChoiceDecision)
+                    else 0.0
                 ),
                 path=(root_path_entry,),
                 fallback_reason=reason,

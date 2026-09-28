@@ -257,11 +257,30 @@ def test_unknown_invalid_or_missing_root_uses_general_without_expansion(
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "general"
     assert diagnosis["task_type_fallback_reason"] == fallback_reason
+    assert diagnosis["task_type_confidence"] == 0.0
     assert not any(
         key.startswith("task_type:")
         for batch in gateway.decision_batches
         for key in batch
     )
+
+
+def test_rejected_root_reports_general_probability() -> None:
+    optimizer, _gateway = _optimizer(
+        {
+            "task_type": {
+                "type": "choice",
+                "choice": "communication",
+                "probabilities": {"communication": 0.9, "general": 0.1},
+                "confidence": 0.2,
+            }
+        }
+    )
+
+    result = optimizer.optimize("Help me with something.", {"tier": "fast"})
+    diagnosis = result["report"]["diagnosis"]
+    assert diagnosis["task_type"] == "general"
+    assert diagnosis["task_type_confidence"] == 0.1
 
 
 def test_partial_beam_answer_keeps_supported_leaf_from_other_branch() -> None:

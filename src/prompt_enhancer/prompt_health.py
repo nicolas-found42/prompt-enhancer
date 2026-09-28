@@ -593,7 +593,7 @@ class PromptHealthService:
                 "reason": "provider request cap reached",
                 "cache": {"hits": hits, "misses": misses},
             }
-        estimate, oversized = self._estimated_cost(batches)
+        estimate, oversized = self._estimated_cost(batches) if batches else (0.0, False)
         if oversized:
             return {
                 **empty,

@@ -480,9 +480,7 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
       )}
       {Object.keys(restructuring).length > 0 && (
         <section aria-labelledby="lossless-restructuring-heading">
-          <h3 id="lossless-restructuring-heading">
-            Content preserving structure
-          </h3>
+          <h3 id="lossless-restructuring-heading">Lossless restructuring</h3>
           <p>
             Source preservation:{" "}
             {humanize(text(preservation.status) || "unavailable")}. Outcome:{" "}

@@ -481,10 +481,19 @@ def test_live_http_refresh_batches_requests_and_reconciles_usage(
     first = service.assess("Write a note.", 1, "one")
     second = service.assess("Write a note.", 2, "two")
 
-    assert first["status"] == second["status"] == "complete"
+    gateway.catalog = StaticModelCatalog((), (ModelInfo(JEV_MODEL, "openrouter"),))
+    cached_without_pricing = service.assess("Write a note.", 3, "three")
+
+    assert (
+        first["status"]
+        == second["status"]
+        == cached_without_pricing["status"]
+        == "complete"
+    )
     assert len(transport.calls) == 2
     assert first["usage"]["provider_requests"] == 2
     assert second["usage"]["provider_requests"] == 0
+    assert cached_without_pricing["usage"]["provider_requests"] == 0
     assert 0 < store.usage()["rolling_hour_usd"] < 0.05
     assert first["usage"]["rolling_hour_usd"] == store.usage()["rolling_hour_usd"]
     assert first["composite"] == 1.0

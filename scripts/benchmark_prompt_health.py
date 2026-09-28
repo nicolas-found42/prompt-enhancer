@@ -7,9 +7,10 @@ them. These synthetic figures verify the measurement path, not Jev accuracy.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
-import statistics
+import subprocess
 import tempfile
 import time
 from collections.abc import Mapping
@@ -79,6 +80,13 @@ def _percentile(values: list[float], fraction: float) -> float | None:
     return ordered[max(0, math.ceil(fraction * len(ordered)) - 1)]
 
 
+def _digest(value: Any) -> str:
+    payload = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def benchmark(
     cases: list[dict[str, Any]], recording: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -116,14 +124,14 @@ def benchmark(
         )
         false_flags = missed_flags = labeled_flags = 0
         hits = misses = 0
-        latencies: list[float] = []
+        latencies: dict[int, list[float]] = {0: [], 1: []}
         for pass_number in range(2):
             for index, case in enumerate(cases):
                 start = time.perf_counter()
                 result = service.assess(
                     case["prompt"], index + pass_number * len(cases), "replay"
                 )
-                latencies.append((time.perf_counter() - start) * 1000)
+                latencies[pass_number].append((time.perf_counter() - start) * 1000)
                 if result["status"] != "complete":
                     raise RuntimeError(f"strict replay incomplete for {case['id']}")
                 hits += result["cache"]["hits"]
@@ -145,10 +153,31 @@ def benchmark(
             "labeled_flags": labeled_flags,
             "cache_hit_rate": hits / (hits + misses) if hits + misses else None,
             "latency_ms": {
-                "p50": statistics.median(latencies),
-                "p95": _percentile(latencies, 0.95),
-                "provenance": "local_replay_execution",
+                name: {
+                    "p50": _percentile(values, 0.5),
+                    "p95": _percentile(values, 0.95),
+                    "samples": values,
+                }
+                for name, values in (
+                    ("first_pass", latencies[0]),
+                    ("cached_pass", latencies[1]),
+                )
             },
+            "latency_provenance": "local_replay_execution",
+            "source_revision": subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=Path(__file__).resolve().parent.parent,
+                text=True,
+            ).strip(),
+            "source_dirty": bool(
+                subprocess.check_output(
+                    ["git", "status", "--porcelain"],
+                    cwd=Path(__file__).resolve().parent.parent,
+                    text=True,
+                ).strip()
+            ),
+            "case_set_digest": _digest(cases),
+            "recording_digest": _digest(recording),
             "cost_usd": None,
             "cost_provenance": "unavailable_for_replay",
         }
