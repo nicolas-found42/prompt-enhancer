@@ -656,8 +656,6 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(page.locator(".final-prompt")).toContainText("goal: Analyze");
 
-  await page.getByRole("button", { name: "Copy prompt" }).click();
-  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
   const runs = page
     .getByRole("list", { name: "Saved optimization runs" })
     .getByRole("button");
@@ -673,6 +671,13 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(
     page.locator("#selected-run").getByText(/goal: Analyze/)
+  ).toBeVisible();
+  await page
+    .locator("#selected-run")
+    .getByRole("button", { name: "Copy prompt" })
+    .click();
+  await expect(
+    page.locator("#selected-run").getByRole("button", { name: "Copied" })
   ).toBeVisible();
   await page.getByRole("button", { name: "Yes", exact: true }).click();
   await expect(page.getByText("Thanks, saved as helpful.")).toBeVisible();

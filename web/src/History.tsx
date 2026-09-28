@@ -100,6 +100,8 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   const [selected, setSelected] = useState<RunDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copiedRunId, setCopiedRunId] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const runsRequestId = useRef(0);
   const details = useRef<HTMLElement | null>(null);
 
@@ -131,6 +133,8 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
 
   async function openRun(runId: string) {
     setError(null);
+    setCopiedRunId(null);
+    setCopyError(null);
     if (selected?.run_id === runId) {
       setSelected(null);
       return;
@@ -144,6 +148,17 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
       setError(
         cause instanceof Error ? cause.message : "Could not load run details"
       );
+    }
+  }
+
+  async function copyFinalPrompt(run: RunDetail, finalPrompt: string) {
+    setCopyError(null);
+    try {
+      await navigator.clipboard.writeText(finalPrompt);
+      setCopiedRunId(run.run_id);
+    } catch {
+      setCopiedRunId(null);
+      setCopyError("Copy failed. Select the prompt and copy it manually.");
     }
   }
 
@@ -181,6 +196,26 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   }, [refreshKey]);
 
   function renderDetails(run: RunDetail) {
+    const originalPrompt = run.original_prompt ?? run.prompt;
+    const isCompleted =
+      run.status === "completed" || run.result?.status === "completed";
+    const finalPrompt =
+      run.final_prompt ??
+      run.result?.final_prompt ??
+      (isCompleted ? originalPrompt : null);
+    const canCopyFinalPrompt = isCompleted && typeof finalPrompt === "string";
+    const promptIsUnchanged = finalPrompt === originalPrompt;
+    const copyButton =
+      isCompleted && typeof finalPrompt === "string" ? (
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => void copyFinalPrompt(run, finalPrompt)}
+        >
+          {copiedRunId === run.run_id ? "Copied" : "Copy prompt"}
+        </button>
+      ) : null;
+
     return (
       <article
         id="selected-run"
@@ -215,17 +250,30 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                 {outcomeOf(run.result).headline}
               </p>
             )}
-            <h4>Your prompt</h4>
-            <pre className="history-text">
-              {run.original_prompt ?? run.prompt}
-            </pre>
-            {run.final_prompt &&
-              run.final_prompt !== (run.original_prompt ?? run.prompt) && (
-                <>
+            <div className="history-copy-heading">
+              <h4>Your prompt</h4>
+              {promptIsUnchanged ? copyButton : null}
+            </div>
+            <pre className="history-text">{originalPrompt}</pre>
+            {typeof finalPrompt === "string" && !promptIsUnchanged ? (
+              <>
+                <div className="history-copy-heading">
                   <h4>Final prompt</h4>
-                  <pre className="history-text">{run.final_prompt}</pre>
-                </>
-              )}
+                  {copyButton}
+                </div>
+                <pre className="history-text">{finalPrompt}</pre>
+                {copyError ? (
+                  <p role="alert" className="history-copy-error">
+                    {copyError}
+                  </p>
+                ) : null}
+              </>
+            ) : null}
+            {canCopyFinalPrompt && promptIsUnchanged && copyError ? (
+              <p role="alert" className="history-copy-error">
+                {copyError}
+              </p>
+            ) : null}
           </>
         )}
         <div className="history-actions">

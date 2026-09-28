@@ -670,6 +670,19 @@ input:focus {
   margin: 0;
 }
 
+.history-copy-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 1.33em 0;
+}
+
+.history-copy-heading h4 {
+  margin: 0;
+}
+
 .history-note {
   color: #8b949e;
   font-size: 0.9rem;
