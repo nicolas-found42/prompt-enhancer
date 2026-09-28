@@ -1035,7 +1035,7 @@ test("another tab joining a running job shows which prompt it is working on", as
   );
 });
 
-test("a refused provider shows a banner that switches to fallback models", async ({
+test("a first run can use the provider fallback without opening model choices", async ({
   page,
 }) => {
   await page.route("**/api/catalog", (route) =>
@@ -1075,17 +1075,41 @@ test("a refused provider shows a banner that switches to fallback models", async
     })
   );
 
+  const runId = "first-run-with-fallback";
+  await mockRun(page, {
+    ...completedBase,
+    run_id: runId,
+    original_prompt: "Write a birthday note.",
+    final_prompt: "Write a warm birthday note for a friend.",
+    original_kept: false,
+    report: { status: "optimized", summary: "The note has a clear purpose." },
+  });
+  let submittedBody: Json | undefined;
+  await page.route("**/api/jobs/optimize", (route) => {
+    submittedBody = route.request().postDataJSON() as Json;
+    return route.fulfill({ status: 202, json: job(runId, "running") });
+  });
+
   await page.goto("/");
+  await expect(page.getByText("Optional · you can ignore this")).toBeVisible();
+  await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
   await expect(page.getByText("OpenCode Go isn't active")).toBeVisible();
   await page
     .getByRole("button", { name: "Switch to OpenRouter models" })
     .click();
   await expect(page.getByText("OpenCode Go isn't active")).toBeHidden();
-  await page.getByText("Model choices").click();
-  await expect(page.getByLabel("Writer", { exact: true })).toHaveValue(
-    "or-writer"
+  await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
+  await expect(page.locator("#writer-model")).toBeHidden();
+  await page.getByLabel("Your prompt").fill("Write a birthday note.");
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+
+  await expect(page.locator(".final-prompt")).toContainText(
+    "Write a warm birthday note for a friend."
   );
-  await expect(page.getByLabel("Strong check", { exact: true })).toHaveValue(
-    "or-strong"
-  );
+  await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
+  expect(submittedBody?.model_overrides).toEqual({
+    writer: "or-writer",
+    strong: "or-strong",
+    weak: ["weak-a"],
+  });
 });
