@@ -650,7 +650,8 @@ class Diagnoser:
     ) -> tuple[_DecisionObservation, ...]:
         if not requests:
             return ()
-        if self._bounded_fallback:
+        if self._bounded_fallback or not self._request_fits(requests):
+            self._bounded_fallback = True
             observations: list[_DecisionObservation] = []
             chunk: list[Mapping[str, Any]] = []
             for request in requests:

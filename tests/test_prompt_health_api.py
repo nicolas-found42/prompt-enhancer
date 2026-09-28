@@ -400,6 +400,35 @@ def test_oversized_live_health_batch_reports_size_before_transport(
     assert service.store.usage()["rolling_hour_usd"] == 0
 
 
+def test_health_store_prunes_expired_allowance_rows(tmp_path: Path) -> None:
+    clock = [1_000.0]
+    store = PromptHealthStore(tmp_path / "retention.sqlite3", clock=lambda: clock[0])
+    policy = PromptHealthPolicy()
+    old, reason = store.reserve("old", 0.001, policy)
+    assert reason is None and old is not None
+    store.settle(
+        old, measured=0.001, dispatched=1, measured_complete=True, status="complete"
+    )
+
+    clock[0] += 3_601
+    current, reason = store.reserve("current", 0.001, policy)
+    assert reason is None and current is not None
+    assert (
+        store._db.execute("SELECT COUNT(*) FROM prompt_health_refresh").fetchone()[0]
+        == 1
+    )
+    assert (
+        store._db.execute("SELECT COUNT(*) FROM prompt_health_spend").fetchone()[0] == 1
+    )
+    assert {
+        row[1]
+        for row in store._db.execute("PRAGMA index_list('prompt_health_refresh')")
+    } >= {"prompt_health_refresh_at"}
+    assert {
+        row[1] for row in store._db.execute("PRAGMA index_list('prompt_health_spend')")
+    } >= {"prompt_health_spend_at"}
+
+
 def test_live_http_refresh_batches_requests_and_reconciles_usage(
     tmp_path: Path,
 ) -> None:

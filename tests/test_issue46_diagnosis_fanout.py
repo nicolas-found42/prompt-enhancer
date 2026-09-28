@@ -282,6 +282,28 @@ def test_fanout_uses_selected_models_current_context_limit() -> None:
         assert len(json.dumps(envelope, ensure_ascii=False).encode()) <= 7_168
 
 
+def test_sequential_dispatch_splits_oversized_questions_and_keeps_request_cap(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(diagnosis_module, "MAX_DIAGNOSIS_PROVIDER_REQUESTS", 4)
+    gateway = BatchGateway(root="communication")
+    gateway.catalog = StaticModelCatalog(
+        (), (ModelInfo(JEV_MODEL, "openrouter", context_window=3_000),)
+    )
+
+    report = Diagnoser(
+        gateway, speculative_fanout=False, record_request_evidence=True
+    ).diagnose("Write a brief note. Keep it clear.")
+
+    assert report.request_evidence is not None
+    assert report.request_evidence["mode"] == "bounded_sequential_fallback"
+    assert report.request_evidence["provider_requests"] == 4
+    assert report.request_evidence["complete"] is False
+    for batch in gateway.batches:
+        _, envelope = batch_decision_payload(batch, model=JEV_MODEL)
+        assert len(json.dumps(envelope, ensure_ascii=False).encode()) <= 1_976
+
+
 def test_request_sizing_uses_a_conservative_fallback_without_model_metadata() -> None:
     request = {"key": "large", "state": "x" * 100_000, "query": "Is it clear?"}
     known = BatchGateway()

@@ -26,7 +26,9 @@ from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.reword_optimization import (
     RewordPolicy,
     _digest,
+    _group_fold_noul_brier,
     _loss,
+    _Row,
     optimize_reword,
 )
 from prompt_enhancer.rubric_revisions import (
@@ -258,9 +260,31 @@ def test_final_rows_and_labels_are_sealed_until_finalist_is_selected(
     assert "calibration-0" not in writer_input
     assert all("label" not in request["state"] for request in gateway.evaluated)
     assert result["training"]["finalist_digest"]
+    assert result["training"]["selection"] == "group_fold_bias_calibrated_brier"
+    assert (
+        len(result["training"]["fold_losses"][result["training"]["finalist_digest"]])
+        == 5
+    )
     assert result["calibration"]["partitions"]
     assert result["calibration"]["verdict"] == "gate"
     assert result["partitions"]["final"]["groups"] == 30
+
+
+def test_training_fold_bias_is_fitted_without_held_out_group() -> None:
+    rows = (
+        _Row("a", "group-a", "training", {}, False, "source"),
+        _Row("b", "group-b", "training", {}, True, "source"),
+    )
+    predictions = {"a": (0.1, 0.9), "b": (0.9, 0.1)}
+
+    loss, folds = _group_fold_noul_brier(
+        rows, predictions, {"group-a": 0, "group-b": 1}
+    )
+
+    assert loss == pytest.approx(1.0)
+    assert folds[0]["fitted_probability_bias"] == pytest.approx(0.9)
+    assert folds[1]["fitted_probability_bias"] == pytest.approx(-0.9)
+    assert all(fold["fit_rows"] == fold["held_out_rows"] == 1 for fold in folds)
 
 
 def test_drift_uncertainty_support_regression_and_reuse_hold(tmp_path: Path) -> None:

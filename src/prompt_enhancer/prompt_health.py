@@ -173,6 +173,8 @@ class PromptHealthStore:
             CREATE TABLE IF NOT EXISTS prompt_health_inflight (
               session_id TEXT PRIMARY KEY, id TEXT NOT NULL, at REAL NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS prompt_health_spend_at ON prompt_health_spend(at);
+            CREATE INDEX IF NOT EXISTS prompt_health_refresh_at ON prompt_health_refresh(at);
             """
         )
         self._db.commit()
@@ -222,6 +224,12 @@ class PromptHealthStore:
             try:
                 self._db.execute(
                     "DELETE FROM prompt_health_inflight WHERE at<?", (now - 300,)
+                )
+                self._db.execute(
+                    "DELETE FROM prompt_health_refresh WHERE at<?", (now - 60,)
+                )
+                self._db.execute(
+                    "DELETE FROM prompt_health_spend WHERE at<?", (now - 3600,)
                 )
                 active = self._db.execute(
                     "SELECT id FROM prompt_health_inflight WHERE session_id=?",

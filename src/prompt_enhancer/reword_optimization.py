@@ -225,6 +225,39 @@ def _loss(
     ) / (len(criteria) - 1)
 
 
+def _group_fold_noul_brier(
+    rows: Sequence[_Row],
+    predictions: Mapping[str, tuple[float, ...]],
+    folds: Mapping[str, int],
+) -> tuple[float, list[dict[str, Any]]]:
+    """Fit a probability bias on other groups before scoring each held-out fold."""
+    records: list[dict[str, Any]] = []
+    total_loss = 0.0
+    for fold in sorted(set(folds.values())):
+        fitting = [row for row in rows if folds[row.group_id] != fold]
+        held_out = [row for row in rows if folds[row.group_id] == fold]
+        bias = sum(
+            float(row.label) - predictions[row.row_id][1] for row in fitting
+        ) / len(fitting)
+        fold_loss = sum(
+            (min(1.0, max(0.0, predictions[row.row_id][1] + bias)) - float(row.label))
+            ** 2
+            for row in held_out
+        ) / len(held_out)
+        total_loss += fold_loss * len(held_out)
+        records.append(
+            {
+                "fold": fold,
+                "fit_rows": len(fitting),
+                "held_out_rows": len(held_out),
+                "held_out_groups": len({row.group_id for row in held_out}),
+                "fitted_probability_bias": bias,
+                "held_out_brier": fold_loss,
+            }
+        )
+    return total_loss / len(rows), records
+
+
 def _classification(
     probabilities: tuple[float, ...],
     response_type: str,
@@ -769,29 +802,20 @@ def optimize_reword(
             text: evaluate(text, partitions["training"])
             for text in (question.text, *screened)
         }
-        # Group folds are fixed before the final set is opened. The held-out fold
-        # receives no fitted threshold or label information from another fold.
         groups = sorted({row.group_id for row in partitions["training"]})
+        if len(groups) < 2:
+            return finish("at least two training groups are required for selection")
         folds = {
-            group: int(_digest((policy.seed, group))[:8], 16) % 5 for group in groups
-        }
-        training_loss = {
-            text: sum(
-                sum(
-                    _loss(
-                        predictions[row.row_id],
-                        row.label,
-                        question.response_type,
-                        criteria,
-                    )
-                    for row in partitions["training"]
-                    if folds[row.group_id] == fold
-                )
-                for fold in range(5)
+            group: index % min(5, len(groups))
+            for index, group in enumerate(
+                sorted(groups, key=lambda group: (_digest((policy.seed, group)), group))
             )
-            / len(partitions["training"])
+        }
+        fold_results = {
+            text: _group_fold_noul_brier(partitions["training"], predictions, folds)
             for text, predictions in training_predictions.items()
         }
+        training_loss = {text: result[0] for text, result in fold_results.items()}
         finalist = min(
             training_loss,
             key=lambda text: (
@@ -802,8 +826,12 @@ def optimize_reword(
             ),
         )
         report["training"] = {
+            "selection": "group_fold_bias_calibrated_brier",
             "group_folds": folds,
             "brier": {_digest(text): value for text, value in training_loss.items()},
+            "fold_losses": {
+                _digest(text): result[1] for text, result in fold_results.items()
+            },
             "finalist_digest": _digest(finalist),
         }
         if finalist == question.text:
