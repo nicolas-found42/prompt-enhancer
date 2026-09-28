@@ -159,6 +159,25 @@ it("explains unresolved weak-grade confirmation and cascade spending", () => {
   expect(within(section).getByText(/\$0\.0010.*\$0\.0200/)).toBeInTheDocument();
 });
 
+it("distinguishes missing cascade cost and cap from measured zero", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          grading_cascade: { confirmation_count: 0 },
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", { name: "Grade confirmation" });
+  expect(section).toHaveTextContent(
+    "Reserved cascade cost: unavailable of unavailable."
+  );
+});
+
 it("shows a detected output and an unresolved screen without treating both as malicious", () => {
   render(
     <RunReport

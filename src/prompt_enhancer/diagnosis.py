@@ -1585,7 +1585,7 @@ class Diagnoser:
             effective_checklist=_checklist_payload(task.checklist),
             taxonomy_evidence=taxonomy_evidence,
             request_evidence=self.request_evidence(prompt)
-            if self.record_request_evidence
+            if self.record_request_evidence or self._incomplete
             else None,
         )
 

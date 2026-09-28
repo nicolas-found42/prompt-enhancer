@@ -304,6 +304,21 @@ def test_sequential_dispatch_splits_oversized_questions_and_keeps_request_cap(
         assert len(json.dumps(envelope, ensure_ascii=False).encode()) <= 1_976
 
 
+def test_unobserved_sequential_diagnosis_reports_incomplete_dispatch() -> None:
+    complete = _run(BatchGateway(), speculative=False)
+    assert "request_evidence" not in complete["report"]["diagnosis"]
+
+    gateway = BatchGateway()
+    gateway.catalog = StaticModelCatalog(
+        (), (ModelInfo(JEV_MODEL, "openrouter", context_window=1_100),)
+    )
+    incomplete = _run(gateway, speculative=False)
+
+    assert incomplete["original_kept"] is True
+    assert "incomplete" in incomplete["report"]["summary"].lower()
+    assert incomplete["report"]["diagnosis"]["request_evidence"]["complete"] is False
+
+
 def test_request_sizing_uses_a_conservative_fallback_without_model_metadata() -> None:
     request = {"key": "large", "state": "x" * 100_000, "query": "Is it clear?"}
     known = BatchGateway()

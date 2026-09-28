@@ -66,6 +66,11 @@ export default function PromptHealthPanel({
                   Live checks paused: {assessment.reason}
                 </p>
               )}
+              {assessment.status === "unavailable" && (
+                <p className="prompt-health-muted">
+                  Live checks unavailable: {assessment.reason}
+                </p>
+              )}
               {assessment.status === "partial" && (
                 <p className="prompt-health-muted">
                   Assessment incomplete; no overall score is shown.

@@ -643,6 +643,35 @@ def test_live_capture_rejects_different_served_snapshot(tmp_path: Path) -> None:
     assert not destination.exists()
 
 
+def test_live_capture_rejects_missing_answering_snapshot(tmp_path: Path) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+
+    class MissingSnapshotGateway(ScriptedGateway):
+        def decide(self, payload, *, role="judge", run_id=None):
+            answer = super().decide(payload, role=role, run_id=run_id)
+            self.decision_log[-1].pop("answered_by")
+            return answer
+
+    gateway = MissingSnapshotGateway(
+        decision=lambda *_args, **_kwargs: {
+            "type": "choice",
+            "choice": "pass",
+            "probabilities": {"pass": 1.0, "fail": 0.0, "unknown": 0.0},
+        }
+    )
+    destination = tmp_path / "missing-snapshot.json"
+
+    with pytest.raises(OrderBiasError, match="answering snapshot unavailable"):
+        capture_order_bias(
+            _manifest(),
+            gateway,
+            repetitions=2,
+            budget_usd=0.01,
+            recording_path=destination,
+        )
+    assert not destination.exists()
+
+
 def test_http_transport_serialization_preserves_choice_order() -> None:
     class Response:
         status = 200

@@ -1108,7 +1108,9 @@ def capture_order_bias(
             raise OrderBiasError(
                 "Gateway did not record the order-bias decision identity"
             )
-        answered_by = decision.get("answered_by", gateway.jev_model)
+        answered_by = decision.get("answered_by")
+        if not isinstance(answered_by, str) or not answered_by.strip():
+            raise OrderBiasError("order-bias response answering snapshot unavailable")
         if answered_by != gateway.jev_model:
             raise OrderBiasError(
                 f"order-bias response snapshot {answered_by!r} differs from configured {gateway.jev_model!r}"

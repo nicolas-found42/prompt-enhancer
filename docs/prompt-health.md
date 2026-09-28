@@ -34,7 +34,8 @@ reuse one answer while the server maps it to each current occurrence ID. Only
 answers from the verified pinned Jev snapshot are cached. The display policy
 version is separate from the semantic cache key.
 
-The defaults are a 20,000-character draft cap, 100 question cap, 20 inference
+The defaults are a 20,000-character draft cap, 100 question cap (up to 23
+sentences when all eight dimension and four-per-sentence checks are needed), 20 inference
 refreshes per minute, at most three provider requests per refresh, and a $0.05
 rolling-hour allowance shared through SQLite across tabs and reloads. A live
 refresh reserves a conservative provider-priced cost before dispatch. The

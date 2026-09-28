@@ -384,9 +384,17 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
             unresolved pairs.
           </p>
           <p>
-            Reserved cascade cost: $
-            {Number(gradingCascade.reserved_cost_usd ?? 0).toFixed(4)} of $
-            {Number(gradingCascade.dollar_cap ?? 0).toFixed(4)}.
+            Reserved cascade cost:{" "}
+            {typeof gradingCascade.reserved_cost_usd === "number" &&
+            Number.isFinite(gradingCascade.reserved_cost_usd)
+              ? `$${gradingCascade.reserved_cost_usd.toFixed(4)}`
+              : "unavailable"}{" "}
+            of{" "}
+            {typeof gradingCascade.dollar_cap === "number" &&
+            Number.isFinite(gradingCascade.dollar_cap)
+              ? `$${gradingCascade.dollar_cap.toFixed(4)}`
+              : "unavailable"}
+            .
           </p>
           {cascadePairs.length > 0 && (
             <ul>
