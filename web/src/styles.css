@@ -337,6 +337,44 @@ mark {
   margin-top: 18px;
 }
 
+.model-picker > summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.model-picker-optional {
+  color: #8b949e;
+  font-size: 0.82rem;
+  font-weight: 400;
+}
+
+.model-picker-intro p {
+  color: #8b949e;
+  margin: 10px 0;
+}
+
+.model-role {
+  border-top: 1px solid #30363d;
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.model-role h3,
+.model-role > label {
+  display: block;
+  font-size: 0.95rem;
+  margin: 0 0 8px;
+}
+
+.configured-model {
+  color: #8b949e;
+  font-size: 0.8rem;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+
 .model-picker fieldset {
   border: 1px solid #30363d;
   margin: 14px 0;
@@ -404,6 +442,65 @@ input:focus {
 .model-picker input[type="search"] {
   margin-bottom: 8px;
   width: 100%;
+}
+
+.model-choice-group {
+  margin-top: 12px;
+}
+
+.model-choice-group h4 {
+  color: #c9d1d9;
+  font-size: 0.86rem;
+  margin: 8px 0;
+}
+
+.model-picker fieldset .model-choice {
+  border-radius: 5px;
+  flex-wrap: wrap;
+  padding: 4px 6px;
+}
+
+.model-picker fieldset .model-choice.is-unavailable {
+  background: #161b22;
+  color: #8b949e;
+}
+
+.model-choice-name {
+  overflow-wrap: anywhere;
+}
+
+.model-choice-id {
+  color: #8b949e;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.model-choice-provider {
+  color: #8b949e;
+  font-size: 0.78rem;
+}
+
+.model-unavailable-label {
+  border: 1px solid #6e5b35;
+  border-radius: 999px;
+  color: #c9aa72;
+  font-size: 0.72rem;
+  padding: 1px 7px;
+}
+
+.unavailable-model-choices {
+  border-top: 1px solid #30363d;
+  margin-top: 14px;
+  padding-top: 10px;
+}
+
+.unavailable-model-choices > summary {
+  color: #8b949e;
+  font-size: 0.86rem;
+}
+
+.unavailable-model-choices .role-hint {
+  margin: 8px 0;
 }
 
 .match-count {
