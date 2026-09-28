@@ -50,6 +50,46 @@ export type ModelSettings = {
   strong_check_model: string;
   weak_models: string[];
 };
+
+export type PromptHealthSettings = {
+  available: boolean;
+  default_enabled: boolean;
+  debounce_ms: number;
+  hourly_allowance_usd: number;
+  usage: { rolling_hour_usd: number; refreshes_last_minute: number };
+};
+
+export type PromptHealthResult = {
+  draft: { revision: number; hash: string };
+  status: "complete" | "partial" | "unavailable" | "paused" | "empty";
+  reason?: string;
+  composite: number | null;
+  provisional: boolean;
+  dimensions: {
+    id: string;
+    label: string;
+    applicable: boolean | null;
+    applicability_probability: number;
+    score: number | null;
+    normalized: number | null;
+  }[];
+  coverage: { assessed: number; applicable: number; unknown: number };
+  flags: {
+    sentence_id: string;
+    kind: string;
+    start: number;
+    end: number;
+    text: string;
+    probability: number;
+    threshold: number;
+  }[];
+  cache: { hits: number; misses: number };
+  usage: {
+    rolling_hour_usd: number;
+    request_usd: number;
+    provider_requests: number;
+  };
+};
 export type ModelSelection = { writer: string; strong: string; weak: string[] };
 
 export type OptimizeResult = {
@@ -232,6 +272,24 @@ export function getCatalog(): Promise<ModelCatalog> {
 
 export function getSettings(): Promise<ModelSettings> {
   return requestJson<ModelSettings>("/api/settings");
+}
+
+export function getPromptHealthSettings(): Promise<PromptHealthSettings> {
+  return requestJson<PromptHealthSettings>("/api/prompt-health/settings");
+}
+
+export function checkPromptHealth(
+  prompt: string,
+  revision: number,
+  sessionId: string,
+  signal: AbortSignal
+): Promise<PromptHealthResult> {
+  return requestJson<PromptHealthResult>("/api/prompt-health", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, revision, session_id: sessionId }),
+    signal,
+  });
 }
 
 export function saveSettings(

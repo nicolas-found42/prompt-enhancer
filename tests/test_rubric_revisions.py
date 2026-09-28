@@ -404,6 +404,86 @@ def test_disabled_default_question_stays_disabled_after_store_reopens(
     assert "context" not in keys
 
 
+def test_historical_calibration_loads_but_cannot_gate_current_jev(
+    tmp_path: Path,
+) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+    from prompt_enhancer.optimizer import PromptOptimizer
+    from prompt_enhancer.store import RunStore
+
+    old_snapshot = "typesafe/jev-old-pin"
+    question = RubricQuestion(
+        "historical-gap",
+        "Is a critical detail missing?",
+        threshold=0.9,
+        missing_when="yes",
+        calibration_snapshot=old_snapshot,
+        calibration_policy_version="issue-51-v1",
+        calibration_artifact={
+            "questions": {
+                "rubric:historical-gap": {
+                    "verdict": "gate",
+                    "threshold": 0.9,
+                    "identity": {
+                        "question": "Is a critical detail missing?",
+                        "primitive": "noul",
+                        "event_mapping": {"polarity": "positive"},
+                        "answering_snapshot": old_snapshot,
+                        "policy_version": "issue-51-v1",
+                    },
+                }
+            }
+        },
+    )
+    path = tmp_path / "historical-rubric.sqlite3"
+    store = SQLiteRubricStore(path)
+    store.initialize(RubricVersion("historical", (question,)))
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            return {
+                "type": "choice",
+                "choice": "none",
+                "probabilities": {"none": 1.0},
+            }
+        return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
+
+    result = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        ),
+        rubric_store=SQLiteRubricStore(path),
+    ).optimize("Draft a note.", {"clarification_allowed": False})
+
+    diagnosis = result["report"]["diagnosis"]
+    assert "historical-gap" not in {gap["key"] for gap in diagnosis["confirmed_gaps"]}
+    assert diagnosis["calibration"]["rubric:historical-gap"] == {
+        "disposition": "abstain",
+        "reason": "rubric_calibration_snapshot_mismatch",
+    }
+
+    class HistoricalAnswerGateway(ScriptedGateway):
+        def decide(self, payload, *, role="judge", run_id=None):
+            answer = super().decide(payload, role=role, run_id=run_id)
+            if payload.get("key") == "rubric:historical-gap":
+                self.decision_log[-1]["answered_by"] = old_snapshot
+            return answer
+
+    historical_result = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=HistoricalAnswerGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        ),
+        rubric_store=SQLiteRubricStore(path),
+    ).optimize("Draft a note.", {"clarification_allowed": False})
+    historical_diagnosis = historical_result["report"]["diagnosis"]
+    assert "historical-gap" in {
+        gap["key"] for gap in historical_diagnosis["confirmed_gaps"]
+    }
+    assert "rubric:historical-gap" not in historical_diagnosis.get("calibration", {})
+
+
 def test_harness_adapter_uses_replay_and_maps_public_report_fields() -> None:
     rubric, evaluation_set = fixture_inputs()
     seen_replay_paths: list[str] = []

@@ -12,7 +12,17 @@ from prompt_enhancer.rounds import RoundPlan, run_round
 PROMPT = "Summarize the report."
 GAPS = {
     "confirmed_gaps": [{"key": "output_format", "label": "output format"}],
-    "problem_sentences": [],
+    "problem_sentences": [
+        {
+            "sentence_id": "s0001",
+            "sentence": {
+                "id": "s0001",
+                "text": PROMPT,
+                "start": 0,
+                "end": len(PROMPT),
+            },
+        }
+    ],
 }
 TESTS = (
     '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}]}'
@@ -52,6 +62,18 @@ def _gateway(
         key = str(request.get("key", ""))
         state = request.get("state", {})
         if request.get("type") == "choice":
+            if key.startswith("fidelity:sentence:"):
+                return {
+                    "type": "choice",
+                    "choice": "supported_by_original",
+                    "probabilities": {
+                        "supported_by_original": 0.99,
+                        "supported_by_assumption": 0.0,
+                        "new_requirement": 0.0,
+                        "unknown": 0.01,
+                    },
+                    "confidence": 0.99,
+                }
             return {
                 "type": "choice",
                 "choice": "none",
@@ -68,6 +90,8 @@ def _gateway(
             probability = float(state["output"] == "pass")
             if key.endswith("_second"):
                 probability = 1.0 - probability
+        elif key == "fidelity:meaning":
+            probability = 0.0 if state["candidate_prompt"] in unfaithful else 1.0
         elif "candidate_prompt" in state:
             probability = 0.0 if state["candidate_prompt"] in unfaithful else 1.0
         else:

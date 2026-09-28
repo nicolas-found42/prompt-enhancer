@@ -22,21 +22,31 @@ def test_calibrated_faithfulness_gate_accepts_boundary_probability() -> None:
             },
         ]
     }
-    faithfulness = {"faithful:accepted": 0.8, "faithful:rejected": 0.79}
+    probabilities = {
+        "success-test-screen:t0:faithfulness": 0.8,
+        "success-test-screen:t0:no_invention": 0.99,
+        "success-test-screen:t0:evaluator_instructions": 0.01,
+        "success-test-screen:t0:assessability": 0.99,
+        "success-test-screen:t1:faithfulness": 0.79,
+        "success-test-screen:t1:no_invention": 0.99,
+        "success-test-screen:t1:evaluator_instructions": 0.01,
+        "success-test-screen:t1:assessability": 0.99,
+    }
     gateway = ScriptedGateway(
         chat=lambda *_args, **_kwargs: {
             "choices": [{"message": {"content": json.dumps(tests)}}]
         },
         decision=lambda request, **_kwargs: {
             "type": "noul",
-            "noul": faithfulness[request["key"]],
+            "noul": probabilities[request["key"]],
+            "confidence": 0.99,
         },
     )
 
     compiled = SuccessTestCompiler(gateway).compile("Summarize this article.")
 
-    assert [test.id for test in compiled.tests] == ["accepted"]
-    assert [item.test.id for item in compiled.rejected] == ["rejected"]
+    assert [test.id for test in compiled.tests] == ["t0"]
+    assert [item.test.id for item in compiled.rejected] == ["t1"]
     assert all(check.threshold == 0.8 for check in compiled.faithfulness_checks)
 
 
@@ -56,7 +66,7 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
             },
             {
                 "descriptions": {
-                    "helpful": {
+                    "t0": {
                         "asks": "Requests missing context before answering.",
                         "guesses": "Invents the missing context.",
                     }
@@ -77,18 +87,26 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
                 "confidence": 1.0,
             }
         probability = 0.01
-        if str(request["key"]).startswith("faithful:"):
-            descriptions = request["state"]["proposed_test"]["option_descriptions"]
-            probability = (
-                0.95
-                if descriptions
-                == {
-                    "asks": "Requests missing context before answering.",
-                    "guesses": "Invents the missing context.",
-                    "unknown": "The output does not give enough evidence to choose another option.",
-                }
-                else 0.01
-            )
+        key = str(request["key"])
+        if key.startswith("success-test-screen:"):
+            if key.endswith(":faithfulness"):
+                descriptions = request["state"]["success_tests"]["t0"][
+                    "option_descriptions"
+                ]
+                probability = (
+                    0.95
+                    if descriptions
+                    == {
+                        "asks": "Requests missing context before answering.",
+                        "guesses": "Invents the missing context.",
+                        "unknown": "The output does not give enough evidence to choose another option.",
+                    }
+                    else 0.01
+                )
+            elif key.endswith("evaluator_instructions"):
+                probability = 0.01
+            else:
+                probability = 0.95
         return {"type": "noul", "noul": probability, "confidence": 0.9}
 
     gateway = ScriptedGateway(chat=chat, decision=decide)
@@ -110,7 +128,7 @@ def test_choice_with_missing_description_after_repair_is_unverified() -> None:
         [
             '{"tests":[{"id":"helpful","question":"Which helps?","kind":"choice",'
             '"expected":"asks","options":["asks","guesses"]}]}',
-            '{"descriptions":{"helpful":{"asks":"Requests context."}}}',
+            '{"descriptions":{"t0":{"asks":"Requests context."}}}',
         ]
     )
 
@@ -122,7 +140,7 @@ def test_choice_with_missing_description_after_repair_is_unverified() -> None:
                 "probabilities": {"general": 1.0},
                 "confidence": 1.0,
             }
-        if str(request["key"]).startswith("faithful:"):
+        if str(request["key"]).startswith("success-test-screen:"):
             raise AssertionError("Incomplete tests must not reach Jev")
         return {"type": "noul", "noul": 0.01, "confidence": 1.0}
 

@@ -645,6 +645,10 @@ test("clarification, assumption editing, history, and feedback use the local API
     page.getByRole("heading", { name: "Optimized prompt" })
   ).toBeVisible();
   await expect(page.locator(".final-prompt")).toContainText("goal: Summarize");
+  const copyGuidance = page.getByText(
+    "After copying, paste this prompt into an AI chat or another tool that accepts prompts."
+  );
+  await expect(copyGuidance).toBeVisible();
 
   await page.getByText("View report").click();
   const assumption = page.getByLabel("Goal");
@@ -656,6 +660,9 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(page.locator(".final-prompt")).toContainText("goal: Analyze");
 
+  await page.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(copyGuidance).toBeVisible();
   const runs = page
     .getByRole("list", { name: "Saved optimization runs" })
     .getByRole("button");

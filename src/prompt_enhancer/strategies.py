@@ -26,6 +26,8 @@ class RewriteStrategy:
     applies_to: tuple[str, ...] = ()
     keywords: tuple[str, ...] = ()
     priority: int = 0
+    gap_fill_keys: tuple[str, ...] = ()
+    restructures: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +37,8 @@ class RewriteStrategy:
             "applies_to": list(self.applies_to),
             "keywords": list(self.keywords),
             "priority": self.priority,
+            "gap_fill_keys": list(self.gap_fill_keys),
+            "restructures": self.restructures,
         }
 
 
@@ -48,6 +52,13 @@ STRATEGY_LIBRARY: tuple[RewriteStrategy, ...] = (
         applies_to=("context", "background", "missing_context"),
         keywords=("context", "background", "audience"),
         priority=100,
+        gap_fill_keys=(
+            "context",
+            "language",
+            "sources",
+            "time_horizon",
+            "outside_reference",
+        ),
     ),
     RewriteStrategy(
         name="specify_output_format",
@@ -56,6 +67,7 @@ STRATEGY_LIBRARY: tuple[RewriteStrategy, ...] = (
         applies_to=("output_format", "format", "deliverable"),
         keywords=("format", "output", "table", "json", "list"),
         priority=95,
+        gap_fill_keys=("output_format", "format"),
     ),
     RewriteStrategy(
         name="add_done_criteria",
@@ -64,6 +76,7 @@ STRATEGY_LIBRARY: tuple[RewriteStrategy, ...] = (
         applies_to=("done", "success", "acceptance", "criteria"),
         keywords=("done", "success", "complete", "criteria"),
         priority=90,
+        gap_fill_keys=("done_criteria", "done", "success", "acceptance", "criteria"),
     ),
     RewriteStrategy(
         name="remove_contradictions",
@@ -106,6 +119,19 @@ STRATEGY_LIBRARY: tuple[RewriteStrategy, ...] = (
         priority=25,
     ),
 )
+
+LOSSLESS_RESTRUCTURE_STRATEGY = RewriteStrategy(
+    name="restructure_lossless",
+    kind="safe",
+    description=(
+        "Group unchanged source content under fixed headings chosen from semantic roles."
+    ),
+    applies_to=("structure", "organization", "format", "output_format"),
+    keywords=("organize", "structure", "group", "sections"),
+    priority=84,
+    restructures=True,
+)
+CURRENT_STRATEGY_LIBRARY = (*STRATEGY_LIBRARY, LOSSLESS_RESTRUCTURE_STRATEGY)
 
 # A short alias is useful to callers and keeps the public API discoverable.
 STRATEGIES = STRATEGY_LIBRARY
@@ -484,6 +510,8 @@ def search_strategies(
 
 
 __all__ = [
+    "CURRENT_STRATEGY_LIBRARY",
+    "LOSSLESS_RESTRUCTURE_STRATEGY",
     "STRATEGIES",
     "STRATEGY_LIBRARY",
     "CandidateBatchRequest",

@@ -58,6 +58,12 @@ def test_pointer_artifact_matches_across_prompts_and_ranker_keeps_confidence_flo
 ) -> None:
     def decide(request, **_kwargs):
         key = str(request.get("key", ""))
+        if key.startswith("existence:"):
+            return {
+                "type": "noul",
+                "probability_true": 0.95,
+                "confidence": 0.95,
+            }
         if key.startswith("pointer:vagueness:"):
             options = request["options"]
             return {

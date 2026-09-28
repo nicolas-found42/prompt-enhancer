@@ -364,7 +364,7 @@ def _normalize_examples(
             raise TrainingDataError(
                 f"run {run_id} weak-panel pass rate is outside [0, 1]"
             )
-        features = _extract_features(run)
+        features = extract_failure_features(run)
         if not features:
             raise TrainingDataError(
                 f"run {run_id} has no Jev probabilities or score summaries"
@@ -383,7 +383,25 @@ def _normalize_examples(
 def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
     features: dict[str, float] = {}
     probability_values: list[float] = []
-    jev_answers = _answer_sequence(run.get("jev_answers") or run.get("answers"))
+    result_value = run.get("result")
+    result: Mapping[str, Any] = (
+        result_value if isinstance(result_value, Mapping) else {}
+    )
+    report_value = run.get("report")
+    report: Mapping[str, Any] = (
+        report_value if isinstance(report_value, Mapping) else {}
+    )
+    result_report_value = result.get("report")
+    result_report: Mapping[str, Any] = (
+        result_report_value if isinstance(result_report_value, Mapping) else {}
+    )
+    jev_answers = _answer_sequence(
+        run.get("jev_answers")
+        or run.get("answers")
+        or report.get("jev_answers")
+        or result.get("jev_answers")
+        or result_report.get("jev_answers")
+    )
     for index, raw_answer in enumerate(jev_answers):
         logged = _as_mapping(raw_answer)
         answer = (
@@ -439,6 +457,17 @@ def _extract_features(run: Mapping[str, Any]) -> dict[str, float]:
     if not any("/level/" in name for name in features):
         _add_score_summary_features(jev_answers, "jev/score", features)
     return dict(sorted(features.items()))
+
+
+def extract_failure_features(run: Mapping[str, Any]) -> dict[str, float]:
+    """Expose optional features from persisted runs without filling in unknowns.
+
+    Historical runs did not record sentence-existence decisions. Their feature
+    maps therefore omit those values; a measured low probability remains a
+    numeric feature when present.
+    """
+
+    return _extract_features(_as_mapping(run))
 
 
 def _answer_probability(answer: Mapping[str, Any]) -> float | None:
