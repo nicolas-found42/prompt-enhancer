@@ -1,6 +1,6 @@
 """The Round: one attempt to beat the prompt.
 
-See docs/contexts/prompt-improvement/CONTEXT.md for its glossary.
+See docs/contexts/prompt-improvement/GLOSSARY.md for its glossary.
 
 A round compiles success tests, chooses and writes rewrite strategies, runs
 the original and every candidate on the weak panel, grades the outputs with
