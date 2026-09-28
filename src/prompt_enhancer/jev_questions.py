@@ -194,6 +194,10 @@ RESTRUCTURE_ROLE_QUESTION = (
     "Which role best describes state.target_unit_id in the user's complete prompt? "
     "Choose only from the listed roles. Do not rewrite the source unit."
 )
+RESTRUCTURE_ROLE_ITEM_QUESTION = (
+    "Which role best describes the referenced source unit in the user's complete prompt? "
+    "Choose only from the listed roles. Do not rewrite the source unit."
+)
 RESTRUCTURE_ROLE_DESCRIPTIONS = {
     "context": "Background, facts, audience, or setting that frames the request.",
     "task": "The action or deliverable the user asks for.",

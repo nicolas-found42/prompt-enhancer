@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 
+from prompt_enhancer import jev_questions
 from prompt_enhancer.evaluation import Dataset, EvaluationHarness
 from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.lossless_restructuring import (
@@ -30,12 +31,30 @@ def test_current_role_requests_share_state_and_historical_requests_replay() -> N
         gateway,
         judge_model="jev-test",
         run_id="current",
-        writer_instruction_version=9,
+        writer_instruction_version=10,
     )
     assert len(requests) >= 2
     assert all(request["state"] == requests[0]["state"] for request in requests)
     assert all("target_unit_text" not in request["state"] for request in requests)
     assert all(isinstance(request["query"], dict) for request in requests)
+    assert all(
+        request["query"]["question"] == jev_questions.RESTRUCTURE_ROLE_ITEM_QUESTION
+        for request in requests
+    )
+
+    requests.clear()
+    build_lossless_candidate(
+        prompt,
+        gateway,
+        judge_model="jev-test",
+        run_id="version-nine",
+        writer_instruction_version=9,
+    )
+    assert requests
+    assert all(
+        request["query"]["question"] == jev_questions.RESTRUCTURE_ROLE_QUESTION
+        for request in requests
+    )
 
     requests.clear()
     build_lossless_candidate(

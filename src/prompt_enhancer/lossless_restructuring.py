@@ -457,7 +457,7 @@ def build_lossless_candidate(
     *,
     judge_model: str,
     run_id: str,
-    writer_instruction_version: int = 9,
+    writer_instruction_version: int = 10,
 ) -> LosslessBuild:
     """Classify source units, render them, and return preservation evidence."""
     before = gateway.usage_report()
@@ -479,7 +479,9 @@ def build_lossless_candidate(
             "type": "choice",
             "query": {
                 "item": f"state.source_units[{index}].text",
-                "question": jev_questions.RESTRUCTURE_ROLE_QUESTION,
+                "question": jev_questions.RESTRUCTURE_ROLE_ITEM_QUESTION
+                if writer_instruction_version >= 10
+                else jev_questions.RESTRUCTURE_ROLE_QUESTION,
             }
             if writer_instruction_version >= 9
             else jev_questions.RESTRUCTURE_ROLE_QUESTION,

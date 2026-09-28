@@ -760,12 +760,19 @@ def default_engine_factory(
         replay_gateway.diagnosis_request_byte_limit = (
             bundle.diagnosis_request_byte_limit
         )
+        replay_gateway.retry_reservation_multiplier = bundle.cascade_settings.get(
+            "retry_reservation_multiplier"
+        )
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
     replay_settings = replace(
         Settings.from_env(),
         judge_model=recorded_pin,
-        **bundle.cascade_settings,
+        **{
+            key: value
+            for key, value in bundle.cascade_settings.items()
+            if key != "retry_reservation_multiplier"
+        },
     )
     return PromptOptimizer(
         gateway=replay_gateway,
@@ -856,6 +863,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         "grading_confirmation_reservation_usd",
         "attribution_pair_cap",
         "attribution_dollar_cap",
+        "retry_reservation_multiplier",
     }:
         raise EvaluationError("replay cascade_settings contains unknown fields")
     pair_cap = raw_cascade_settings.get("grading_cascade_pair_cap")
@@ -863,6 +871,13 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
     reservation = raw_cascade_settings.get("grading_confirmation_reservation_usd")
     attribution_pair_cap = raw_cascade_settings.get("attribution_pair_cap")
     attribution_dollar_cap = raw_cascade_settings.get("attribution_dollar_cap")
+    retry_multiplier = raw_cascade_settings.get("retry_reservation_multiplier")
+    if retry_multiplier is not None and (
+        isinstance(retry_multiplier, bool)
+        or not isinstance(retry_multiplier, int)
+        or retry_multiplier < 1
+    ):
+        raise EvaluationError("replay retry reservation multiplier must be positive")
     if pair_cap is not None and (
         isinstance(pair_cap, bool) or not isinstance(pair_cap, int) or pair_cap < 0
     ):

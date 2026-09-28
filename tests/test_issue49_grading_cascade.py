@@ -503,6 +503,38 @@ def test_recorded_cascade_budget_overrides_replay_without_extra_calls(
     )
 
 
+def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "retry-budget.json"
+    original, _ = _run_screened_round(
+        writer_instruction_version=7,
+        tier="standard",
+        grade_pass_probability=0.5,
+        confirmation_answers=(0.95, 0.95, 0.05),
+        generated_test_count=1,
+        retry_count=3,
+        settings=Settings(grading_cascade_dollar_cap=0.003),
+        record_path=path,
+    )
+    assert (
+        json.loads(path.read_text())["cascade_settings"]["retry_reservation_multiplier"]
+        == 4
+    )
+    assert original["report"]["grading_cascade"]["confirmation_count"] == 0
+    engine = default_engine_factory(path)
+    engine.store = RunStore(":memory:")
+
+    replayed = engine.optimize(
+        "Read the background notes. Summarize the report.",
+        {"tier": "standard", "clarification_allowed": False},
+    )
+
+    assert (
+        replayed["report"]["grading_cascade"] == original["report"]["grading_cascade"]
+    )
+
+
 def test_deep_pair_cap_is_thirty_even_when_more_outputs_are_borderline() -> None:
     def decide(request: dict, **_kwargs: object) -> dict:
         key = str(request["key"])

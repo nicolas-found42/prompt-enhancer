@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from prompt_enhancer.catalog import JEV_MODEL, ModelInfo, StaticModelCatalog
@@ -80,6 +81,7 @@ def _run_screened_round(
     criterion_text: str | None = None,
     settings: Settings | None = None,
     confirmation_provider_error: bool = False,
+    retry_count: int = 0,
 ) -> tuple[dict[str, Any], list[list[dict[str, Any]]]]:
     batches: list[list[dict[str, Any]]] = []
     prompt = "Read the background notes. Summarize the report."
@@ -228,6 +230,8 @@ def _run_screened_round(
         else None
     )
     gateway = CountingGateway(chat=chat, decision=decide, catalog=catalog)
+    if retry_count:
+        gateway.config = SimpleNamespace(max_retries=retry_count)
     recording = RecordingGateway(gateway, record_path) if record_path else None
     if recording is not None:
         recording.writer_instruction_version = writer_instruction_version

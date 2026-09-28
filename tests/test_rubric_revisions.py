@@ -463,6 +463,26 @@ def test_historical_calibration_loads_but_cannot_gate_current_jev(
         "reason": "rubric_calibration_snapshot_mismatch",
     }
 
+    class HistoricalAnswerGateway(ScriptedGateway):
+        def decide(self, payload, *, role="judge", run_id=None):
+            answer = super().decide(payload, role=role, run_id=run_id)
+            if payload.get("key") == "rubric:historical-gap":
+                self.decision_log[-1]["answered_by"] = old_snapshot
+            return answer
+
+    historical_result = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=HistoricalAnswerGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        ),
+        rubric_store=SQLiteRubricStore(path),
+    ).optimize("Draft a note.", {"clarification_allowed": False})
+    historical_diagnosis = historical_result["report"]["diagnosis"]
+    assert "historical-gap" in {
+        gap["key"] for gap in historical_diagnosis["confirmed_gaps"]
+    }
+    assert "rubric:historical-gap" not in historical_diagnosis.get("calibration", {})
+
 
 def test_harness_adapter_uses_replay_and_maps_public_report_fields() -> None:
     rubric, evaluation_set = fixture_inputs()

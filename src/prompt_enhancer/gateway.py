@@ -944,6 +944,7 @@ class ReplayGateway(ScriptedGateway):
         self.recordings = dict(recordings)
         self.decision_provenance = dict(decision_provenance or {})
         self.diagnosis_request_byte_limit: int | None = None
+        self.retry_reservation_multiplier: int | None = None
         if not allow_snapshot_mismatch:
             snapshots = {
                 item.get("answered_by")

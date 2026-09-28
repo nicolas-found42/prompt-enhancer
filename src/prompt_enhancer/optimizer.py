@@ -234,6 +234,7 @@ class PromptOptimizer:
     def _configure_recording_gateway(self) -> None:
         from .diagnosis import checklist_impacts, checklist_keys
         from .evaluation.recording import RecordingGateway
+        from .grading_cascade import _retry_multiplier
 
         recording = self.gateway
         if not isinstance(recording, RecordingGateway):
@@ -256,6 +257,7 @@ class PromptOptimizer:
             recording.grading_policy_artifact = dict(self.grading_policy.artifact)
         if self.writer_instruction_version >= 7:
             recording.cascade_settings = {
+                "retry_reservation_multiplier": _retry_multiplier(recording),
                 "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,
                 "grading_cascade_dollar_cap": self.config.grading_cascade_dollar_cap,
                 "grading_confirmation_reservation_usd": self.config.grading_confirmation_reservation_usd,
@@ -719,17 +721,17 @@ class PromptOptimizer:
             decision = parse_decision(response)
             if not isinstance(decision, NoulDecision):
                 continue
+            entry = entries[index] if index < len(entries) else {}
+            snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
             if (
                 item.calibration_snapshot is not None
-                and item.calibration_snapshot != self.gateway.jev_model
+                and item.calibration_snapshot != snapshot
             ):
                 calibration_evidence[f"rubric:{item.question_id}"] = {
                     "disposition": "abstain",
                     "reason": "rubric_calibration_snapshot_mismatch",
                 }
                 continue
-            entry = entries[index] if index < len(entries) else {}
-            snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
             from .evaluation.calibration import (
                 DEFAULT_POLICY_VERSION,
                 runtime_question_identity,

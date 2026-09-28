@@ -1928,6 +1928,8 @@ class Diagnoser:
                 reason=(
                     "supported"
                     if existence_supported
+                    else "calibration_unavailable"
+                    if isinstance(existence, NoulDecision) and not existence_calibrated
                     else "below_threshold"
                     if isinstance(existence, NoulDecision)
                     else "missing_or_malformed_answer"
@@ -2017,7 +2019,14 @@ class Diagnoser:
                 pointer_observation,
                 threshold=rubric.pointer_threshold,
                 accepted=pointer_supported,
-                reason="supported" if pointer_supported else "below_threshold",
+                reason=(
+                    "supported"
+                    if pointer_supported
+                    else "calibration_abstained"
+                    if pointer_policy is not None
+                    and pointer_policy.disposition == "abstain"
+                    else "below_threshold"
+                ),
                 question_id=f"pointer:{kind.value}",
                 family="pointer",
                 event_mapping={"selected_correctness": True},

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from prompt_enhancer.catalog import JEV_MODEL, ModelInfo, StaticModelCatalog
@@ -31,6 +32,7 @@ class AttributionGateway(ScriptedGateway):
         priced: bool = True,
         fail_attribution: bool = False,
         malformed_attribution: bool = False,
+        retry_count: int = 0,
     ) -> None:
         self.pointer = pointer
         self.kind = kind
@@ -56,6 +58,8 @@ class AttributionGateway(ScriptedGateway):
             else None
         )
         super().__init__(chat=self._chat, decision=self._decide, catalog=catalog)
+        if retry_count:
+            self.config = SimpleNamespace(max_retries=retry_count)
 
     def decide_batch(self, requests, *, role="judge", run_id=None):
         if role == "judge_attribution":
@@ -230,6 +234,36 @@ def test_dollar_cap_skips_attribution_without_erasing_failures() -> None:
     assert {
         pair["reason"] for pair in result["report"]["failure_attribution"]["pairs"]
     } == {"dollar_budget_exhausted"}
+
+
+def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "attribution-retry-budget.json"
+    gateway = RecordingGateway(AttributionGateway(retry_count=3), path)
+    settings = Settings(attribution_dollar_cap=0.0003)
+    original = PromptOptimizer(
+        gateway=gateway,
+        store=RunStore(":memory:"),
+        config=settings,
+        writer_instruction_version=8,
+    ).optimize(PROMPT, {"tier": "standard", "clarification_allowed": False})
+    assert (
+        json.loads(path.read_text())["cascade_settings"]["retry_reservation_multiplier"]
+        == 4
+    )
+    assert original["report"]["failure_attribution"]["requested_pair_count"] == 0
+    engine = default_engine_factory(path)
+    engine.store = RunStore(":memory:")
+
+    replayed = engine.optimize(
+        PROMPT, {"tier": "standard", "clarification_allowed": False}
+    )
+
+    assert (
+        replayed["report"]["failure_attribution"]
+        == original["report"]["failure_attribution"]
+    )
 
 
 def test_harness_counts_attributions_and_only_scores_independent_labels() -> None:

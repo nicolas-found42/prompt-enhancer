@@ -10,12 +10,14 @@ from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import (
     DEFAULT_RUBRIC,
     SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    Diagnoser,
     DiagnosisRubric,
     ProblemKind,
 )
 from prompt_enhancer.evaluation.calibration import (
     CalibrationArtifact,
     DecisionPolicy,
+    PolicyDecision,
     runtime_question_identity,
 )
 from prompt_enhancer.gateway import ScriptedGateway
@@ -354,9 +356,12 @@ def test_cross_window_pointer_is_rejected_and_cannot_duplicate_a_sentence() -> N
     )
 
 
-@pytest.mark.parametrize(("probability", "confirmed"), [(0.85, False), (0.9, True)])
+@pytest.mark.parametrize(
+    ("probability", "verdict", "confirmed"),
+    [(0.85, "gate", False), (0.9, "gate", True), (0.95, "ranker", False)],
+)
 def test_matching_existence_calibration_overrides_the_rubric_cutoff(
-    probability: float, confirmed: bool
+    probability: float, verdict: str, confirmed: bool
 ) -> None:
     request = {
         "model": JEV_MODEL,
@@ -382,7 +387,7 @@ def test_matching_existence_calibration_overrides_the_rubric_cutoff(
             "questions": {
                 identity.question_id: {
                     "identity": identity.to_dict(),
-                    "verdict": "gate",
+                    "verdict": verdict,
                     "threshold": 0.9,
                 }
             },
@@ -411,6 +416,35 @@ def test_matching_existence_calibration_overrides_the_rubric_cutoff(
     assert (
         evidence["existence"]["identity"]["question_digest"] == identity.question_digest
     )
+    if verdict == "ranker":
+        assert evidence["existence"]["reason"] == "calibration_unavailable"
+
+
+def test_pointer_abstention_is_reported_as_calibration_abstained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = Diagnoser._policy_decision
+
+    def abstain_pointer(self, *, question_id, **kwargs):
+        if question_id == "pointer:vagueness":
+            return PolicyDecision(disposition="abstain", reason="policy_abstained")
+        return original(self, question_id=question_id, **kwargs)
+
+    monkeypatch.setattr(Diagnoser, "_policy_decision", abstain_pointer)
+    result = _optimize(
+        "A sentence.",
+        _gateway(
+            existence={"vagueness:0": 0.95},
+            pointers={"vagueness:0": "s0001"},
+        ),
+    )
+    evidence = next(
+        item
+        for item in result["report"]["diagnosis"]["sentence_evidence"]
+        if item["kind"] == "vagueness"
+    )
+    assert evidence["pointer"]["accepted"] is False
+    assert evidence["pointer"]["reason"] == "calibration_abstained"
 
 
 def test_legacy_diagnosis_payload_deserializes_without_inventing_existence_values() -> (

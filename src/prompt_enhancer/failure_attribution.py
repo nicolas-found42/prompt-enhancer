@@ -71,6 +71,9 @@ def _priced_rates(gateway: Gateway, model: str) -> tuple[float, float] | None:
 
 
 def _retry_multiplier(gateway: Gateway) -> int:
+    recorded = getattr(gateway, "retry_reservation_multiplier", None)
+    if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded > 0:
+        return recorded
     config = getattr(gateway, "config", None)
     if config is None:
         config = getattr(getattr(gateway, "gateway", None), "config", None)
