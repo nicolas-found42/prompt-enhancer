@@ -8,6 +8,7 @@ and a durable run identifier.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -29,6 +30,10 @@ from .clarifier import Clarifier
 from .config import Settings
 from .diagnosis import (
     DEFAULT_RUBRIC,
+    HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+    SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+    TASK_TAXONOMY_PROTOCOL_VERSION,
     ConfirmedGap,
     Diagnoser,
     DiagnosisReport,
@@ -65,10 +70,13 @@ from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
 from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
+    SuccessTestScreenCache,
 )
 
 if TYPE_CHECKING:
     from .evaluation.calibration import CalibrationArtifact, DecisionPolicy
+    from .evaluation.order_bias import OrderBiasPolicy
+    from .evaluation.recording import RecordingGateway
 
 
 class RunNotFoundError(KeyError):
@@ -115,16 +123,37 @@ class PromptOptimizer:
         faithfulness_threshold: float = DEFAULT_FAITHFULNESS_THRESHOLD,
         decision_policy: DecisionPolicy | Mapping[str, Any] | str | Path | None = None,
         calibration: CalibrationArtifact | Mapping[str, Any] | str | Path | None = None,
+        grading_policy: OrderBiasPolicy | Mapping[str, Any] | str | Path | None = None,
+        grading_policy_from_env: bool = True,
+        sentence_diagnosis_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        task_taxonomy_version: int = TASK_TAXONOMY_PROTOCOL_VERSION,
+        speculative_diagnosis: bool = True,
+        observe_sequential_diagnosis: bool = False,
     ) -> None:
         if writer_instruction_version not in WRITER_INSTRUCTION_VERSIONS:
             raise ValueError("unknown candidate writer instruction version")
         if not 0 <= faithfulness_threshold <= 1:
             raise ValueError("faithfulness threshold must be a probability")
+        if sentence_diagnosis_version not in {
+            HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        }:
+            raise ValueError("unsupported sentence diagnosis protocol version")
+        if task_taxonomy_version not in {
+            HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+            TASK_TAXONOMY_PROTOCOL_VERSION,
+        }:
+            raise ValueError("unsupported task taxonomy protocol version")
         self.store = store or RunStore()
         self.config = config or Settings.from_env()
         self.diagnosis_rubric = diagnosis_rubric
         self.writer_instruction_version = writer_instruction_version
         self.faithfulness_threshold = faithfulness_threshold
+        self.success_test_screen_cache = SuccessTestScreenCache()
+        self.sentence_diagnosis_version = sentence_diagnosis_version
+        self.task_taxonomy_version = task_taxonomy_version
+        self.speculative_diagnosis = speculative_diagnosis
+        self.observe_sequential_diagnosis = observe_sequential_diagnosis
         from .evaluation.calibration import (
             DEFAULT_POLICY_VERSION,
             CalibrationArtifact,
@@ -176,6 +205,18 @@ class PromptOptimizer:
         self.gateway: Gateway = (
             gateway if gateway is not None else self._default_gateway()
         )
+        from .evaluation.order_bias import OrderBiasPolicy
+
+        if grading_policy is None and grading_policy_from_env:
+            configured_grading_policy = os.getenv("PROMPT_ENHANCER_ORDER_BIAS_POLICY")
+            if configured_grading_policy and configured_grading_policy.strip():
+                grading_policy = Path(configured_grading_policy.strip())
+        self.grading_policy = (
+            grading_policy
+            if grading_policy is None or isinstance(grading_policy, OrderBiasPolicy)
+            else OrderBiasPolicy(grading_policy)
+        )
+        self._configure_recording_gateway()
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (
             SQLiteRubricStore(self.store.path)
@@ -189,6 +230,57 @@ class PromptOptimizer:
             self._clarification_repository(),
             continuation=self._continue_clarification,
         )
+
+    def _configure_recording_gateway(self) -> None:
+        from .diagnosis import checklist_impacts, checklist_keys
+        from .evaluation.recording import RecordingGateway
+        from .grading_cascade import _retry_multiplier
+
+        recording = self.gateway
+        if not isinstance(recording, RecordingGateway):
+            return
+        recording.rubric_thresholds = dict(self.diagnosis_rubric.gap_thresholds)
+        recording.writer_instruction_version = self.writer_instruction_version
+        recording.faithfulness_threshold = self.faithfulness_threshold
+        recording.sentence_diagnosis_version = self.sentence_diagnosis_version
+        recording.task_taxonomy_version = self.task_taxonomy_version
+        recording.speculative_diagnosis = self.speculative_diagnosis
+        recording.observe_sequential_diagnosis = self.observe_sequential_diagnosis
+        recording.diagnosis_retry_reservation_multiplier = _retry_multiplier(recording)
+        recording.checklist_keys = list(checklist_keys(self.diagnosis_rubric))
+        recording.checklist_impacts = checklist_impacts(self.diagnosis_rubric)
+        if self.decision_policy is not None:
+            recording.decision_policy_artifacts = list(
+                self.decision_policy.artifact_dicts
+            )
+            recording.decision_policy_version = self.decision_policy.policy_version
+        if self.grading_policy is not None:
+            recording.grading_policy_artifact = dict(self.grading_policy.artifact)
+        if self.writer_instruction_version >= 7:
+            recording.cascade_settings = {
+                "retry_reservation_multiplier": _retry_multiplier(recording),
+                "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,
+                "grading_cascade_dollar_cap": self.config.grading_cascade_dollar_cap,
+                "grading_confirmation_reservation_usd": self.config.grading_confirmation_reservation_usd,
+                **(
+                    {
+                        "attribution_pair_cap": self.config.attribution_pair_cap,
+                        "attribution_dollar_cap": self.config.attribution_dollar_cap,
+                    }
+                    if self.writer_instruction_version >= 8
+                    else {}
+                ),
+            }
+
+    def attach_recording_gateway(self, path: Path) -> RecordingGateway:
+        from .evaluation.recording import RecordingGateway
+
+        if isinstance(self.gateway, RecordingGateway):
+            raise ValueError("a recording gateway is already attached")
+        recording = RecordingGateway(self.gateway, path)
+        self.gateway = recording
+        self._configure_recording_gateway()
+        return recording
 
     def get_model_settings(self) -> dict[str, Any]:
         return self.config.public_dict()
@@ -410,6 +502,32 @@ class PromptOptimizer:
             if diagnosis is not None
             else {"confirmed_gaps": [], "problem_sentences": []}
         )
+        request_evidence = diagnosis_payload.get("request_evidence", {})
+        if (
+            isinstance(request_evidence, Mapping)
+            and request_evidence.get("complete") is False
+        ):
+            return OptimizeResult(
+                status="completed",
+                run_id=run_id,
+                final_prompt=prompt,
+                original_kept=True,
+                report={
+                    "status": "completed",
+                    "summary": "Diagnosis evidence was incomplete; your original prompt was kept.",
+                    "diagnosis": diagnosis_payload,
+                    "assumptions": [],
+                    "offer_deep": False,
+                    "history": [],
+                    "models": run_settings.model_roles(),
+                },
+                cost=self._usage_cost(),
+                timing={
+                    "total_ms": max(0, round((perf_counter() - started_perf) * 1000)),
+                    "started_at": started_at,
+                    "finished_at": utc_now(),
+                },
+            )
         gaps = tuple(diagnosis.confirmed_gaps) if diagnosis is not None else ()
         self._stage("clarifying")
         plan = Clarifier(
@@ -472,6 +590,9 @@ class PromptOptimizer:
                 faithfulness_threshold=self.faithfulness_threshold,
                 writer_instruction_version=self.writer_instruction_version,
                 prior_failures=tuple(request.prior_failures),
+                grading_policy=self.grading_policy,
+                screen_cache=self.success_test_screen_cache,
+                decision_policy=self.decision_policy,
             )
             return run_round(self.gateway, plan, on_stage=self._stage)
 
@@ -517,39 +638,78 @@ class PromptOptimizer:
                 )
                 for task in self.diagnosis_rubric.task_types
             ),
+            task_branches=tuple(
+                replace(
+                    branch,
+                    checklist=(
+                        tuple(
+                            item
+                            for item in branch.checklist
+                            if item.key not in suppressed
+                        )
+                        if branch.checklist is not None
+                        else None
+                    ),
+                )
+                for branch in self.diagnosis_rubric.task_branches
+            ),
         )
         active_rubric_version = (
             rubric.version_id if rubric is not None else "default-v1"
         )
-        report = Diagnoser(
+        questions = (
+            [
+                {
+                    "key": f"rubric:{item.question_id}",
+                    "model": self.config.judge_model,
+                    "type": item.response_type,
+                    "query": item.text,
+                    "state": {"prompt": prompt},
+                }
+                for item in rubric.questions
+            ]
+            if rubric is not None
+            else []
+        )
+        diagnoser = Diagnoser(
             self.gateway,
             rubric=diagnosis_rubric,
             decision_policy=self.decision_policy,
             rubric_version=active_rubric_version,
-        ).diagnose(prompt)
+            sentence_protocol_version=self.sentence_diagnosis_version,
+            task_taxonomy_version=self.task_taxonomy_version,
+            speculative_fanout=self.speculative_diagnosis,
+            record_request_evidence=(
+                self.speculative_diagnosis or self.observe_sequential_diagnosis
+            ),
+            additional_requests=questions,
+        )
+        report = diagnoser.diagnose(prompt)
         calibration_evidence = dict(report.calibration or {})
         if rubric is None:
             return report
-        questions = [
-            {
-                "key": f"rubric:{item.question_id}",
-                "model": self.config.judge_model,
-                "type": item.response_type,
-                "query": item.text,
-                "state": {"prompt": prompt},
-            }
-            for item in rubric.questions
-        ]
         if not questions:
             return replace(
                 report,
                 rubric_version=rubric.version_id,
                 calibration=calibration_evidence or None,
             )
-        log = getattr(self.gateway, "decision_log", [])
-        before = len(log)
-        responses = list(self.gateway.decide_batch(questions))
-        entries = list(log)[before:]
+        if (report.request_evidence or {}).get("complete") is False:
+            return report
+        if self.speculative_diagnosis or self.observe_sequential_diagnosis:
+            observations = diagnoser.observe_additional(questions)
+            responses = [item.raw_answer for item in observations]
+            entries = [{"answered_by": item.answered_by} for item in observations]
+            report = replace(
+                report, request_evidence=diagnoser.request_evidence(prompt)
+            )
+            if (report.request_evidence or {}).get("complete") is False:
+                return report
+        else:
+            log = getattr(self.gateway, "decision_log", [])
+            before = len(log)
+            responses = list(self.gateway.decide_batch(questions))
+            entries = list(log)[before:]
         gaps = list(report.confirmed_gaps)
         default_impacts = {
             item.key: item.impact
@@ -564,6 +724,15 @@ class PromptOptimizer:
                 continue
             entry = entries[index] if index < len(entries) else {}
             snapshot = entry.get("answered_by") if isinstance(entry, Mapping) else None
+            if (
+                item.calibration_snapshot is not None
+                and item.calibration_snapshot != snapshot
+            ):
+                calibration_evidence[f"rubric:{item.question_id}"] = {
+                    "disposition": "abstain",
+                    "reason": "rubric_calibration_snapshot_mismatch",
+                }
+                continue
             from .evaluation.calibration import (
                 DEFAULT_POLICY_VERSION,
                 runtime_question_identity,

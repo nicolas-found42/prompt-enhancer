@@ -9,11 +9,13 @@ import {
 import {
   ApiError,
   cancelJob,
+  checkPromptHealth,
   getActiveJobs,
   getCatalog,
   getEstimates,
   getJob,
   getProviders,
+  getPromptHealthSettings,
   getRunResult,
   getSettings,
   saveSettings,
@@ -28,6 +30,8 @@ import {
   type ModelSelection,
   type OptimizeResult,
   type ProviderReport,
+  type PromptHealthResult,
+  type PromptHealthSettings,
   type Tier,
   type TierEstimate,
 } from "./api";
@@ -38,6 +42,7 @@ import FailureCard from "./components/FailureCard";
 import RunProgress from "./components/RunProgress";
 import History from "./History";
 import ModelPicker from "./ModelPicker";
+import PromptHealthPanel from "./PromptHealthPanel";
 import {
   confirmedGaps,
   estimateText,
@@ -53,6 +58,10 @@ import RunReport from "./RunReport";
 const ACTIVE_RUN_KEY = "prompt-enhancer.active-run";
 const LAST_RESULT_KEY = "prompt-enhancer.last-result";
 const DRAFT_KEY = "prompt-enhancer.draft";
+const HEALTH_ENABLED_KEY = "prompt-enhancer.live-health";
+const HEALTH_SESSION_KEY = "prompt-enhancer.health-session";
+const HEALTH_RETRY_INITIAL_MS = 3000;
+const HEALTH_RETRY_MAX_MS = 60000;
 const POLL_MS = 1000;
 // A result shown this recently comes back after a reload instead of vanishing.
 const RESTORE_RESULT_MS = 30 * 60 * 1000;
@@ -75,6 +84,29 @@ function saveDraft(prompt: string) {
     localStorage.setItem(DRAFT_KEY, prompt);
   } catch {
     // Ignore: the draft remains available for this page session.
+  }
+}
+
+function healthPreference(): string | null {
+  try {
+    return localStorage.getItem(HEALTH_ENABLED_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function healthSession(): string {
+  try {
+    const existing = sessionStorage.getItem(HEALTH_SESSION_KEY);
+    if (existing) return existing;
+    const created =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `health-${Date.now()}-${Math.random()}`;
+    sessionStorage.setItem(HEALTH_SESSION_KEY, created);
+    return created;
+  } catch {
+    return `health-${Date.now()}-${Math.random()}`;
   }
 }
 
@@ -249,6 +281,22 @@ function deepOfferText(result: OptimizeResult): string {
 export default function App() {
   const [initialDraft] = useState(readDraft);
   const [prompt, setPrompt] = useState(initialDraft.prompt);
+  const [draftRevision, setDraftRevision] = useState(0);
+  const [healthSettings, setHealthSettings] =
+    useState<PromptHealthSettings | null>(null);
+  const [healthEnabled, setHealthEnabled] = useState(false);
+  const [healthResult, setHealthResult] = useState<PromptHealthResult | null>(
+    null
+  );
+  const [healthChecking, setHealthChecking] = useState(false);
+  const [healthRetry, setHealthRetry] = useState(0);
+  const [pageVisible, setPageVisible] = useState(!document.hidden);
+  const [healthSessionId] = useState(healthSession);
+  const promptRef = useRef(prompt);
+  const revisionRef = useRef(0);
+  const lastAssessed = useRef<string | null>(null);
+  const pausedDelay = useRef(HEALTH_RETRY_INITIAL_MS);
+  const promptField = useRef<HTMLTextAreaElement | null>(null);
   const [tier, setTier] = useState<Tier>("standard");
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
@@ -273,6 +321,12 @@ export default function App() {
   const changeDraft = useCallback((next: string) => {
     draftWasSet.current = true;
     saveDraft(next);
+    promptRef.current = next;
+    revisionRef.current += 1;
+    setDraftRevision(revisionRef.current);
+    lastAssessed.current = null;
+    pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
+    setHealthResult(null);
     setPrompt(next);
   }, []);
 
@@ -280,8 +334,92 @@ export default function App() {
     if (draftWasSet.current) return;
     draftWasSet.current = true;
     saveDraft(next);
+    promptRef.current = next;
+    revisionRef.current += 1;
+    setDraftRevision(revisionRef.current);
+    lastAssessed.current = null;
+    pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
+    setHealthResult(null);
     setPrompt(next);
   }, []);
+
+  useEffect(() => {
+    void getPromptHealthSettings()
+      .then((settings) => {
+        setHealthSettings(settings);
+        setHealthEnabled(settings.available && healthPreference() !== "off");
+      })
+      .catch(() => setHealthSettings(null));
+    const onVisibility = () => setPageVisible(!document.hidden);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  useEffect(() => {
+    if (
+      !healthSettings?.available ||
+      !healthEnabled ||
+      !pageVisible ||
+      !prompt.trim()
+    ) {
+      setHealthChecking(false);
+      return;
+    }
+    if (lastAssessed.current === prompt) return;
+    const controller = new AbortController();
+    const currentPrompt = prompt;
+    const currentRevision = draftRevision;
+    let retryTimer: number | undefined;
+    const timer = window.setTimeout(() => {
+      setHealthChecking(true);
+      void checkPromptHealth(
+        currentPrompt,
+        currentRevision,
+        healthSessionId,
+        controller.signal
+      )
+        .then((assessment) => {
+          if (
+            controller.signal.aborted ||
+            promptRef.current !== currentPrompt ||
+            revisionRef.current !== assessment.draft.revision ||
+            assessment.draft.revision !== currentRevision
+          )
+            return;
+          if (assessment.status === "paused") {
+            const delay = pausedDelay.current;
+            pausedDelay.current = Math.min(delay * 2, HEALTH_RETRY_MAX_MS);
+            retryTimer = window.setTimeout(() => {
+              setHealthRetry((value) => value + 1);
+            }, delay);
+          } else {
+            pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
+            lastAssessed.current = currentPrompt;
+          }
+          setHealthResult(assessment);
+          setHealthChecking(false);
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          lastAssessed.current = currentPrompt;
+          setHealthResult(null);
+          setHealthChecking(false);
+        });
+    }, healthSettings.debounce_ms);
+    return () => {
+      window.clearTimeout(timer);
+      window.clearTimeout(retryTimer);
+      controller.abort();
+    };
+  }, [
+    prompt,
+    draftRevision,
+    healthSettings,
+    healthEnabled,
+    pageVisible,
+    healthSessionId,
+    healthRetry,
+  ]);
 
   useEffect(() => {
     void Promise.all([getCatalog(), getSettings()])
@@ -605,11 +743,33 @@ export default function App() {
         <label htmlFor="prompt">Your prompt</label>
         <textarea
           id="prompt"
+          ref={promptField}
           value={prompt}
           onChange={(event) => changeDraft(event.target.value)}
           placeholder="Paste your prompt here. For example: Write a friendly reply to a customer whose repair was delayed."
           rows={8}
           required
+        />
+        <PromptHealthPanel
+          enabled={healthEnabled}
+          settings={healthSettings}
+          assessment={healthResult}
+          checking={healthChecking}
+          onToggle={(enabled) => {
+            try {
+              localStorage.setItem(HEALTH_ENABLED_KEY, enabled ? "on" : "off");
+            } catch {
+              // The current page still honors the toggle.
+            }
+            lastAssessed.current = null;
+            pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
+            setHealthEnabled(enabled);
+            setHealthResult(null);
+          }}
+          onSelectSpan={(start, end) => {
+            promptField.current?.focus();
+            promptField.current?.setSelectionRange(start, end);
+          }}
         />
         <div className="form-actions">
           <label className="tier-label" htmlFor="tier">

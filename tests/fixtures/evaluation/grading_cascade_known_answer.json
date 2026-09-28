@@ -1,0 +1,12 @@
+{
+  "name": "grading-cascade-known-answer-v1",
+  "provenance": "synthetic_known_answer",
+  "cases": [
+    {"id": "direct-correct", "label_pass": true, "initial_pass_probability": 0.95, "confirmation_status": null, "full_status": null, "escalated": false, "measured_cost_usd": 0.0},
+    {"id": "direct-fail", "label_pass": false, "initial_pass_probability": 0.05, "confirmation_status": null, "full_status": null, "escalated": false, "measured_cost_usd": 0.0},
+    {"id": "confirmed-pass", "label_pass": true, "initial_pass_probability": 0.5, "confirmation_status": "confirmed_pass", "full_status": "confirmed_pass", "escalated": false, "measured_cost_usd": 0.001},
+    {"id": "confirmed-fail", "label_pass": false, "initial_pass_probability": 0.5, "confirmation_status": "confirmed_fail", "full_status": "confirmed_fail", "escalated": false, "measured_cost_usd": 0.001},
+    {"id": "verified-fallback", "label_pass": true, "initial_pass_probability": 0.5, "confirmation_status": "unresolved", "full_status": "confirmed_pass", "escalated": true, "measured_cost_usd": 0.003},
+    {"id": "unresolved", "label_pass": false, "initial_pass_probability": 0.5, "confirmation_status": "unresolved", "full_status": "unresolved", "escalated": true, "measured_cost_usd": 0.003}
+  ]
+}
