@@ -8,13 +8,15 @@ When creating, naming, or checking a Git branch, use the `conventional-branch` s
 
 Issues live in GitHub Issues for `nicolas-found42/prompt-enhancer`; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
 
+Whenever creating an issue, read and apply the `issue-authoring` skill at `~/.agents/skills/issue-authoring/SKILL.md` before publishing it.
+
 ### Triage labels
 
 Use the five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-This is a multi-context repository: start with `CONTEXT-MAP.md`, then see `docs/agents/domain.md`.
+This is a multi-context repository: start with `GLOSSARY-MAP.md`, then see `docs/agents/domain.md`.
 
 ### Code quality and review
 
