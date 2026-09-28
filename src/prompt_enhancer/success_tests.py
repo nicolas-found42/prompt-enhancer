@@ -330,8 +330,8 @@ class SuccessTestCompiler:
             if requests
             else 0
         )
-        log = getattr(self.gateway, "decision_log", ())
-        before = len(log) if isinstance(log, Sequence) else 0
+        initial_log = getattr(self.gateway, "decision_log", ())
+        before = len(initial_log) if isinstance(initial_log, Sequence) else 0
         screen_error: str | None = None
         try:
             responses = (
@@ -346,7 +346,13 @@ class SuccessTestCompiler:
         except ProviderError as exc:
             responses = []
             screen_error = exc.kind or "provider_error"
-        entries = list(log)[before:] if isinstance(log, Sequence) else []
+        log = getattr(self.gateway, "decision_log", ())
+        if log is initial_log and isinstance(log, Sequence):
+            entries = list(log)[before:]
+        elif isinstance(log, Sequence) and len(log) == len(responses):
+            entries = list(log)
+        else:
+            entries = []
         decisions_by_test: dict[str, dict[str, dict[str, Any]]] = {
             test.id: {} for test in uncached
         }

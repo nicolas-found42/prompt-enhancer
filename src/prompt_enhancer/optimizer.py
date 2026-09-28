@@ -124,6 +124,7 @@ class PromptOptimizer:
         decision_policy: DecisionPolicy | Mapping[str, Any] | str | Path | None = None,
         calibration: CalibrationArtifact | Mapping[str, Any] | str | Path | None = None,
         grading_policy: OrderBiasPolicy | Mapping[str, Any] | str | Path | None = None,
+        grading_policy_from_env: bool = True,
         sentence_diagnosis_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         task_taxonomy_version: int = TASK_TAXONOMY_PROTOCOL_VERSION,
         speculative_diagnosis: bool = True,
@@ -204,6 +205,17 @@ class PromptOptimizer:
         self.gateway: Gateway = (
             gateway if gateway is not None else self._default_gateway()
         )
+        from .evaluation.order_bias import OrderBiasPolicy
+
+        if grading_policy is None and grading_policy_from_env:
+            configured_grading_policy = os.getenv("PROMPT_ENHANCER_ORDER_BIAS_POLICY")
+            if configured_grading_policy and configured_grading_policy.strip():
+                grading_policy = Path(configured_grading_policy.strip())
+        self.grading_policy = (
+            grading_policy
+            if grading_policy is None or isinstance(grading_policy, OrderBiasPolicy)
+            else OrderBiasPolicy(grading_policy)
+        )
         self._configure_recording_gateway()
         self.history = RunHistory(self.store)
         self.rubric_store = rubric_store or (
@@ -217,17 +229,6 @@ class PromptOptimizer:
         self._clarification = ClarificationService(
             self._clarification_repository(),
             continuation=self._continue_clarification,
-        )
-        from .evaluation.order_bias import OrderBiasPolicy
-
-        if grading_policy is None:
-            configured_grading_policy = os.getenv("PROMPT_ENHANCER_ORDER_BIAS_POLICY")
-            if configured_grading_policy and configured_grading_policy.strip():
-                grading_policy = Path(configured_grading_policy.strip())
-        self.grading_policy = (
-            grading_policy
-            if grading_policy is None or isinstance(grading_policy, OrderBiasPolicy)
-            else OrderBiasPolicy(grading_policy)
         )
 
     def _configure_recording_gateway(self) -> None:
@@ -251,6 +252,8 @@ class PromptOptimizer:
                 self.decision_policy.artifact_dicts
             )
             recording.decision_policy_version = self.decision_policy.policy_version
+        if self.grading_policy is not None:
+            recording.grading_policy_artifact = dict(self.grading_policy.artifact)
         if self.writer_instruction_version >= 7:
             recording.cascade_settings = {
                 "grading_cascade_pair_cap": self.config.grading_cascade_pair_cap,

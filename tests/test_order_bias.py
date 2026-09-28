@@ -13,6 +13,7 @@ from prompt_enhancer.diagnosis import (
     TaskType,
 )
 from prompt_enhancer.evaluation.__main__ import main as evaluation_main
+from prompt_enhancer.evaluation.harness import EvaluationError, default_engine_factory
 from prompt_enhancer.evaluation.order_bias import (
     OrderBiasError,
     OrderBiasManifest,
@@ -21,6 +22,7 @@ from prompt_enhancer.evaluation.order_bias import (
     capture_order_bias,
     question_schema_digest,
 )
+from prompt_enhancer.evaluation.recording import RecordingGateway
 from prompt_enhancer.gateway import GatewayConfig, HttpGateway, HttpTransport
 from prompt_enhancer.grading import grade_panel_with_jev
 from prompt_enhancer.optimizer import PromptOptimizer
@@ -861,6 +863,94 @@ def test_optimizer_loads_saved_policy_from_server_configuration(
     )
 
     assert result["report"]["grading_policy"][0]["policy"] == "single"
+
+
+def test_replay_restores_recorded_grading_policy_without_environment_fallback(
+    tmp_path: Path, monkeypatch
+) -> None:
+    policy = _runtime_policy("single")
+    recording_path = tmp_path / "grading-recording.json"
+    rubric = DiagnosisRubric(
+        task_types=(
+            TaskType(
+                "general",
+                "General",
+                (ChecklistItem("goal", "goal", GapImpact.HIGH),),
+            ),
+        )
+    )
+    engine = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=_optimizer_gateway(),
+        diagnosis_rubric=rubric,
+        grading_policy=policy,
+    )
+    recording = engine.attach_recording_gateway(recording_path)
+    test = {**policy["groups"][0]["question_schema"], "id": "success"}
+    panel = [
+        PanelResult(
+            "candidate", "weak", 0, 7, "The report is summarized.", "Summarize it."
+        )
+    ]
+    original, _ = grade_panel_with_jev(
+        panel,
+        [test],
+        recording,
+        judge_model=recording.jev_model,
+        run_id="recorded-grade",
+        grading_policy=engine.grading_policy,
+    )
+    bundle = json.loads(recording_path.read_text())
+    assert bundle["grading_policy_artifact"] == policy
+
+    other_path = tmp_path / "other-policy.json"
+    other_path.write_text(json.dumps(_runtime_policy("mean_pair")))
+    monkeypatch.setenv("PROMPT_ENHANCER_ORDER_BIAS_POLICY", str(other_path))
+    replay = default_engine_factory(recording_path, allow_snapshot_mismatch=True)
+    assert replay.grading_policy is not None
+    assert replay.grading_policy.artifact == policy
+    replayed, _ = grade_panel_with_jev(
+        panel,
+        [test],
+        replay.gateway,
+        judge_model=replay.gateway.jev_model,
+        run_id="replayed-grade",
+        grading_policy=replay.grading_policy,
+    )
+    assert (
+        replayed["candidate"].per_model_samples
+        == original["candidate"].per_model_samples
+    )
+
+    bundle.pop("grading_policy_artifact")
+    legacy_path = tmp_path / "legacy-recording.json"
+    legacy_path.write_text(json.dumps(bundle))
+    assert (
+        default_engine_factory(legacy_path, allow_snapshot_mismatch=True).grading_policy
+        is None
+    )
+
+    bundle["grading_policy_artifact"] = {"kind": "invalid"}
+    invalid_path = tmp_path / "invalid-recording.json"
+    invalid_path.write_text(json.dumps(bundle))
+    with pytest.raises(EvaluationError, match="invalid replay grading policy"):
+        default_engine_factory(invalid_path, allow_snapshot_mismatch=True)
+
+
+def test_environment_grading_policy_is_recorded_during_engine_setup(
+    tmp_path: Path, monkeypatch
+) -> None:
+    policy = _runtime_policy("single")
+    policy_path = tmp_path / "configured-policy.json"
+    policy_path.write_text(json.dumps(policy))
+    monkeypatch.setenv("PROMPT_ENHANCER_ORDER_BIAS_POLICY", str(policy_path))
+    recording_path = tmp_path / "configured-recording.json"
+    recording = RecordingGateway(_optimizer_gateway(), recording_path)
+
+    PromptOptimizer(store=RunStore(":memory:"), gateway=recording)
+    recording.save()
+
+    assert json.loads(recording_path.read_text())["grading_policy_artifact"] == policy
 
 
 @pytest.mark.parametrize(

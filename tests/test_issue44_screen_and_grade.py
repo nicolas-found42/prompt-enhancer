@@ -22,6 +22,41 @@ from prompt_enhancer.jev import batch_decision_payload
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.runner import PanelResult
 from prompt_enhancer.store import RunStore
+from prompt_enhancer.success_tests import SuccessTestCompiler
+
+
+def test_screening_uses_current_log_when_gateway_replaces_the_list() -> None:
+    class ReplacingLogGateway(ScriptedGateway):
+        def decide_batch(self, requests, *, role="judge", run_id=None):
+            self.decision_log = []
+            return super().decide_batch(requests, role=role, run_id=run_id)
+
+    gateway = ReplacingLogGateway(
+        chat=lambda *_args, **_kwargs: json.dumps(
+            {
+                "tests": [
+                    {
+                        "question": "Does the answer summarize the report?",
+                        "kind": "noul",
+                        "expected": "yes",
+                    }
+                ]
+            }
+        ),
+        decision=lambda request, **_kwargs: {
+            "type": "noul",
+            "probability_true": (
+                0.05 if request["dimension"] == "evaluator_instructions" else 0.95
+            ),
+            "confidence": 1.0,
+        },
+    )
+    gateway.decision_log.append({"question": {"key": "earlier"}})
+
+    compiled = SuccessTestCompiler(gateway).compile("Summarize the report.")
+
+    assert compiled.screening_checks[0].answering_snapshot == JEV_MODEL
+    assert compiled.screening_checks[0].accepted
 
 
 def _run_screened_round(

@@ -36,6 +36,7 @@ class RecordingGateway:
         self.diagnosis_request_byte_limit: int | None = None
         self.decision_policy_artifacts: list[dict[str, Any]] = []
         self.decision_policy_version: str | None = None
+        self.grading_policy_artifact: dict[str, Any] | None = None
         self.pricing_models: list[dict[str, Any]] = []
         self.cascade_settings: dict[str, Any] | None = None
         # Bundles written by this code carry the checklist their recordings saw.
@@ -88,6 +89,8 @@ class RecordingGateway:
         if self.decision_policy_artifacts:
             bundle["decision_policy_artifacts"] = self.decision_policy_artifacts
             bundle["decision_policy_version"] = self.decision_policy_version
+        if self.grading_policy_artifact is not None:
+            bundle["grading_policy_artifact"] = self.grading_policy_artifact
         if self.pricing_models:
             bundle["pricing_models"] = self.pricing_models
         if self.cascade_settings is not None:

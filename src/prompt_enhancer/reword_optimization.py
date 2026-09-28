@@ -950,7 +950,7 @@ def optimize_reword(
             final_predictions[finalist],
             question.response_type,
             criteria,
-            threshold or 0.5,
+            threshold,
         )
         regression_predictions = {
             text: evaluate(text, partitions["regression"])
@@ -969,7 +969,7 @@ def optimize_reword(
             and _classification(
                 regression_predictions[finalist][row.row_id],
                 question.response_type,
-                threshold or 0.5,
+                threshold,
                 criteria,
             )
             != row.label
@@ -1017,7 +1017,7 @@ def optimize_reword(
         changed = replace(
             question,
             text=finalist,
-            threshold=threshold or 0.5,
+            threshold=threshold,
             question_version=question.question_version + 1,
             calibration_snapshot=gateway.jev_model,
             calibration_policy_version=POLICY_VERSION,

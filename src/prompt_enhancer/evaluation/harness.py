@@ -27,6 +27,7 @@ from .datasets import (
     normalize_gap_type,
     replay_digest,
 )
+from .order_bias import OrderBiasError, OrderBiasPolicy
 
 IMPROVEMENT_EPSILON = 1e-12
 REPORT_SCHEMA_VERSION = 1
@@ -407,6 +408,7 @@ class _ReplayBundle:
     pricing_models: tuple[Mapping[str, Any], ...] = ()
     decision_policy_artifacts: tuple[Mapping[str, Any], ...] = ()
     decision_policy_version: str | None = None
+    grading_policy_artifact: Mapping[str, Any] | None = None
     cascade_settings: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -781,6 +783,8 @@ def default_engine_factory(
         )
         if bundle.decision_policy_artifacts
         else None,
+        grading_policy=bundle.grading_policy_artifact,
+        grading_policy_from_env=False,
     )
 
 
@@ -823,6 +827,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_pricing_models = raw.get("pricing_models", [])
         raw_policy_artifacts = raw.get("decision_policy_artifacts", [])
         raw_policy_version = raw.get("decision_policy_version")
+        raw_grading_policy = raw.get("grading_policy_artifact")
         raw_cascade_settings = raw.get("cascade_settings", {})
     else:
         recordings = replay_path
@@ -843,6 +848,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_pricing_models = []
         raw_policy_artifacts = []
         raw_policy_version = None
+        raw_grading_policy = None
         raw_cascade_settings = {}
     if not isinstance(raw_cascade_settings, Mapping) or set(raw_cascade_settings) - {
         "grading_cascade_pair_cap",
@@ -907,6 +913,13 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         not isinstance(raw_policy_version, str) or not raw_policy_version
     ):
         raise EvaluationError("replay decision_policy_version is required")
+    if raw_grading_policy is not None:
+        if not isinstance(raw_grading_policy, Mapping):
+            raise EvaluationError("replay grading_policy_artifact must be an object")
+        try:
+            OrderBiasPolicy(raw_grading_policy)
+        except OrderBiasError as exc:
+            raise EvaluationError(f"invalid replay grading policy: {exc}") from exc
     if raw_impacts is not None and (
         not isinstance(raw_impacts, Mapping)
         or any(
@@ -1041,6 +1054,9 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         pricing_models=tuple(raw_pricing_models),
         decision_policy_artifacts=tuple(raw_policy_artifacts),
         decision_policy_version=raw_policy_version,
+        grading_policy_artifact=(
+            dict(raw_grading_policy) if raw_grading_policy is not None else None
+        ),
         cascade_settings=dict(raw_cascade_settings),
     )
 
