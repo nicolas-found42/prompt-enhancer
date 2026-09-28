@@ -685,6 +685,48 @@ def test_final_group_race_records_hold_without_reclaiming_group(
     assert store.active_rubric().version_id == "rubric-v1"
 
 
+def test_final_evaluation_error_with_holdout_race_still_records_attempt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = _store(tmp_path / "raced-error.sqlite3")
+    original_record = store.record_reword_attempt
+    rival_claimed = False
+
+    class FailedFinalGateway(RewordGateway):
+        def _decide(self, request, *, role, **kwargs):
+            if role == "judge_reword_eval" and request["state"]["source_id"].startswith(
+                "final-"
+            ):
+                raise RuntimeError("final evaluation unavailable")
+            return super()._decide(request, role=role, **kwargs)
+
+    def race_record(*args, **kwargs):
+        nonlocal rival_claimed
+        if kwargs["consume_holdout"] and not rival_claimed:
+            rival_claimed = True
+            SQLiteRubricStore(store.database_path).record_reword_attempt(
+                "rival-attempt",
+                "rival-holdout",
+                {"status": "hold"},
+                holdout_groups=kwargs["holdout_groups"],
+            )
+        return original_record(*args, **kwargs)
+
+    monkeypatch.setattr(store, "record_reword_attempt", race_record)
+    result = optimize_reword(
+        store,
+        FailedFinalGateway(),
+        "task-clarity",
+        _dataset(),
+        attempt_id="raced-error",
+    )
+
+    assert rival_claimed
+    assert result["status"] == "hold"
+    assert result["reason"] == "validation budget exhausted"
+    assert store.get_reword_attempt("raced-error") == result
+
+
 def test_suppressed_active_update_cannot_report_adoption_or_rollback(
     tmp_path: Path,
 ) -> None:

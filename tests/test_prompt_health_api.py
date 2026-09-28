@@ -659,3 +659,35 @@ def test_calibrated_prompt_health_gate_checks_probability_threshold(
     assert service._gate(request, raw, 0.6, 0.8) == (False, 0.9, "calibrated")
     raw = {"type": "noul", "probability_true": 0.95}
     assert service._gate(request, raw, 0.95, 0.8) == (True, 0.9, "calibrated")
+
+
+def test_sentence_calibration_identity_is_stable_across_occurrences(
+    tmp_path: Path,
+) -> None:
+    seen = []
+
+    class Calibrated(DecisionPolicy):
+        def has_candidate(self, question_id: str) -> bool:
+            assert question_id == "prompt_health:sentence:unresolved_reference"
+            return True
+
+        def apply(self, **kwargs) -> PolicyDecision:
+            seen.append(kwargs["identity"].to_dict())
+            return PolicyDecision(disposition="gate", threshold=0.8, verdict="gate")
+
+    service = PromptHealthService(
+        ScriptedGateway(decision=_answer),
+        PromptHealthStore(tmp_path / "sentence-calibration.sqlite3"),
+        decision_policy=Calibrated(),
+    )
+    raw = {"type": "noul", "probability_true": 0.95}
+    for sentence_id in ("s0001", "s0003"):
+        request = service._request(
+            f"sentence:{sentence_id}:unresolved_reference",
+            "noul",
+            {"prompt": "A. B.", "sentence": "A."},
+            f"For target sentence {sentence_id}: Does the target sentence contain a reference that remains unresolved after reading the entire prompt?",
+        )
+        assert service._gate(request, raw, 0.95, 0.8)[0] is True
+
+    assert seen[0] == seen[1]

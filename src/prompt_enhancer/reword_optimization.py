@@ -1118,4 +1118,8 @@ def optimize_reword(
         TypeError,
         json.JSONDecodeError,
     ) as exc:
-        return finish(f"workflow held: {exc}")
+        try:
+            return finish(f"workflow held: {exc}")
+        except HoldoutConsumedError:
+            consumed = False
+            return finish("validation budget exhausted")

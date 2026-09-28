@@ -13,12 +13,13 @@ from prompt_enhancer.config import Settings
 from prompt_enhancer.evaluation.calibration import (
     CalibrationArtifact,
     DecisionPolicy,
+    PolicyDecision,
     runtime_question_identity,
 )
 from prompt_enhancer.evaluation.harness import default_engine_factory
 from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.grading import grade_panel_with_jev
-from prompt_enhancer.grading_cascade import CascadeBudget
+from prompt_enhancer.grading_cascade import CascadeBudget, _confirmation_policy
 from prompt_enhancer.runner import PanelResult
 from prompt_enhancer.store import RunStore
 
@@ -42,6 +43,38 @@ def test_decisive_jev_confirmation_resolves_borderline_grade_without_strong_fall
     assert any(
         batch and str(batch[0]["key"]).startswith("grade-confirm:") for batch in batches
     )
+
+
+def test_confirmation_predicate_cannot_gate_on_raw_probability_alone() -> None:
+    class PredicatePolicy(DecisionPolicy):
+        def resolve(self, *_args, **_kwargs) -> PolicyDecision:
+            return PolicyDecision(
+                disposition="gate-above-confidence",
+                verdict="gate-above-confidence",
+                threshold=0.8,
+                predicate={"confidence_gte": 0.7},
+            )
+
+    gateway = ScriptedGateway(
+        decision=lambda *_args, **_kwargs: {
+            "type": "noul",
+            "probability_true": 0.99,
+            "confidence": 0.4,
+        }
+    )
+    request = {
+        "key": "grade-confirm:pair:support",
+        "type": "noul",
+        "question": "Support?",
+    }
+    gateway.decide_batch([request])
+
+    cutoffs, evidence = _confirmation_policy(
+        [request], gateway, PredicatePolicy(), log_start=0
+    )
+
+    assert cutoffs is None
+    assert evidence[0]["policy"]["predicate"] == {"confidence_gte": 0.7}
 
 
 def test_fast_retains_original_with_unresolved_grade_and_no_cascade_requests() -> None:

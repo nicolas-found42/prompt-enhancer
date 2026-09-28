@@ -214,7 +214,7 @@ def test_each_fidelity_check_can_reject_a_candidate(failing: str) -> None:
                 "unknown" if failing == "unknown_support" else "supported_by_original"
             )
             probabilities = {
-                "supported_by_original": 0.99,
+                "supported_by_original": 0.0,
                 "supported_by_assumption": 0.0,
                 "new_requirement": 0.0,
                 "unknown": 0.0,

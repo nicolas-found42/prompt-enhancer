@@ -362,11 +362,22 @@ class PromptHealthService:
     ) -> tuple[bool | None, float, str]:
         """Use a matching #50 gate; rank-only or stale artifacts stay uncertain."""
         policy = self.decision_policy
-        question_id = f"prompt_health:{request['key']}"
+        calibration_request = dict(request)
+        key_parts = str(request["key"]).split(":")
+        if len(key_parts) == 3 and key_parts[0] == "sentence":
+            kind = key_parts[2]
+            wording = next(
+                (text for name, text, _ in PROBLEM_QUESTIONS if name == kind),
+                None,
+            )
+            if wording is not None:
+                calibration_request["key"] = f"sentence:{kind}"
+                calibration_request["question"] = wording
+        question_id = f"prompt_health:{calibration_request['key']}"
         if policy is not None and policy.has_candidate(question_id):
             identity = runtime_question_identity(
                 question_id,
-                request,
+                calibration_request,
                 family="prompt_health",
                 rubric_version=QUESTION_VERSION,
                 snapshot=self.gateway.jev_model if self.gateway else None,

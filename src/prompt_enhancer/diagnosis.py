@@ -766,6 +766,8 @@ class Diagnoser:
         observations: list[_DecisionObservation] = []
         for index, request in enumerate(requests):
             raw_answer = raw_responses[index] if index < len(raw_responses) else None
+            if raw_answer is None:
+                self._incomplete = True
             try:
                 decision = parse_decision(raw_answer)
             except JevResponseError:
@@ -1884,6 +1886,7 @@ class Diagnoser:
                 family="pointer",
                 event_mapping={"selected_correctness": True},
                 criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                include_calibration=False,
             )
 
             existence = (
@@ -1933,6 +1936,7 @@ class Diagnoser:
                 ),
                 question_id=f"existence:{kind.value}",
                 family="existence",
+                include_calibration=existence_policy is not None,
             )
             record["existence"]["question_version"] = (
                 SENTENCE_EXISTENCE_QUESTION_VERSION
@@ -1964,6 +1968,7 @@ class Diagnoser:
                     family="pointer",
                     event_mapping={"selected_correctness": True},
                     criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                    include_calibration=False,
                 )
                 continue
             if pointer.selected == "none":
@@ -1975,6 +1980,7 @@ class Diagnoser:
                     family="pointer",
                     event_mapping={"selected_correctness": True},
                     criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                    include_calibration=False,
                 )
                 continue
             window_ids = set(pair["candidate_sentence_ids"])
@@ -1987,6 +1993,7 @@ class Diagnoser:
                     family="pointer",
                     event_mapping={"selected_correctness": True},
                     criteria_descriptor=POINTER_CALIBRATION_CRITERIA,
+                    include_calibration=False,
                 )
                 continue
 
@@ -2152,6 +2159,7 @@ class Diagnoser:
         threshold: float | None = None,
         event_mapping: Mapping[str, Any] | None = None,
         criteria_descriptor: str | None = None,
+        include_calibration: bool = True,
     ) -> dict[str, Any]:
         request = observation.request if observation is not None else {}
         raw = observation.raw_answer if observation is not None else None
@@ -2208,7 +2216,7 @@ class Diagnoser:
             "accepted": accepted,
             "reason": reason,
         }
-        if question_id in self._calibration_evidence:
+        if include_calibration and question_id in self._calibration_evidence:
             evidence["calibration"] = self._calibration_evidence[question_id]
         return evidence
 

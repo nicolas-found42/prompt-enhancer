@@ -356,6 +356,28 @@ def test_cross_window_pointer_is_rejected_and_cannot_duplicate_a_sentence() -> N
     )
 
 
+def test_later_window_without_pointer_decision_has_no_earlier_calibration() -> None:
+    class GatePolicy(DecisionPolicy):
+        def apply(self, **_kwargs) -> PolicyDecision:
+            return PolicyDecision(disposition="gate", verdict="gate", threshold=0.8)
+
+    prompt = " ".join(f"Sentence {index}." for index in range(1, 256))
+    gateway = _gateway(
+        existence={"vagueness:0": 0.95, "vagueness:1": 0.95},
+        pointers={"vagueness:0": "s0001", "vagueness:1": "none"},
+    )
+    result = _optimize(prompt, gateway, decision_policy=GatePolicy())
+    windows = [
+        item
+        for item in result["report"]["diagnosis"]["sentence_evidence"]
+        if item["kind"] == "vagueness"
+    ]
+
+    assert windows[0]["pointer"]["calibration"]["verdict"] == "gate"
+    assert windows[1]["pointer"]["reason"] == "none_selected"
+    assert "calibration" not in windows[1]["pointer"]
+
+
 @pytest.mark.parametrize(
     ("probability", "verdict", "confirmed"),
     [(0.85, "gate", False), (0.9, "gate", True), (0.95, "ranker", False)],

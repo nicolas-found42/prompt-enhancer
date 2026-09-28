@@ -250,6 +250,8 @@ def _confirmation_policy(
         )
         if policy.disposition in {"ranker", "abstain"}:
             return None, evidence
+        if policy.may_gate and policy.predicate:
+            return None, evidence
         if policy.may_gate and policy.threshold is not None:
             cutoffs[name] = policy.threshold
     return cutoffs, evidence

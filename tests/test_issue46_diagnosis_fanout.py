@@ -319,6 +319,20 @@ def test_unobserved_sequential_diagnosis_reports_incomplete_dispatch() -> None:
     assert incomplete["report"]["diagnosis"]["request_evidence"]["complete"] is False
 
 
+def test_sequential_missing_answer_reports_incomplete_diagnosis() -> None:
+    class MissingAnswerGateway(BatchGateway):
+        def _answer(self, request, **kwargs):
+            if request.get("key") == "task_type":
+                return None
+            return super()._answer(request, **kwargs)
+
+    result = _run(MissingAnswerGateway(), speculative=False)
+
+    assert result["original_kept"] is True
+    assert "incomplete" in result["report"]["summary"].lower()
+    assert result["report"]["diagnosis"]["request_evidence"]["complete"] is False
+
+
 def test_request_sizing_uses_a_conservative_fallback_without_model_metadata() -> None:
     request = {"key": "large", "state": "x" * 100_000, "query": "Is it clear?"}
     known = BatchGateway()
