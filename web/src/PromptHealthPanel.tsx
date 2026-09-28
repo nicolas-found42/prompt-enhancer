@@ -50,10 +50,10 @@ export default function PromptHealthPanel({
       </div>
       {enabled && (
         <div aria-live="polite">
-          {checking && (
+          {checking && assessment?.status !== "paused" && (
             <p className="prompt-health-muted">Checking this draft…</p>
           )}
-          {!checking && assessment && (
+          {(!checking || assessment?.status === "paused") && assessment && (
             <>
               {score !== null && score !== undefined && (
                 <p className="prompt-health-score">

@@ -680,6 +680,10 @@ class StaleProposalError(ValueError):
     """Raised when a proposal no longer applies to the active rubric."""
 
 
+class HoldoutConsumedError(StaleProposalError):
+    """Raised when a sealed validation group was claimed by another attempt."""
+
+
 def _utc_now() -> str:
     from datetime import datetime
 
@@ -1114,7 +1118,7 @@ class SQLiteRubricStore:
                         (group_id, holdout_digest),
                     )
                     if claimed.rowcount != 1:
-                        raise StaleProposalError("final group was already consumed")
+                        raise HoldoutConsumedError("final group was already consumed")
             if adopted_rubric is not None:
                 active = connection.execute(
                     "SELECT version_id FROM active_rubric WHERE singleton = 1"

@@ -170,10 +170,11 @@ test("a paused health check retries the same draft", async ({ page }) => {
     const response = assessment(body.prompt, body.revision);
     await route.fulfill({
       json:
-        requests === 1
+        requests <= 2
           ? {
               ...response,
               status: "paused",
+              reason: "refresh rate limit reached",
               composite: null,
               dimensions: [],
               flags: [],
@@ -188,7 +189,17 @@ test("a paused health check retries the same draft", async ({ page }) => {
     .fill("Write a note.");
   await page.clock.runFor(600);
   await expect.poll(() => requests).toBe(1);
+  await expect(
+    page.getByText("Live checks paused: refresh rate limit reached")
+  ).toBeVisible();
   await page.clock.runFor(3600);
   await expect.poll(() => requests).toBe(2);
+  await page.clock.runFor(3000);
+  expect(requests).toBe(2);
+  await expect(
+    page.getByText("Live checks paused: refresh rate limit reached")
+  ).toBeVisible();
+  await page.clock.runFor(3600);
+  await expect.poll(() => requests).toBe(3);
   await expect(page.getByText("Prompt clarity: 83%")).toBeVisible();
 });

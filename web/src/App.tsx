@@ -60,6 +60,8 @@ const LAST_RESULT_KEY = "prompt-enhancer.last-result";
 const DRAFT_KEY = "prompt-enhancer.draft";
 const HEALTH_ENABLED_KEY = "prompt-enhancer.live-health";
 const HEALTH_SESSION_KEY = "prompt-enhancer.health-session";
+const HEALTH_RETRY_INITIAL_MS = 3000;
+const HEALTH_RETRY_MAX_MS = 60000;
 const POLL_MS = 1000;
 // A result shown this recently comes back after a reload instead of vanishing.
 const RESTORE_RESULT_MS = 30 * 60 * 1000;
@@ -293,6 +295,7 @@ export default function App() {
   const promptRef = useRef(prompt);
   const revisionRef = useRef(0);
   const lastAssessed = useRef<string | null>(null);
+  const pausedDelay = useRef(HEALTH_RETRY_INITIAL_MS);
   const promptField = useRef<HTMLTextAreaElement | null>(null);
   const [tier, setTier] = useState<Tier>("standard");
   const [result, setResult] = useState<OptimizeResult | null>(null);
@@ -322,6 +325,7 @@ export default function App() {
     revisionRef.current += 1;
     setDraftRevision(revisionRef.current);
     lastAssessed.current = null;
+    pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
     setHealthResult(null);
     setPrompt(next);
   }, []);
@@ -334,6 +338,7 @@ export default function App() {
     revisionRef.current += 1;
     setDraftRevision(revisionRef.current);
     lastAssessed.current = null;
+    pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
     setHealthResult(null);
     setPrompt(next);
   }, []);
@@ -382,10 +387,13 @@ export default function App() {
           )
             return;
           if (assessment.status === "paused") {
+            const delay = pausedDelay.current;
+            pausedDelay.current = Math.min(delay * 2, HEALTH_RETRY_MAX_MS);
             retryTimer = window.setTimeout(() => {
               setHealthRetry((value) => value + 1);
-            }, 3000);
+            }, delay);
           } else {
+            pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
             lastAssessed.current = currentPrompt;
           }
           setHealthResult(assessment);
@@ -754,6 +762,7 @@ export default function App() {
               // The current page still honors the toggle.
             }
             lastAssessed.current = null;
+            pausedDelay.current = HEALTH_RETRY_INITIAL_MS;
             setHealthEnabled(enabled);
             setHealthResult(null);
           }}

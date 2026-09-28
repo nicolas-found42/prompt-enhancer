@@ -216,13 +216,18 @@ def _run_order_bias(args: argparse.Namespace, *, out: TextIO) -> int:
             )
         except ProviderError as exc:
             capture_error = str(exc)
-            try:
-                partial_recording = json.loads(args.record.read_text(encoding="utf-8"))
-                events = partial_recording.get("events", ())
-            except (OSError, json.JSONDecodeError, AttributeError) as read_error:
-                raise OrderBiasError(
-                    f"provider request failed and partial recording could not be read: {read_error}"
-                ) from exc
+            if not args.record.exists():
+                events = ()
+            else:
+                try:
+                    partial_recording = json.loads(
+                        args.record.read_text(encoding="utf-8")
+                    )
+                    events = partial_recording.get("events", ())
+                except (OSError, json.JSONDecodeError, AttributeError) as read_error:
+                    raise OrderBiasError(
+                        f"{capture_error}; partial recording could not be read: {read_error}"
+                    ) from exc
     else:
         if not args.replay:
             raise OrderBiasError("one of --replay or --live is required for order-bias")

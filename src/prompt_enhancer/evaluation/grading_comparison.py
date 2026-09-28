@@ -286,6 +286,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     rendered = json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding="utf-8")
     else:
         print(rendered, end="")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import partial
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -23,7 +24,12 @@ from prompt_enhancer.evaluation.order_bias import (
     question_schema_digest,
 )
 from prompt_enhancer.evaluation.recording import RecordingGateway
-from prompt_enhancer.gateway import GatewayConfig, HttpGateway, HttpTransport
+from prompt_enhancer.gateway import (
+    GatewayConfig,
+    HttpGateway,
+    HttpTransport,
+    ProviderError,
+)
 from prompt_enhancer.grading import grade_panel_with_jev
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.runner import PanelResult
@@ -357,6 +363,53 @@ def test_order_bias_cli_strict_replay_writes_report_and_policy_artifact(
     assert report["evidence_sources"]["matched_recordings"]["source_groups"] == 30
     assert artifact["groups"][0]["recommendation"] == "single"
     assert artifact["groups"][0]["runtime_eligible"] is True
+
+
+def test_order_bias_live_failure_before_first_answer_keeps_provider_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest = _manifest(provenance="matched_recording")
+    input_path = tmp_path / "manifest.json"
+    input_path.write_text(
+        json.dumps(
+            {
+                "name": manifest.name,
+                "cases": [case.to_dict() for case in manifest.cases],
+            }
+        )
+    )
+    recording_path = tmp_path / "missing-recording.json"
+    report_path = tmp_path / "report.json"
+    cli = import_module("prompt_enhancer.evaluation.__main__")
+    monkeypatch.setattr(cli, "HttpGateway", lambda **_kwargs: object())
+
+    def fail_capture(*_args, **_kwargs):
+        raise ProviderError(
+            "openrouter", "jev-test-snapshot", 503, "first request failed"
+        )
+
+    monkeypatch.setattr(cli, "capture_order_bias", fail_capture)
+
+    assert (
+        evaluation_main(
+            [
+                "order-bias",
+                str(input_path),
+                "--live",
+                "--budget",
+                "1",
+                "--record",
+                str(recording_path),
+                "--output",
+                str(report_path),
+            ]
+        )
+        == 0
+    )
+    report = json.loads(report_path.read_text())
+    assert not recording_path.exists()
+    assert report["status"] == "partial"
+    assert "first request failed" in report["collection"]["capture_error"]
 
 
 def test_live_collection_sends_three_independent_asks_in_each_option_order() -> None:

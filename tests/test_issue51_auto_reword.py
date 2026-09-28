@@ -619,6 +619,37 @@ def test_stale_rubric_cannot_win_atomic_adoption(tmp_path: Path) -> None:
     assert store.active_rubric().version_id == "rubric-v2"
 
 
+def test_final_group_race_records_hold_without_reclaiming_group(
+    tmp_path: Path, monkeypatch
+) -> None:
+    store = _store(tmp_path / "shared-final-groups.sqlite3")
+    original_record = store.record_reword_attempt
+    rival_claimed = False
+
+    def race_record(*args, **kwargs):
+        nonlocal rival_claimed
+        if kwargs["consume_holdout"] and not rival_claimed:
+            rival_claimed = True
+            SQLiteRubricStore(store.database_path).record_reword_attempt(
+                "rival-attempt",
+                "rival-holdout",
+                {"status": "hold"},
+                holdout_groups=kwargs["holdout_groups"],
+            )
+        return original_record(*args, **kwargs)
+
+    monkeypatch.setattr(store, "record_reword_attempt", race_record)
+    result = optimize_reword(
+        store, RewordGateway(), "task-clarity", _dataset(), attempt_id="racing"
+    )
+
+    assert rival_claimed
+    assert result["status"] == "hold"
+    assert result["reason"] == "validation budget exhausted"
+    assert store.get_reword_attempt("racing") == result
+    assert store.active_rubric().version_id == "rubric-v1"
+
+
 def test_suppressed_active_update_cannot_report_adoption_or_rollback(
     tmp_path: Path,
 ) -> None:

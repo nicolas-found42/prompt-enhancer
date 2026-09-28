@@ -71,7 +71,7 @@ def test_comparison_requires_matched_case_ids() -> None:
 def test_comparison_cli_writes_unavailable_evidence_honestly(tmp_path: Path) -> None:
     before = tmp_path / "before.json"
     after = tmp_path / "after.json"
-    output = tmp_path / "report.json"
+    output = tmp_path / "new-directory" / "report.json"
     for path in (before, after):
         path.write_text(json.dumps({"status": "completed", "report": {}, "cost": {}}))
 

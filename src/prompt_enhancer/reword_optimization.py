@@ -40,6 +40,7 @@ from .jev import (
     parse_decision,
 )
 from .rubric_revisions import (
+    HoldoutConsumedError,
     MaintainerDecisionKind,
     RevisionDecision,
     RevisionKind,
@@ -1059,6 +1060,13 @@ def optimize_reword(
             automatic_evidence=report,
         )
         return finish("all automatic adoption gates passed")
+    except HoldoutConsumedError:
+        adopted = None
+        automated_decision = None
+        consumed = False
+        report["status"] = "hold"
+        report.pop("adopted_version_id", None)
+        return finish("validation budget exhausted")
     except StaleProposalError:
         adopted = None
         automated_decision = None
