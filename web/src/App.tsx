@@ -300,6 +300,7 @@ export default function App() {
   const [tier, setTier] = useState<Tier>("standard");
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
+  const [historyNavigation, setHistoryNavigation] = useState(0);
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [clarificationError, setClarificationError] =
@@ -649,8 +650,18 @@ export default function App() {
     setClarificationError(null);
     changeDraft(prompt);
     setViewingHistoryResult(true);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    setHistoryNavigation((current) => current + 1);
+    if (opened.status !== "needs_input")
+      window.scrollTo({ top: 0, behavior: "smooth" });
   }
+
+  useEffect(() => {
+    if (!viewingHistoryResult || result?.status !== "needs_input") return;
+    const panel = document.getElementById("clarification-panel");
+    if (!panel) return;
+    panel.focus({ preventScroll: true });
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [historyNavigation, result?.status, viewingHistoryResult]);
 
   const goIds = useMemo(
     () => new Set((catalog?.providers.go ?? []).map((model) => model.id)),
@@ -668,6 +679,20 @@ export default function App() {
           : null,
       ].filter((item): item is string => item !== null)
     : [];
+  const fallbackProviderUnavailable =
+    providers?.providers.openrouter?.status === "unavailable";
+  const canSwitchToFallbackModels = Boolean(
+    selection &&
+    providers &&
+    goRoles.length > 0 &&
+    !fallbackProviderUnavailable &&
+    (!goIds.has(selection.writer) ||
+      (providers.fallback.writer.trim() &&
+        !goIds.has(providers.fallback.writer))) &&
+    (!goIds.has(selection.strong) ||
+      (providers.fallback.strong.trim() &&
+        !goIds.has(providers.fallback.strong)))
+  );
 
   function switchToFallbackModels() {
     if (!selection || !providers) return;
@@ -724,18 +749,34 @@ export default function App() {
 
       {goUnavailable && goRoles.length > 0 && (
         <div className="banner" role="status">
-          <p>
-            <strong>OpenCode Go isn't active</strong> (HTTP{" "}
-            {providers?.providers.go?.http_status ?? "403"}). Your{" "}
-            {goRoles.join(" and ")} use it, so runs will fail.
-          </p>
-          <button
-            className="primary"
-            type="button"
-            onClick={switchToFallbackModels}
-          >
-            Switch to OpenRouter models
-          </button>
+          <div>
+            <p>
+              Some models selected for this app can&apos;t be reached, so your
+              prompt can&apos;t run.{" "}
+              {canSwitchToFallbackModels
+                ? "Use the button to try a different set of models."
+                : "Open Model choices below to choose different models."}
+            </p>
+            <details className="provider-warning-details">
+              <summary>Show troubleshooting details</summary>
+              <p>Provider: OpenCode Go</p>
+              {providers?.providers.go?.http_status != null && (
+                <p>
+                  Provider response: HTTP {providers.providers.go.http_status}
+                </p>
+              )}
+              <p>Selected models: {goRoles.join(" and ")}</p>
+            </details>
+          </div>
+          {canSwitchToFallbackModels && (
+            <button
+              className="primary"
+              type="button"
+              onClick={switchToFallbackModels}
+            >
+              Try different models
+            </button>
+          )}
         </div>
       )}
 
@@ -881,9 +922,19 @@ export default function App() {
               )}
             </div>
             {result.final_prompt && (
-              <button className="secondary" type="button" onClick={copyPrompt}>
-                {copied ? "Copied" : "Copy prompt"}
-              </button>
+              <div className="copy-guidance">
+                <button
+                  className="secondary"
+                  type="button"
+                  onClick={copyPrompt}
+                >
+                  {copied ? "Copied" : "Copy prompt"}
+                </button>
+                <p>
+                  After copying, paste this prompt into an AI chat or another
+                  tool that accepts prompts.
+                </p>
+              </div>
             )}
           </div>
           {gaps.length > 0 && (
