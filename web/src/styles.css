@@ -765,6 +765,12 @@ input:focus {
   white-space: pre-wrap;
 }
 
+.history-prompt-change {
+  background: #5c3b00;
+  border-radius: 2px;
+  color: #fff;
+}
+
 @media (max-width: 560px) {
   .shell {
     padding-top: 40px;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { requestJson, type OptimizeResult } from "./api";
 import FailureCard from "./components/FailureCard";
-import { outcomeOf, record } from "./outcome";
+import { record } from "./outcome";
 
 export type RunSummary = {
   run_id: string;
@@ -90,6 +90,41 @@ function duration(run: RunDetail): string {
   return ms < 60000
     ? `${Math.round(ms / 1000)} s`
     : `${(ms / 60000).toFixed(1)} min`;
+}
+
+function highlightedFinalPrompt(original: string, finalPrompt: string) {
+  const originalCharacters = Array.from(original);
+  const finalCharacters = Array.from(finalPrompt);
+  let prefix = 0;
+  while (
+    prefix < originalCharacters.length &&
+    prefix < finalCharacters.length &&
+    originalCharacters[prefix] === finalCharacters[prefix]
+  ) {
+    prefix += 1;
+  }
+
+  let originalSuffix = originalCharacters.length;
+  let finalSuffix = finalCharacters.length;
+  while (
+    originalSuffix > prefix &&
+    finalSuffix > prefix &&
+    originalCharacters[originalSuffix - 1] === finalCharacters[finalSuffix - 1]
+  ) {
+    originalSuffix -= 1;
+    finalSuffix -= 1;
+  }
+
+  const changedText = finalCharacters.slice(prefix, finalSuffix).join("");
+  return (
+    <>
+      {finalCharacters.slice(0, prefix).join("")}
+      {changedText ? (
+        <mark className="history-prompt-change">{changedText}</mark>
+      ) : null}
+      {finalCharacters.slice(finalSuffix).join("")}
+    </>
+  );
 }
 
 /** A small history browser backed only by the local HTTP API. */
@@ -181,6 +216,12 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
   }, [refreshKey]);
 
   function renderDetails(run: RunDetail) {
+    const originalPrompt = run.original_prompt ?? run.prompt;
+    const finalPrompt = run.final_prompt ?? run.result?.final_prompt;
+    const originalKept = run.original_kept ?? run.result?.original_kept;
+    const hasDistinctFinalPrompt =
+      typeof finalPrompt === "string" && finalPrompt !== originalPrompt;
+
     return (
       <article
         id="selected-run"
@@ -210,22 +251,43 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
           />
         ) : (
           <>
-            {run.result?.status === "completed" && (
-              <p className="history-outcome">
-                {outcomeOf(run.result).headline}
-              </p>
-            )}
-            <h4>Your prompt</h4>
-            <pre className="history-text">
-              {run.original_prompt ?? run.prompt}
-            </pre>
-            {run.final_prompt &&
-              run.final_prompt !== (run.original_prompt ?? run.prompt) && (
-                <>
+            {originalKept === true && hasDistinctFinalPrompt ? (
+              <>
+                <p className="history-note">
+                  Your original prompt was kept. Highlighted text was added to
+                  it.
+                </p>
+                <div className="history-copy-heading">
                   <h4>Final prompt</h4>
-                  <pre className="history-text">{run.final_prompt}</pre>
-                </>
-              )}
+                </div>
+                <pre className="history-text">
+                  {highlightedFinalPrompt(originalPrompt, finalPrompt)}
+                </pre>
+              </>
+            ) : (
+              <>
+                {originalKept === true ? (
+                  <p className="history-outcome">Your prompt was kept as-is.</p>
+                ) : null}
+                <div className="history-copy-heading">
+                  <h4>Your prompt</h4>
+                </div>
+                <pre className="history-text">{originalPrompt}</pre>
+                {hasDistinctFinalPrompt ? (
+                  <>
+                    <div className="history-copy-heading">
+                      <h4>Final prompt</h4>
+                    </div>
+                    <pre className="history-text">
+                      {highlightedFinalPrompt(originalPrompt, finalPrompt)}
+                    </pre>
+                    <p className="history-note">
+                      Highlighted text was added or changed in the final prompt.
+                    </p>
+                  </>
+                ) : null}
+              </>
+            )}
           </>
         )}
         <div className="history-actions">
