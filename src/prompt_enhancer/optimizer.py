@@ -246,6 +246,7 @@ class PromptOptimizer:
         recording.task_taxonomy_version = self.task_taxonomy_version
         recording.speculative_diagnosis = self.speculative_diagnosis
         recording.observe_sequential_diagnosis = self.observe_sequential_diagnosis
+        recording.diagnosis_retry_reservation_multiplier = _retry_multiplier(recording)
         recording.checklist_keys = list(checklist_keys(self.diagnosis_rubric))
         recording.checklist_impacts = checklist_impacts(self.diagnosis_rubric)
         if self.decision_policy is not None:

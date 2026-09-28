@@ -13,6 +13,7 @@ from . import jev_questions
 from .diagnosis import split_sentences
 from .evaluation.calibration import DecisionPolicy, runtime_question_identity
 from .gateway import Gateway, ProviderError
+from .grading_cascade import _retry_multiplier
 from .jev import (
     ChoiceDecision,
     JevResponseError,
@@ -68,17 +69,6 @@ def _priced_rates(gateway: Gateway, model: str) -> tuple[float, float] | None:
     if any(rate is None or not math.isfinite(rate) or rate < 0 for rate in rates):
         return None
     return float(rates[0]), float(rates[1])
-
-
-def _retry_multiplier(gateway: Gateway) -> int:
-    recorded = getattr(gateway, "retry_reservation_multiplier", None)
-    if isinstance(recorded, int) and not isinstance(recorded, bool) and recorded > 0:
-        return recorded
-    config = getattr(gateway, "config", None)
-    if config is None:
-        config = getattr(getattr(gateway, "gateway", None), "config", None)
-    retries = getattr(config, "max_retries", 0)
-    return max(1, retries + 1) if isinstance(retries, int) else 1
 
 
 def _role_cost(gateway: Gateway) -> float | None:

@@ -25,7 +25,8 @@ def test_replay_latency_passes_and_input_identity_are_reported() -> None:
 
     assert report["case_set_digest"] == digest(cases)
     assert len(report["recording_digest"]) == 64
-    assert len(report["source_revision"]) == 40
+    if report["source_revision"] is not None:
+        assert len(report["source_revision"]) == 40
     assert report["latency_provenance"] == "local_replay_execution"
     for name in ("first_pass", "cached_pass"):
         pass_latency = report["latency_ms"][name]

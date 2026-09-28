@@ -405,6 +405,7 @@ class _ReplayBundle:
     speculative_diagnosis: bool = False
     observe_sequential_diagnosis: bool = False
     diagnosis_request_byte_limit: int | None = None
+    diagnosis_retry_reservation_multiplier: int | None = None
     pricing_models: tuple[Mapping[str, Any], ...] = ()
     decision_policy_artifacts: tuple[Mapping[str, Any], ...] = ()
     decision_policy_version: str | None = None
@@ -760,8 +761,9 @@ def default_engine_factory(
         replay_gateway.diagnosis_request_byte_limit = (
             bundle.diagnosis_request_byte_limit
         )
-        replay_gateway.retry_reservation_multiplier = bundle.cascade_settings.get(
-            "retry_reservation_multiplier"
+        replay_gateway.retry_reservation_multiplier = (
+            bundle.diagnosis_retry_reservation_multiplier
+            or bundle.cascade_settings.get("retry_reservation_multiplier")
         )
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
@@ -831,6 +833,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         speculative_diagnosis = raw.get("speculative_diagnosis", False)
         observe_sequential_diagnosis = raw.get("observe_sequential_diagnosis", False)
         diagnosis_request_byte_limit = raw.get("diagnosis_request_byte_limit")
+        diagnosis_retry_multiplier = raw.get("diagnosis_retry_reservation_multiplier")
         raw_pricing_models = raw.get("pricing_models", [])
         raw_policy_artifacts = raw.get("decision_policy_artifacts", [])
         raw_policy_version = raw.get("decision_policy_version")
@@ -852,6 +855,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         speculative_diagnosis = False
         observe_sequential_diagnosis = False
         diagnosis_request_byte_limit = None
+        diagnosis_retry_multiplier = None
         raw_pricing_models = []
         raw_policy_artifacts = []
         raw_policy_version = None
@@ -986,6 +990,18 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         or diagnosis_request_byte_limit < 0
     ):
         raise EvaluationError("replay diagnosis_request_byte_limit must be nonnegative")
+    if diagnosis_retry_multiplier is not None and (
+        isinstance(diagnosis_retry_multiplier, bool)
+        or not isinstance(diagnosis_retry_multiplier, int)
+        or diagnosis_retry_multiplier < 1
+    ):
+        raise EvaluationError("replay diagnosis retry multiplier must be positive")
+    if (
+        diagnosis_retry_multiplier is not None
+        and retry_multiplier is not None
+        and diagnosis_retry_multiplier != retry_multiplier
+    ):
+        raise EvaluationError("replay retry reservation multipliers disagree")
     if (
         isinstance(writer_version, bool)
         or writer_version not in WRITER_INSTRUCTION_VERSIONS
@@ -1066,6 +1082,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         speculative_diagnosis=speculative_diagnosis,
         observe_sequential_diagnosis=observe_sequential_diagnosis,
         diagnosis_request_byte_limit=diagnosis_request_byte_limit,
+        diagnosis_retry_reservation_multiplier=diagnosis_retry_multiplier,
         pricing_models=tuple(raw_pricing_models),
         decision_policy_artifacts=tuple(raw_policy_artifacts),
         decision_policy_version=raw_policy_version,

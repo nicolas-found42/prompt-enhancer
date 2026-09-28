@@ -205,10 +205,7 @@ def test_order_bias_replay_is_repeatable_and_synthetic_results_do_not_activate()
     manifest = _manifest()
 
     def answer(request):
-        if ":reverse:" in request["key"]:
-            probabilities = {"pass": 0.8, "fail": 0.1, "unknown": 0.1}
-        else:
-            probabilities = {"pass": 0.8, "fail": 0.1, "unknown": 0.1}
+        probabilities = {"pass": 0.8, "fail": 0.1, "unknown": 0.1}
         return {"type": "choice", "choice": "pass", "probabilities": probabilities}
 
     events = _events_for(manifest, answer)

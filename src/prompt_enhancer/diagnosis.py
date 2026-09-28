@@ -718,18 +718,15 @@ class Diagnoser:
     def _dispatch(
         self, requests: Sequence[Mapping[str, Any]]
     ) -> tuple[_DecisionObservation, ...]:
+        from .grading_cascade import _retry_multiplier
+
         if self._dispatch_blocked:
             self._incomplete = True
             return tuple(
                 _DecisionObservation(dict(request), None, None, None)
                 for request in requests
             )
-        gateway = getattr(self.gateway, "gateway", self.gateway)
-        attempt_reservation = (
-            max(0, gateway.config.max_retries) + 1
-            if isinstance(gateway, HttpGateway)
-            else 1
-        )
+        attempt_reservation = _retry_multiplier(self.gateway)
         if (
             self._bounded_fallback
             and self._provider_requests + attempt_reservation

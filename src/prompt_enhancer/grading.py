@@ -539,18 +539,14 @@ def grade_panel_with_jev(
                 ),
                 "checks": checks,
             }
+    pair_by_request = {
+        index: pair for pair, indexes in response_indices.items() for index in indexes
+    }
     evidence = []
     for request_index, (request, response) in enumerate(
         zip(requests, responses, strict=True)
     ):
-        pair = next(
-            (
-                pair
-                for pair, indexes in response_indices.items()
-                if request_index in indexes
-            ),
-            None,
-        )
+        pair = pair_by_request.get(request_index)
         if pair is not None:
             entry = {
                 "question": request,

@@ -482,3 +482,69 @@ def test_recording_replays_the_provider_limit_and_diagnosis_protocols(
         restored_evidence["provider_requests"] == original_evidence["provider_requests"]
     )
     assert restored_evidence["reason"] == original_evidence["reason"]
+
+
+def test_recorded_http_retry_reservation_matches_bounded_diagnosis_replay(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(diagnosis_module, "MAX_DIAGNOSIS_PROVIDER_REQUESTS", 4)
+
+    class Transport:
+        def request(self, _url, **kwargs):
+            answers = {}
+            for key, question in kwargs["json"]["questions"].items():
+                if question["type"] == "choice":
+                    selected = "general" if key == "task_type" else "none"
+                    answers[key] = {
+                        "type": "choice",
+                        "choice": selected,
+                        "probabilities": {selected: 1.0},
+                    }
+                else:
+                    answers[key] = {"type": "noul", "noul": 0.01}
+            return {
+                "status_code": 200,
+                "json": {
+                    "model": JEV_MODEL,
+                    "answers": answers,
+                    "usage": {"input_tokens": 100, "output_tokens": 10},
+                },
+                "headers": {},
+            }
+
+    path = tmp_path / "http-retry-budget.json"
+    gateway = HttpGateway(
+        Transport(),
+        config=GatewayConfig(openrouter_api_key="test", max_retries=1),
+        catalog=StaticModelCatalog(
+            (), (ModelInfo(JEV_MODEL, "openrouter", context_window=3_000),)
+        ),
+        sleep=lambda _seconds: None,
+    )
+    original = PromptOptimizer(
+        gateway=RecordingGateway(gateway, path),
+        store=RunStore(":memory:"),
+        speculative_diagnosis=False,
+        writer_instruction_version=6,
+    ).optimize(
+        "Write a brief note. Keep it clear.",
+        {"tier": "fast", "clarification_allowed": False},
+    )
+    bundle = json.loads(path.read_text())
+    assert bundle["diagnosis_retry_reservation_multiplier"] == 2
+    assert "cascade_settings" not in bundle
+    assert original["report"]["diagnosis"]["request_evidence"]["complete"] is False
+
+    replay = default_engine_factory(path)
+    replay.store = RunStore(":memory:")
+    restored = replay.optimize(
+        "Write a brief note. Keep it clear.",
+        {"tier": "fast", "clarification_allowed": False},
+    )
+
+    assert restored["status"] == original["status"]
+    assert restored["final_prompt"] == original["final_prompt"]
+    assert (
+        restored["report"]["diagnosis"]["request_evidence"]["reason"]
+        == original["report"]["diagnosis"]["request_evidence"]["reason"]
+    )
