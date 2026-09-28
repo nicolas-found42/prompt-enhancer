@@ -257,6 +257,20 @@ button:disabled {
   gap: 16px;
 }
 
+.copy-guidance {
+  display: grid;
+  justify-items: end;
+  max-width: 280px;
+}
+
+.copy-guidance p {
+  color: #8b949e;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 8px 0 0;
+  text-align: right;
+}
+
 .final-prompt,
 .report pre {
   background: #0d1117;
@@ -835,6 +849,19 @@ input:focus {
   margin: 0;
 }
 
+.history-copy-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 1.33em 0;
+}
+
+.history-copy-heading h4 {
+  margin: 0;
+}
+
 .history-note {
   color: #8b949e;
   font-size: 0.9rem;
@@ -862,6 +889,12 @@ input:focus {
   white-space: pre-wrap;
 }
 
+.history-prompt-change {
+  background: #5c3b00;
+  border-radius: 2px;
+  color: #fff;
+}
+
 @media (max-width: 560px) {
   .shell {
     padding-top: 40px;
@@ -878,6 +911,14 @@ input:focus {
   .model-picker-intro {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .copy-guidance {
+    justify-items: start;
+  }
+
+  .copy-guidance p {
+    text-align: left;
   }
 
   .assumption-row {

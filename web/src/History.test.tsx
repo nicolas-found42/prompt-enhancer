@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import History, { type RunSummary } from "./History";
+import History, { type RunDetail, type RunSummary } from "./History";
 
 const savedRun: RunSummary = {
   run_id: "saved-run",
@@ -15,7 +15,229 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+  Element.prototype,
+  "scrollIntoView"
+);
+
+const originalClipboard = Object.getOwnPropertyDescriptor(
+  navigator,
+  "clipboard"
+);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalClipboard)
+    Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
+  if (originalScrollIntoView)
+    Object.defineProperty(
+      Element.prototype,
+      "scrollIntoView",
+      originalScrollIntoView
+    );
+  else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+});
+
+it("copies the final prompt from completed run details", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  const completedRun = {
+    ...savedRun,
+    status: "completed",
+    original_prompt: "Write the original prompt.",
+    final_prompt: "Write the improved prompt.",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return jsonResponse(
+        url.endsWith(`/api/runs/${completedRun.run_id}`)
+          ? completedRun
+          : [completedRun]
+      );
+    })
+  );
+  const user = userEvent.setup();
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History />);
+
+  await user.click(
+    await screen.findByRole("button", { name: /Write a supplier reply/ })
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Final prompt" })
+  ).toBeVisible();
+  expect(document.querySelectorAll("pre.history-text")[1]).toHaveTextContent(
+    "Write the improved prompt."
+  );
+  expect(navigator.clipboard.writeText).toBe(writeText);
+  await user.click(screen.getByRole("button", { name: "Copy prompt" }));
+
+  expect(writeText).toHaveBeenCalledWith("Write the improved prompt.");
+  expect(screen.getByRole("button", { name: "Copied" })).toBeVisible();
+});
+
+it("explains how to answer a paused run from its History details", async () => {
+  const result = {
+    status: "needs_input" as const,
+    run_id: "paused-run",
+    original_prompt: "Write a supplier reply.",
+    questions: [
+      {
+        id: "goal",
+        prompt: "What should the assistant do?",
+        options: [{ value: "summarize", label: "Summarize" }],
+      },
+    ],
+    report: {},
+    cost: { total: 0 },
+    timing: { total_ms: 1 },
+  };
+  const pausedRun = {
+    ...savedRun,
+    run_id: "paused-run",
+    status: "needs_input",
+    result,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return jsonResponse(
+        url.endsWith("/api/runs/paused-run") ? pausedRun : [pausedRun]
+      );
+    })
+  );
+  const onOpen = vi.fn();
+  const user = userEvent.setup();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History onOpen={onOpen} />);
+
+  await user.click(
+    await screen.findByRole("button", { name: /Write a supplier reply/ })
+  );
+  await screen.findByRole("heading", { name: "Run details" });
+  expect(
+    screen.getByText(
+      "1 question is waiting in the clarification panel above History."
+    )
+  ).toBeVisible();
+  const answerButton = screen.getByRole("button", {
+    name: "Answer the questions",
+  });
+  expect(answerButton).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Open this result" })
+  ).not.toBeInTheDocument();
+
+  await user.click(answerButton);
+
+  expect(onOpen).toHaveBeenCalledWith(result);
+});
+
+async function openRunDetails(run: RunDetail) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return jsonResponse(
+        url.endsWith(`/api/runs/${run.run_id}`) ? run : [run]
+      );
+    })
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+  const user = userEvent.setup();
+  render(<History />);
+  await user.click(
+    await screen.findByRole("button", { name: /Write a supplier reply/ })
+  );
+  await screen.findByRole("heading", { name: "Run details" });
+}
+
+it("shows one final prompt with additions highlighted when the original was kept", async () => {
+  await openRunDetails({
+    ...savedRun,
+    status: "completed",
+    original_prompt: savedRun.prompt,
+    final_prompt: `${savedRun.prompt}\n\nClarifications:\nKeep it under 120 words.`,
+    original_kept: true,
+  });
+
+  expect(
+    screen.getByText(
+      "Your original prompt was kept. Highlighted text was added to it."
+    )
+  ).toBeVisible();
+  expect(screen.getAllByRole("heading", { name: "Final prompt" })).toHaveLength(
+    1
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Your prompt" })
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Optimized prompt")).not.toBeInTheDocument();
+  expect(document.querySelector("pre.history-text")).toHaveTextContent(
+    `${savedRun.prompt} Clarifications: Keep it under 120 words.`
+  );
+  expect(
+    document.querySelector("mark.history-prompt-change")
+  ).toHaveTextContent("Clarifications: Keep it under 120 words.");
+});
+
+it("states that an unchanged original was kept and shows it once", async () => {
+  await openRunDetails({
+    ...savedRun,
+    status: "completed",
+    original_prompt: savedRun.prompt,
+    final_prompt: savedRun.prompt,
+    original_kept: true,
+  });
+
+  expect(screen.getByText("Your prompt was kept as-is.")).toBeVisible();
+  expect(screen.getAllByRole("heading", { name: "Your prompt" })).toHaveLength(
+    1
+  );
+  expect(
+    screen.queryByRole("heading", { name: "Final prompt" })
+  ).not.toBeInTheDocument();
+  expect(screen.getAllByText(savedRun.prompt)).toHaveLength(2);
+});
+
+it("highlights changed wording in a rewritten final prompt", async () => {
+  await openRunDetails({
+    ...savedRun,
+    status: "completed",
+    original_prompt: savedRun.prompt,
+    final_prompt: "Write a concise reply to the supplier.",
+    original_kept: false,
+  });
+
+  expect(screen.getByRole("heading", { name: "Your prompt" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Final prompt" })).toBeVisible();
+  expect(
+    screen.getByText(
+      "Highlighted text was added or changed in the final prompt."
+    )
+  ).toBeVisible();
+  expect(
+    document.querySelector("mark.history-prompt-change")
+  ).toHaveTextContent("concise reply to the supplier");
+});
 
 it("distinguishes no matches from empty history and clears the applied search", async () => {
   const requestedUrls: string[] = [];
