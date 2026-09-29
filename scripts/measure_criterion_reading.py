@@ -446,6 +446,8 @@ def record(
         raise ValueError("recording belongs to a different reader or question wording")
     if saved.get("model") != model:
         raise ValueError("recording belongs to a different model")
+    if reader == "cheap" and saved.get("max_tokens", 300) != max_tokens:
+        raise ValueError("recording belongs to a different max_tokens setting")
     done = {row["case_id"] for row in saved["rows"]}
     for case in cases:
         if case["id"] in done:
@@ -538,16 +540,18 @@ def report(
         # Legacy cheap recordings were made with the hard-coded 300-token cap.
         max_tokens = 300
     if isinstance(max_tokens, int):
-        truncation_suspects = [
-            case["id"]
-            for case in cases
-            if (rows[case["id"]].get("usage") or {}).get("completion_tokens")
-            == max_tokens
-        ]
+        truncation_suspects: list[str] = []
+        for case in cases:
+            row_usage = rows[case["id"]].get("usage") or {}
+            completion_tokens = row_usage.get(
+                "completion_tokens", row_usage.get("output_tokens")
+            )
+            if completion_tokens == max_tokens:
+                truncation_suspects.append(case["id"])
         if truncation_suspects:
             print(
                 f"truncation-suspect: {', '.join(truncation_suspects)} "
-                f"(completion_tokens == max_tokens={max_tokens})\n"
+                f"(completion/output tokens == max_tokens={max_tokens})\n"
             )
     _print_distribution(cases, readings)
     print("| split | policy | correct check | correct abstain | missed | wrong |")

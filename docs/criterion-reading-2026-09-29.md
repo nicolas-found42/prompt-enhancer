@@ -20,6 +20,9 @@ uv run --env-file .env python scripts/measure_criterion_reading.py report \
 For the chat reader, set its completion-token cap with `--max-tokens` (default
 `300`):
 
+Use a new recording path when changing the cap; resuming a cheap recording with
+a different cap is rejected.
+
 ```sh
 uv run --env-file .env python scripts/measure_criterion_reading.py run \
   --reader cheap --split heldout --max-tokens 300 \

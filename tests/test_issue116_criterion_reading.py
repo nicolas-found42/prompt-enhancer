@@ -230,6 +230,29 @@ def test_record_refuses_to_resume_with_a_different_model(
         measurement.record("jev", [], output)
 
 
+def test_record_refuses_to_resume_cheap_recording_with_a_different_token_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "recording.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "reader": "cheap",
+                "model": measurement.CHEAP_MODEL,
+                "max_tokens": 256,
+                "questions_digest": measurement.questions_digest(),
+                "rows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(measurement, "HttpGateway", lambda **_kwargs: SimpleNamespace())
+
+    with pytest.raises(ValueError, match="max_tokens"):
+        measurement.record("cheap", [], output, max_tokens=300)
+
+
 def test_read_chat_parses_a_well_formed_reply() -> None:
     reply = json.dumps(
         {
@@ -308,50 +331,36 @@ def test_report_scores_recording_with_truncation_and_fixture_splits(
     fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
     monkeypatch.setattr(measurement, "FIXTURE", fixture)
 
-    choices = {
-        "kind": "word_count",
-        "op": "under",
-        "bound": "100",
-        "low": "none",
-        "high": "none",
-    }
-    answers = {
-        key: {
-            "type": "choice",
-            "choice": value,
-            "probabilities": {value: 1.0},
-        }
-        for key, value in choices.items()
-    }
-    answers.update(
+    reply = json.dumps(
         {
-            key: {"type": "noul", "probability_true": probability}
-            for key, probability in {
-                "partial": 0.25,
-                "conditional": 0.5,
-                "negated": 0.1,
-                "approximate": 0.75,
-            }.items()
+            "kind": "word_count",
+            "op": "under",
+            "bound": "100",
+            "low": "none",
+            "high": "none",
+            "partial": False,
+            "conditional": False,
+            "negated": False,
+            "approximate": False,
         }
     )
-    extra_answers: dict[str, object] = {}
     recording = tmp_path / "recording.json"
     recording.write_text(
         json.dumps(
             {
-                "reader": "jev",
-                "model": "test-model",
+                "reader": "cheap",
+                "model": measurement.CHEAP_MODEL,
                 "questions_digest": measurement.questions_digest(),
                 "max_tokens": 50,
                 "rows": [
                     {
                         "case_id": "dev-case",
-                        "answers": answers,
-                        "usage": {"completion_tokens": 50},
+                        "reply": reply,
+                        "usage": {"output_tokens": 50},
                     },
                     {
                         "case_id": "extra-case",
-                        "answers": extra_answers,
+                        "reply": "[]",
                         "usage": {"completion_tokens": 2},
                     },
                 ],
@@ -372,9 +381,9 @@ def test_report_scores_recording_with_truncation_and_fixture_splits(
     assert "| challenge |" in output
     assert "unusable answers: extra-case" in output
     assert "truncation-suspect: dev-case" in output
-    assert "partial: n=1 median=0.250 p90=0.250 max=0.250" in output
-    assert "conditional: n=1 median=0.500 p90=0.500 max=0.500" in output
-    assert "approximate: n=1 median=0.750 p90=0.750 max=0.750" in output
+    assert "partial: n=1 median=0.000 p90=0.000 max=0.000" in output
+    assert "conditional: n=1 median=0.000 p90=0.000 max=0.000" in output
+    assert "approximate: n=1 median=0.000 p90=0.000 max=0.000" in output
     assert "| development | per-judgment cutoffs partial >= 0.2" in output
 
 
