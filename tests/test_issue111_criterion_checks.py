@@ -139,3 +139,44 @@ def test_ordinary_wording_does_not_require_a_deterministic_check(
 
     assert check.exact is None
     assert check.unsupported == ()
+
+
+@pytest.mark.parametrize(
+    "criterion",
+    [
+        "The answer is not more than 100 words",
+        "It must not be under 5 words",
+        "It should not be at most 5 words",
+        "Never use fewer than 5 words",
+    ],
+)
+def test_negated_word_bounds_are_unsupported_rather_than_inverted(
+    criterion: str,
+) -> None:
+    check = check_criterion(criterion, "x y")
+
+    assert check.exact is None
+    assert check.unsupported == ("negated_word_bound",)
+
+
+@pytest.mark.parametrize(
+    "criterion",
+    [
+        "Each paragraph has under 50 words",
+        "No more than 100 words per bullet",
+        "Every section is at most 200 words",
+    ],
+)
+def test_word_bounds_on_part_of_the_output_are_unsupported(criterion: str) -> None:
+    check = check_criterion(criterion, _words(500))
+
+    assert check.exact is None
+    assert check.unsupported == ("scoped_word_bound",)
+
+
+def test_all_constraints_failing_fails_the_combined_check() -> None:
+    check = check_criterion("Valid JSON and at most 2 words", "not json at all")
+
+    assert check.exact is not None
+    assert check.exact["passed"] is False
+    assert [item["passed"] for item in check.exact["checks"]] == [False, False]

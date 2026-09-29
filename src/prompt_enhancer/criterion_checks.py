@@ -34,6 +34,10 @@ _WORD_RANGE = re.compile(
 _COUNTED_UNIT = re.compile(
     rf"\b(?:{_NUMBER})\s+(?P<unit>word|citation|item|sentence|character|step|example|source)s?\b"
 )
+_NEGATION = re.compile(r"(?:\bnot|\bnever|\bcannot|n't)\s+(?:\w+\s+){0,3}$")
+_SCOPE = re.compile(r"\b(?:per|each|every)\b")
+# "compile" only means running a compiler when it is not an instruction to
+# gather things ("compile a list of ...").
 _EXECUTION = re.compile(
     r"\b(?:execut(?:e|es|ed|ing|ion)|syntax|unit tests?"
     r"|run(?:s|ning)? (?:the |this |your )?code)\b"
@@ -57,13 +61,13 @@ def _word_check(
     operator: str, bound: int, count: int, *, upper: int | None = None
 ) -> dict[str, Any]:
     passed = {
-        "at most": lambda: count <= bound,
-        "under": lambda: count < bound,
-        "at least": lambda: count >= bound,
-        "more than": lambda: count > bound,
-        "exactly": lambda: count == bound,
-        "between": lambda: bound <= count <= (upper if upper is not None else bound),
-    }[operator]()
+        "at most": count <= bound,
+        "under": count < bound,
+        "at least": count >= bound,
+        "more than": count > bound,
+        "exactly": count == bound,
+        "between": upper is not None and bound <= count <= upper,
+    }[operator]
     check: dict[str, Any] = {
         "kind": "word_count",
         "operator": operator,
@@ -90,33 +94,41 @@ def check_criterion(criterion: str, output: str) -> CriterionCheck:
             passed = True
         checks.append({"kind": "valid_json", "passed": passed})
 
+    # A bound that is negated or applies to part of the output would be graded
+    # against the whole output, so it is reported instead of checked.
+    scoped = _SCOPE.search(lowered) is not None
+    unsupported: list[str] = []
     remainder = lowered
-    for match in _WORD_RANGE.finditer(lowered):
-        checks.append(
-            _word_check(
-                "between",
-                _number(match["low"]),
-                word_count,
-                upper=_number(match["high"]),
-            )
-        )
+    for match in (*_WORD_RANGE.finditer(lowered), *_WORD_BOUND.finditer(lowered)):
         remainder = remainder.replace(match.group(), " ")
-    for match in _WORD_BOUND.finditer(lowered):
-        checks.append(
-            _word_check(
-                _OPERATOR_NAMES[match["operator"]],
-                _number(match["bound"]),
-                word_count,
+        if _NEGATION.search(lowered[: match.start()]):
+            unsupported.append("negated_word_bound")
+        elif scoped:
+            unsupported.append("scoped_word_bound")
+        elif match.re is _WORD_RANGE:
+            checks.append(
+                _word_check(
+                    "between",
+                    _number(match["low"]),
+                    word_count,
+                    upper=_number(match["high"]),
+                )
             )
-        )
-        remainder = remainder.replace(match.group(), " ")
+        else:
+            checks.append(
+                _word_check(
+                    _OPERATOR_NAMES[match["operator"]],
+                    _number(match["bound"]),
+                    word_count,
+                )
+            )
 
-    unsupported = [
+    unsupported.extend(
         f"{unit}s"
         for unit in dict.fromkeys(
             match["unit"] for match in _COUNTED_UNIT.finditer(remainder)
         )
-    ]
+    )
     if _EXECUTION.search(lowered):
         unsupported.append("code_execution")
 
@@ -130,4 +142,4 @@ def check_criterion(criterion: str, output: str) -> CriterionCheck:
             "passed": all(check["passed"] for check in checks),
             "checks": checks,
         }
-    return CriterionCheck(exact=exact, unsupported=tuple(unsupported))
+    return CriterionCheck(exact=exact, unsupported=tuple(dict.fromkeys(unsupported)))

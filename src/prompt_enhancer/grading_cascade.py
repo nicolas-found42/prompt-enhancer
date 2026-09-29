@@ -244,10 +244,13 @@ def _strong_evidence(
         return None, "invalid_evidence_schema"
     if prompt_quote not in run.prompt or output_quote not in run.output:
         return None, "invalid_evidence_quote"
-    check = check_criterion(criterion, run.output)
-    if check.exact is not None and (verdict == "pass") is not check.exact["passed"]:
+    criterion_check = check_criterion(criterion, run.output)
+    if (
+        criterion_check.exact is not None
+        and (verdict == "pass") is not criterion_check.exact["passed"]
+    ):
         return None, "deterministic_evidence_conflict"
-    if check.unsupported:
+    if criterion_check.unsupported:
         return None, "deterministic_check_unavailable"
     return {
         "suggested_verdict": verdict,
@@ -530,7 +533,7 @@ def resolve_uncertain_grades(
                         "criterion": str(test.get("question", "")),
                         "prompt_spans": _source_spans(run.prompt),
                         "output_spans": _source_spans(run.output),
-                        "exact_check": state["exact_check"],
+                        "exact_check": criterion_check.exact,
                     }
                     strong_reservation = _reserve_cost(
                         evidence_state, rates, output_tokens=512
