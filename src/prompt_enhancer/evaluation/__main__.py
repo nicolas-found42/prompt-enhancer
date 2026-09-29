@@ -34,6 +34,9 @@ from .harness import (
     HarnessOptions,
 )
 from .order_bias import (
+    MAX_CASES as ORDER_BIAS_MAX_CASES,
+)
+from .order_bias import (
     MAX_QUESTION_EVALUATIONS as ORDER_BIAS_MAX_QUESTION_EVALUATIONS,
 )
 from .order_bias import (
@@ -179,8 +182,10 @@ def _run_order_bias(args: argparse.Namespace, *, out: TextIO) -> int:
         raise OrderBiasError("--order-bias --live requires --record for raw evidence")
     if args.live and (not math.isfinite(args.budget) or args.budget <= 0):
         raise OrderBiasError("--budget must be a finite positive amount")
-    if args.max_order_cases < 1 or args.max_order_cases > 100:
-        raise OrderBiasError("--max-order-cases must be between 1 and 100")
+    if args.max_order_cases < 1 or args.max_order_cases > ORDER_BIAS_MAX_CASES:
+        raise OrderBiasError(
+            f"--max-order-cases must be between 1 and {ORDER_BIAS_MAX_CASES}"
+        )
     if (
         args.max_order_question_evaluations < 1
         or args.max_order_question_evaluations > ORDER_BIAS_MAX_QUESTION_EVALUATIONS
@@ -367,8 +372,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--bootstrap-resamples", type=int, default=1000)
     parser.add_argument("--bootstrap-seed", type=int, default=1729)
-    parser.add_argument("--max-order-cases", type=int, default=100)
-    parser.add_argument("--max-order-question-evaluations", type=int, default=1000)
+    parser.add_argument("--max-order-cases", type=int, default=ORDER_BIAS_MAX_CASES)
+    parser.add_argument(
+        "--max-order-question-evaluations",
+        type=int,
+        default=ORDER_BIAS_MAX_QUESTION_EVALUATIONS,
+    )
     parser.add_argument(
         "--runs", type=int, default=3, help="maximum independent repeats"
     )

@@ -156,16 +156,20 @@ def compare_grading_results(
     unsafe_labels: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Compare matched cases without inferring accuracy from synthetic outputs."""
-    if unsafe_labels is not None and (
-        not isinstance(unsafe_labels, Mapping)
-        or not all(
-            isinstance(case_id, str)
-            and isinstance(test_ids, list)
-            and all(isinstance(test_id, str) for test_id in test_ids)
-            for case_id, test_ids in unsafe_labels.items()
-        )
-    ):
-        raise ValueError("unsafe labels must map case IDs to arrays of test IDs")
+    if unsafe_labels is not None:
+        if not isinstance(unsafe_labels, Mapping):
+            raise ValueError("unsafe labels must map case IDs to sequences of strings")
+        for case_id, labels in unsafe_labels.items():
+            if not isinstance(case_id, str):
+                raise ValueError("unsafe labels must use string case IDs")
+            if (
+                isinstance(labels, (str, bytes))
+                or not isinstance(labels, Sequence)
+                or any(not isinstance(label, str) for label in labels)
+            ):
+                raise ValueError(
+                    "unsafe labels must map case IDs to sequences of strings"
+                )
     before = _cases(before_input)
     after = _cases(after_input)
     if set(before) != set(after):
@@ -289,6 +293,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.unsafe_labels is not None
         else None
     )
+    if args.unsafe_labels is not None and labels is None:
+        raise ValueError("--unsafe-labels must contain a mapping, not JSON null")
     report = compare_grading_results(
         json.loads(args.before.read_text(encoding="utf-8")),
         json.loads(args.after.read_text(encoding="utf-8")),

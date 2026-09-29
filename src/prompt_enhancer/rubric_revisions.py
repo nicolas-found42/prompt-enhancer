@@ -1158,6 +1158,7 @@ class SQLiteRubricStore:
     def rollback_reword(self, version_id: str) -> RubricVersion:
         """Restore the immediate parent of the active automated version."""
         with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 "SELECT payload FROM rubric_versions WHERE version_id = ?",
                 (version_id,),

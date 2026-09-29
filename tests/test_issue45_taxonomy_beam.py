@@ -636,3 +636,43 @@ def test_matching_task_type_calibration_can_override_default_confidence() -> Non
         ]
         == 0.7
     )
+
+
+def test_selected_root_fills_beam_and_is_parent_fallback() -> None:
+    optimizer, gateway = _optimizer(
+        {
+            "task_type": {
+                "type": "choice",
+                "choice": "execution",
+                "probabilities": {
+                    "communication": 0.41,
+                    "investigation": 0.40,
+                    "execution": 0.18,
+                    "general": 0.005,
+                    "unknown": 0.005,
+                },
+                "confidence": 0.95,
+            },
+            "task_type:communication": None,
+            "task_type:execution": None,
+        },
+        rubric=replace(DEFAULT_RUBRIC, task_beam_width=2, task_branch_margin=0.05),
+    )
+
+    result = optimizer.optimize("Implement this behavior.", {"tier": "fast"})
+
+    leaf_batches = [
+        batch
+        for batch in gateway.decision_batches
+        if any(key.startswith("task_type:") for key in batch)
+    ]
+    assert len(leaf_batches) == 1
+    assert len(leaf_batches[0]) == 2
+    assert set(leaf_batches[0]) == {
+        "task_type:communication",
+        "task_type:execution",
+    }
+    diagnosis = result["report"]["diagnosis"]
+    assert diagnosis["task_type"] == "execution"
+    assert diagnosis["task_type_path"][0]["key"] == "execution"
+    assert diagnosis["task_type_fallback_reason"] == "leaf_missing_or_malformed"
