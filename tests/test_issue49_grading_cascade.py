@@ -668,7 +668,45 @@ def test_unimplemented_numeric_check_cannot_be_confirmed_by_prose() -> None:
     )
 
     assert result["original_kept"] is True
-    assert any(
-        item["reason"] == "deterministic_check_unavailable"
+    unavailable = [
+        item
         for item in result["report"]["grading_cascade"]["pairs"]
+        if item["reason"] == "deterministic_check_unavailable"
+    ]
+    assert unavailable
+    assert all(item["unsupported_checks"] == ["citations"] for item in unavailable)
+
+
+def test_word_bound_criterion_resolves_when_jev_confirms_and_the_count_agrees() -> None:
+    result, _ = _run_screened_round(
+        writer_instruction_version=7,
+        tier="standard",
+        generated_test_count=1,
+        criterion_text="Is the answer under 100 words?",
+        grade_pass_probability=0.5,
+        confirmation_answers=(0.95, 0.95, 0.05),
+    )
+
+    cascade = result["report"]["grading_cascade"]
+    assert cascade["confirmed_pass_count"] > 0
+    assert not any(
+        item["reason"] == "deterministic_check_unavailable" for item in cascade["pairs"]
+    )
+
+
+def test_word_bound_conflict_with_jev_confirmation_stays_unresolved() -> None:
+    result, _ = _run_screened_round(
+        writer_instruction_version=7,
+        tier="standard",
+        generated_test_count=1,
+        criterion_text="Is the answer under 1 words?",
+        grade_pass_probability=0.5,
+        confirmation_answers=(0.95, 0.95, 0.05),
+    )
+
+    cascade = result["report"]["grading_cascade"]
+    assert cascade["confirmed_pass_count"] == 0
+    assert any(
+        item.get("deterministic_conflict", {}).get("passed") is False
+        for item in cascade["pairs"]
     )
