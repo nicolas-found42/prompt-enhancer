@@ -1183,3 +1183,31 @@ def test_optimizer_keeps_noul_grading_as_one_direct_question() -> None:
     assert requests
     assert all(request["key"].endswith("_first") for request in requests)
     assert result["report"]["grading_policy"][0]["policy"] == "noul_direct"
+
+
+@pytest.mark.parametrize(
+    ("constant", "option"),
+    [
+        ("ORDER_BIAS_MAX_CASES", "--max-order-cases"),
+        (
+            "ORDER_BIAS_MAX_QUESTION_EVALUATIONS",
+            "--max-order-question-evaluations",
+        ),
+    ],
+)
+def test_order_bias_cli_reports_monkeypatched_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    constant: str,
+    option: str,
+) -> None:
+    cli = import_module("prompt_enhancer.evaluation.__main__")
+    monkeypatch.setattr(cli, constant, 7, raising=False)
+
+    assert (
+        evaluation_main(["order-bias", str(tmp_path / "manifest.json"), option, "8"])
+        == 2
+    )
+
+    assert "must be between 1 and 7" in capsys.readouterr().err
