@@ -87,6 +87,19 @@ function saveDraft(prompt: string) {
   }
 }
 
+/** Scroll a run's panel into view, moving focus to it when it holds the outcome. */
+function bringIntoView(panel: HTMLElement | null, focus: boolean) {
+  if (!panel) return;
+  if (focus) panel.focus({ preventScroll: true });
+  const reduceMotion = window.matchMedia?.(
+    "(prefers-reduced-motion: reduce)"
+  ).matches;
+  panel.scrollIntoView({
+    behavior: reduceMotion ? "auto" : "smooth",
+    block: "start",
+  });
+}
+
 function healthPreference(): string | null {
   try {
     return localStorage.getItem(HEALTH_ENABLED_KEY);
@@ -318,6 +331,8 @@ export default function App() {
   const composer = useRef<HTMLFormElement | null>(null);
   const draftWasSet = useRef(initialDraft.present);
   const busy = job !== null || saving;
+  // Scroll only for runs the user started here, never for a reattached one.
+  const followRun = useRef(false);
 
   const changeDraft = useCallback((next: string) => {
     draftWasSet.current = true;
@@ -554,6 +569,7 @@ export default function App() {
       rememberRun({ runId: started.run_id, prompt });
       store(LAST_RESULT_KEY, null);
       setResult(null);
+      followRun.current = true;
       setJob(started);
     } catch (caught) {
       if (onFailure) onFailure(caught);
@@ -645,6 +661,7 @@ export default function App() {
   }
 
   function openFromHistory(opened: OptimizeResult) {
+    followRun.current = false;
     setResult(opened);
     setCopied(false);
     setClarificationError(null);
@@ -662,6 +679,23 @@ export default function App() {
     panel.focus({ preventScroll: true });
     panel.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [historyNavigation, result?.status, viewingHistoryResult]);
+
+  const showingProgress = job !== null;
+  useEffect(() => {
+    if (!showingProgress || !followRun.current) return;
+    bringIntoView(document.getElementById("run-progress"), false);
+  }, [showingProgress]);
+
+  const outcomeId = !job && result ? result.run_id : null;
+  useEffect(() => {
+    if (!outcomeId || !followRun.current) return;
+    followRun.current = false;
+    bringIntoView(
+      document.getElementById("run-outcome") ??
+        document.getElementById("clarification-panel"),
+      true
+    );
+  }, [outcomeId]);
 
   const goIds = useMemo(
     () => new Set((catalog?.providers.go ?? []).map((model) => model.id)),
@@ -912,7 +946,12 @@ export default function App() {
       )}
 
       {!job && result?.status === "completed" && outcome ? (
-        <section className="result" aria-live="polite">
+        <section
+          id="run-outcome"
+          className="result"
+          aria-live="polite"
+          tabIndex={-1}
+        >
           <div className="result-heading">
             <div>
               <p className="eyebrow">RESULT</p>

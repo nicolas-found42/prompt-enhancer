@@ -21,9 +21,11 @@ export default function FailureCard({
 
   return (
     <section
+      id="run-outcome"
       className={`result failure${cancelled ? " cancelled" : ""}`}
       role="alert"
       aria-labelledby="failure-heading"
+      tabIndex={-1}
     >
       <p className="eyebrow">{cancelled ? "CANCELLED" : "RUN FAILED"}</p>
       <h2 id="failure-heading">{failure.headline}</h2>

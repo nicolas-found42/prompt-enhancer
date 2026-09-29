@@ -23,6 +23,7 @@ export default function RunProgress({ job, estimate, onCancel }: Props) {
 
   return (
     <section
+      id="run-progress"
       className="result progress"
       aria-live="polite"
       aria-labelledby="progress-heading"
