@@ -946,3 +946,15 @@ input:focus {
     width: 100%;
   }
 }
+
+.switch-confirmation {
+  background: #12261a;
+  border: 1px solid #238636;
+  border-radius: 10px;
+  margin-bottom: 20px;
+  padding: 14px 18px;
+}
+
+.switch-confirmation p {
+  margin: 0;
+}

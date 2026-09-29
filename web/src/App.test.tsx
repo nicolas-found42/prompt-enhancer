@@ -306,3 +306,87 @@ it("does not scroll when the page reattaches to a run after a reload", async () 
   expect(scrolled).not.toContain("run-progress");
   expect(scrolled).not.toContain("run-outcome");
 });
+
+function reattachedFailure(failure: Record<string, unknown>): void {
+  const result: OptimizeResult = {
+    status: "failed",
+    run_id: "failed-run",
+    original_prompt: "Write a note to my neighbour.",
+    report: { failure },
+    cost: { total: 0 },
+    timing: { total_ms: 1 },
+  };
+  const job: Job = {
+    run_id: "failed-run",
+    kind: "optimize",
+    prompt: "Write a note to my neighbour.",
+    state: "done",
+    stage: null,
+    round: {},
+    stages_seen: [],
+    elapsed_ms: 1,
+    cancel_requested: false,
+    result,
+  };
+  vi.mocked(getActiveJobs).mockResolvedValue([job]);
+  vi.mocked(getJob).mockResolvedValue(job);
+}
+
+it("confirms which models were switched to and clears the refusal it fixes", async () => {
+  reattachedFailure({
+    kind: "provider_refused",
+    headline: "OpenCode Go refused the request",
+    hint: "Choose OpenRouter models for the writer and strong check in Model choices, or renew the subscription.",
+    message: "",
+    provider: "go",
+  });
+
+  render(<App />);
+
+  const banner = await warningBanner();
+  expect(
+    await screen.findByRole("heading", {
+      name: "OpenCode Go refused the request",
+    })
+  ).toBeVisible();
+
+  fireEvent.click(
+    within(banner).getByRole("button", { name: "Try different models" })
+  );
+
+  const confirmation = await screen.findByText(/Switched to different models/);
+  expect(confirmation).toHaveTextContent("router-writer");
+  expect(confirmation).toHaveTextContent("router-strong");
+  expect(confirmation).toHaveTextContent("Optimize prompt");
+  expect(confirmation.closest("[role=status]")).not.toBeNull();
+  expect(
+    screen.queryByRole("heading", { name: "OpenCode Go refused the request" })
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Your prompt")).toHaveValue(
+    "Write a note to my neighbour."
+  );
+});
+
+it("keeps an unrelated failure visible after switching models", async () => {
+  reattachedFailure({
+    kind: "internal",
+    headline: "The run stopped before finishing",
+    hint: "Try again.",
+    message: "boom",
+  });
+
+  render(<App />);
+
+  const banner = await warningBanner();
+  await screen.findByRole("heading", {
+    name: "The run stopped before finishing",
+  });
+  fireEvent.click(
+    within(banner).getByRole("button", { name: "Try different models" })
+  );
+
+  await screen.findByText(/Switched to different models/);
+  expect(
+    screen.getByRole("heading", { name: "The run stopped before finishing" })
+  ).toBeVisible();
+});

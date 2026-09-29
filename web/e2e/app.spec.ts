@@ -1135,6 +1135,9 @@ test("a first run can use the provider fallback without opening model choices", 
   await expect(banner.getByText(/strong check \(go-strong\)/)).toBeVisible();
   await page.getByRole("button", { name: "Try different models" }).click();
   await expect(banner).toHaveCount(0);
+  await expect(page.getByRole("status")).toContainText(
+    "Switched to different models (writer or-writer, strong check or-strong)"
+  );
   await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
   await expect(page.locator("#writer-model")).toBeHidden();
   await page.getByLabel("Your prompt").fill("Write a birthday note.");
