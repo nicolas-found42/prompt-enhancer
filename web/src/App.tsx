@@ -47,6 +47,7 @@ import {
   confirmedGaps,
   estimateText,
   humanize,
+  failureOf,
   outcomeOf,
   possibleGapHints,
   record,
@@ -323,6 +324,10 @@ export default function App() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [modelSwitch, setModelSwitch] = useState<{
+    writer: string;
+    strong: string;
+  } | null>(null);
   const [providers, setProviders] = useState<ProviderReport | null>(null);
   const [estimates, setEstimates] = useState<
     Partial<Record<Tier, TierEstimate>>
@@ -564,6 +569,7 @@ export default function App() {
     setClarificationError(null);
     setCopied(false);
     setViewingHistoryResult(false);
+    setModelSwitch(null);
     try {
       const started = await start();
       rememberRun({ runId: started.run_id, prompt });
@@ -733,7 +739,7 @@ export default function App() {
     const openRouterIds = new Set(
       (catalog?.providers.openrouter ?? []).map((model) => model.id)
     );
-    setSelection({
+    const next = {
       writer: goIds.has(selection.writer)
         ? providers.fallback.writer
         : selection.writer,
@@ -743,7 +749,17 @@ export default function App() {
       weak: selection.weak.filter(
         (id) => !goIds.has(id) || openRouterIds.has(id)
       ),
-    });
+    };
+    setSelection(next);
+    setModelSwitch({ writer: next.writer, strong: next.strong });
+    // A refusal from the models just replaced is out of date; other failures stay.
+    if (
+      !job &&
+      result?.status === "failed" &&
+      failureOf(result).provider === "go"
+    ) {
+      setResult(null);
+    }
   }
 
   const questions: ClarificationQuestion[] =
@@ -780,6 +796,16 @@ export default function App() {
           result you can copy.
         </p>
       </header>
+
+      {modelSwitch && (
+        <div className="switch-confirmation" role="status">
+          <p>
+            Switched to different models (writer {modelSwitch.writer}, strong
+            check {modelSwitch.strong}). Your prompt is unchanged; press{" "}
+            <strong>Optimize prompt</strong> to run it again.
+          </p>
+        </div>
+      )}
 
       {goUnavailable && goRoles.length > 0 && (
         <div className="banner" role="status">
