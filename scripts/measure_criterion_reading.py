@@ -648,7 +648,8 @@ def _print_distribution(
     negations = [
         reading.noul["negated"]
         for case in cases
-        if (reading := readings[case["id"]]) is not None
+        if case["expected"] is not None
+        and (reading := readings[case["id"]]) is not None
         and reading.kind == "valid_json"
     ]
     negations.sort()

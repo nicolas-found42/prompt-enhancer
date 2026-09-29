@@ -530,21 +530,34 @@ def test_report_includes_negation_distribution_only_for_valid_json_readings(
         )
 
     recording = tmp_path / "recording.json"
+    rows = [
+        {"case_id": case_id, "reply": reply(kind, negated)}
+        for case_id, kind, negated in (
+            ("json-false", "valid_json", False),
+            ("json-true", "valid_json", True),
+            ("json-other", "valid_json", False),
+            ("word-count", "word_count", True),
+        )
+    ]
+    # An unparseable reply yields no Reading, so json-unusable exercises the
+    # usable-readings guard in the negation distribution: four JSON rows are
+    # recorded but only three checkable usable readings are counted.
+    rows.append({"case_id": "json-unusable", "reply": "not-json"})
+    cases.append(
+        {
+            "id": "json-unusable",
+            "split": "development",
+            "criterion": "The response is not valid JSON",
+            "expected": {"kind": "valid_json", "negated": False},
+        }
+    )
     recording.write_text(
         json.dumps(
             {
                 "reader": "cheap",
                 "model": measurement.CHEAP_MODEL,
                 "questions_digest": measurement.questions_digest(),
-                "rows": [
-                    {"case_id": case_id, "reply": reply(kind, negated)}
-                    for case_id, kind, negated in (
-                        ("json-false", "valid_json", False),
-                        ("json-true", "valid_json", True),
-                        ("json-other", "valid_json", False),
-                        ("word-count", "word_count", True),
-                    )
-                ],
+                "rows": rows,
             }
         ),
         encoding="utf-8",
