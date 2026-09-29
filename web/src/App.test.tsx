@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 import {
   fireEvent,
   render,
@@ -10,10 +11,14 @@ import {
   getActiveJobs,
   getCatalog,
   getEstimates,
+  getJob,
   getProviders,
   getSettings,
+  startOptimize,
+  type Job,
   type ModelCatalog,
   type ModelSettings,
+  type OptimizeResult,
   type ProviderReport,
 } from "./api";
 import App from "./App";
@@ -25,8 +30,10 @@ vi.mock("./api", async (importOriginal) => {
     getActiveJobs: vi.fn(),
     getCatalog: vi.fn(),
     getEstimates: vi.fn(),
+    getJob: vi.fn(),
     getProviders: vi.fn(),
     getSettings: vi.fn(),
+    startOptimize: vi.fn(),
   };
 });
 
@@ -173,4 +180,129 @@ it("does not offer a fallback action when no fallback models are configured", as
     within(banner).queryByRole("button", { name: "Try different models" })
   ).not.toBeInTheDocument();
   expect(banner).not.toHaveTextContent(/working models|available models/);
+});
+
+const runningJob: Job = {
+  run_id: "run-1",
+  kind: "optimize",
+  prompt: "Write a note to my neighbour.",
+  state: "running",
+  stage: "diagnosing",
+  round: {},
+  stages_seen: [],
+  elapsed_ms: 0,
+  cancel_requested: false,
+  result: null,
+};
+
+function finishedJob(result: OptimizeResult): Job {
+  return { ...runningJob, state: "done", stage: null, result };
+}
+
+function trackScrolling() {
+  const scrolled: string[] = [];
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(function (this: Element) {
+      scrolled.push(this.id || this.tagName.toLowerCase());
+    }),
+  });
+  return scrolled;
+}
+
+async function startRun() {
+  vi.mocked(getProviders).mockResolvedValue({
+    providers: { go: { status: "ok" } },
+    fallback: providers.fallback,
+  });
+  const user = userEvent.setup();
+  render(<App />);
+  await user.type(
+    await screen.findByLabelText("Your prompt"),
+    "Write a note to my neighbour."
+  );
+  await user.click(screen.getByRole("button", { name: "Optimize prompt" }));
+}
+
+it("brings a new run's progress into view and then its finished result", async () => {
+  const scrolled = trackScrolling();
+  vi.mocked(startOptimize).mockResolvedValue(runningJob);
+  vi.mocked(getJob).mockResolvedValue(
+    finishedJob({
+      status: "completed",
+      run_id: "run-1",
+      original_prompt: "Write a note to my neighbour.",
+      final_prompt: "Write a note to my neighbour.",
+      original_kept: true,
+      report: {},
+      cost: { total: 0 },
+      timing: { total_ms: 1 },
+    })
+  );
+
+  await startRun();
+
+  await waitFor(() => expect(scrolled).toContain("run-progress"));
+  await waitFor(() => expect(scrolled).toContain("run-outcome"), {
+    timeout: 3000,
+  });
+  expect(scrolled.indexOf("run-progress")).toBeLessThan(
+    scrolled.indexOf("run-outcome")
+  );
+  expect(document.activeElement).toHaveAttribute("id", "run-outcome");
+});
+
+it("brings a failed run's error card into view", async () => {
+  const scrolled = trackScrolling();
+  vi.mocked(startOptimize).mockResolvedValue(runningJob);
+  vi.mocked(getJob).mockResolvedValue(
+    finishedJob({
+      status: "failed",
+      run_id: "run-1",
+      original_prompt: "Write a note to my neighbour.",
+      report: {
+        failure: {
+          kind: "provider_error",
+          headline: "The provider refused the request",
+          hint: "Try again later.",
+          message: "",
+        },
+      },
+      cost: { total: 0 },
+      timing: { total_ms: 1 },
+    })
+  );
+
+  await startRun();
+
+  await waitFor(() => expect(scrolled).toContain("run-outcome"), {
+    timeout: 3000,
+  });
+  expect(
+    within(document.getElementById("run-outcome")!).getByRole("heading", {
+      name: "The provider refused the request",
+    })
+  ).toBeVisible();
+});
+
+it("does not scroll when the page reattaches to a run after a reload", async () => {
+  const scrolled = trackScrolling();
+  vi.mocked(getActiveJobs).mockResolvedValue([
+    finishedJob({
+      status: "completed",
+      run_id: "run-1",
+      original_prompt: "Write a note to my neighbour.",
+      final_prompt: "Write a note to my neighbour.",
+      original_kept: true,
+      report: {},
+      cost: { total: 0 },
+      timing: { total_ms: 1 },
+    }),
+  ]);
+
+  render(<App />);
+
+  await screen.findByText("RESULT");
+  expect(scrolled).not.toContain("run-progress");
+  expect(scrolled).not.toContain("run-outcome");
 });
