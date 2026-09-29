@@ -154,29 +154,32 @@ def test_comparison_cli_accepts_json_label_lists(tmp_path: Path) -> None:
     after = tmp_path / "after.json"
     labels = tmp_path / "labels.json"
     output = tmp_path / "report.json"
-    for path in (before, after):
-        path.write_text(
-            json.dumps(
+
+    def _case_payload(accepted: bool) -> dict:
+        return {
+            "cases": [
                 {
-                    "cases": [
-                        {
-                            "case_id": "case-0",
-                            "result": {
-                                "status": "completed",
-                                "report": {
-                                    "test_screening": {
-                                        "screening_checks": [
-                                            {"test_id": "t0", "accepted": True}
-                                        ]
-                                    }
-                                },
-                                "cost": {},
-                            },
-                        }
-                    ]
+                    "case_id": "case-0",
+                    "result": {
+                        "status": "completed",
+                        "report": {
+                            "test_screening": {
+                                "screening_checks": [
+                                    {"test_id": "t0", "accepted": accepted}
+                                ]
+                            }
+                        },
+                        "cost": {},
+                    },
                 }
-            )
-        )
+            ]
+        }
+
+    # The false-positive rate is computed from the after record: only `after`
+    # accepts the labeled t0, so sampling the before record must fail the rate
+    # assertion below.
+    before.write_text(json.dumps(_case_payload(accepted=False)))
+    after.write_text(json.dumps(_case_payload(accepted=True)))
     labels.write_text(json.dumps({"case-0": ["t0"]}))
 
     assert (
