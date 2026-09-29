@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from . import jev_questions
+from .criterion_checks import check_criterion
 from .diagnosis import split_sentences
 from .evaluation.calibration import DecisionPolicy, runtime_question_identity
 from .gateway import Gateway, ProviderError, completion_text, writer_messages
@@ -77,44 +77,6 @@ def _source_spans(text: str) -> list[dict[str, Any]]:
         }
         for sentence in split_sentences(text)
     ]
-
-
-def _exact_check(criterion: str, output: str) -> dict[str, Any] | None:
-    lowered = criterion.casefold()
-    if "valid json" in lowered:
-        try:
-            json.loads(output)
-        except json.JSONDecodeError:
-            passed = False
-        else:
-            passed = True
-        return {"kind": "valid_json", "passed": passed}
-    word_limit = re.search(r"\bat (least|most) (\d+) words\b", lowered)
-    if word_limit is not None:
-        bound = int(word_limit.group(2))
-        count = len(re.findall(r"\b\w+\b", output))
-        return {
-            "kind": "word_count",
-            "operator": word_limit.group(1),
-            "bound": bound,
-            "observed": count,
-            "passed": count >= bound
-            if word_limit.group(1) == "least"
-            else count <= bound,
-        }
-    return None
-
-
-def _requires_exact_check(criterion: str) -> bool:
-    lowered = criterion.casefold()
-    numeric_constraint = re.search(
-        r"\b\d+\s+(?:citations?|items?|words?|sentences?|characters?|steps?|examples?|sources?)\b",
-        lowered,
-    )
-    return numeric_constraint is not None or any(
-        word in lowered
-        for word in ("execute", "compile", "syntax", "unit test", "run code")
-    )
 
 
 def _verdict(
@@ -282,10 +244,13 @@ def _strong_evidence(
         return None, "invalid_evidence_schema"
     if prompt_quote not in run.prompt or output_quote not in run.output:
         return None, "invalid_evidence_quote"
-    exact = _exact_check(criterion, run.output)
-    if exact is not None and (verdict == "pass") is not exact["passed"]:
+    criterion_check = check_criterion(criterion, run.output)
+    if (
+        criterion_check.exact is not None
+        and (verdict == "pass") is not criterion_check.exact["passed"]
+    ):
         return None, "deterministic_evidence_conflict"
-    if exact is None and _requires_exact_check(criterion):
+    if criterion_check.unsupported:
         return None, "deterministic_check_unavailable"
     return {
         "suggested_verdict": verdict,
@@ -436,13 +401,14 @@ def resolve_uncertain_grades(
             "status": "unresolved",
             "reason": "confirmation_unavailable",
         }
+        criterion_check = check_criterion(str(test.get("question", "")), run.output)
         state = {
             "prompt": run.prompt,
             "output": run.output,
             "criterion": test.get("question", ""),
             "prompt_spans": _source_spans(run.prompt),
             "output_spans": _source_spans(run.output),
-            "exact_check": _exact_check(str(test.get("question", "")), run.output),
+            "exact_check": criterion_check.exact,
         }
         judge_rates = (
             _catalog_rates(gateway, judge_model)
@@ -513,13 +479,13 @@ def resolve_uncertain_grades(
                         record["reason"] = "confirmation_calibration_not_gate_capable"
                     else:
                         status = _verdict(probabilities, cutoffs)
-                        exact = state["exact_check"]
-                        deterministic_unavailable = (
-                            exact is None
-                            and _requires_exact_check(str(test.get("question", "")))
-                        )
+                        exact = criterion_check.exact
+                        deterministic_unavailable = bool(criterion_check.unsupported)
                         if deterministic_unavailable:
                             status = "unresolved"
+                            record["unsupported_checks"] = list(
+                                criterion_check.unsupported
+                            )
                         if (
                             exact is not None
                             and status != "unresolved"
@@ -567,7 +533,7 @@ def resolve_uncertain_grades(
                         "criterion": str(test.get("question", "")),
                         "prompt_spans": _source_spans(run.prompt),
                         "output_spans": _source_spans(run.output),
-                        "exact_check": state["exact_check"],
+                        "exact_check": criterion_check.exact,
                     }
                     strong_reservation = _reserve_cost(
                         evidence_state, rates, output_tokens=512
