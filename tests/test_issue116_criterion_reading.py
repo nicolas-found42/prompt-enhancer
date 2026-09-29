@@ -509,6 +509,12 @@ def test_report_includes_negation_distribution_only_for_valid_json_readings(
                 "upper_bound": None,
             },
         },
+        {
+            "id": "json-unusable",
+            "split": "development",
+            "criterion": "The response is not valid JSON",
+            "expected": {"kind": "valid_json", "negated": False},
+        },
     ]
     fixture = tmp_path / "fixture.json"
     fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
@@ -540,17 +546,9 @@ def test_report_includes_negation_distribution_only_for_valid_json_readings(
         )
     ]
     # An unparseable reply yields no Reading, so json-unusable exercises the
-    # usable-readings guard in the negation distribution: four JSON rows are
-    # recorded but only three checkable usable readings are counted.
+    # usable-readings guard in the negation distribution: five JSON rows are
+    # recorded but only three usable checkable readings are counted.
     rows.append({"case_id": "json-unusable", "reply": "not-json"})
-    cases.append(
-        {
-            "id": "json-unusable",
-            "split": "development",
-            "criterion": "The response is not valid JSON",
-            "expected": {"kind": "valid_json", "negated": False},
-        }
-    )
     recording.write_text(
         json.dumps(
             {
@@ -566,6 +564,7 @@ def test_report_includes_negation_distribution_only_for_valid_json_readings(
     measurement.report(recording, show_errors=False)
     output = capsys.readouterr().out
 
+    assert "unusable answers: json-unusable" in output
     assert "negated: n=3 median=0.000 p90=1.000 max=1.000" in output
 
     cases[:] = [cases[-1]]
