@@ -474,6 +474,106 @@ def test_report_scores_recording_with_truncation_and_fixture_splits(
     assert "| development | per-judgment cutoffs partial >= 0.2" in output
 
 
+def test_report_includes_negation_distribution_only_for_valid_json_readings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cases = [
+        {
+            "id": "json-false",
+            "split": "development",
+            "criterion": "The output must be valid JSON",
+            "expected": {"kind": "valid_json", "negated": False},
+        },
+        {
+            "id": "json-true",
+            "split": "development",
+            "criterion": "The output must not be valid JSON",
+            "expected": {"kind": "valid_json", "negated": True},
+        },
+        {
+            "id": "json-other",
+            "split": "development",
+            "criterion": "The output should be parseable as JSON",
+            "expected": {"kind": "valid_json", "negated": False},
+        },
+        {
+            "id": "word-count",
+            "split": "development",
+            "criterion": "The answer is under 100 words",
+            "expected": {
+                "kind": "word_count",
+                "operator": "under",
+                "bound": 100,
+                "upper_bound": None,
+            },
+        },
+    ]
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+
+    def reply(kind: str, negated: bool) -> str:
+        return json.dumps(
+            {
+                "kind": kind,
+                "op": "none" if kind == "valid_json" else "under",
+                "bound": "none" if kind == "valid_json" else "100",
+                "low": "none",
+                "high": "none",
+                "partial": False,
+                "conditional": False,
+                "negated": negated,
+                "approximate": False,
+            }
+        )
+
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": measurement.CHEAP_MODEL,
+                "questions_digest": measurement.questions_digest(),
+                "rows": [
+                    {"case_id": case_id, "reply": reply(kind, negated)}
+                    for case_id, kind, negated in (
+                        ("json-false", "valid_json", False),
+                        ("json-true", "valid_json", True),
+                        ("json-other", "valid_json", False),
+                        ("word-count", "word_count", True),
+                    )
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(recording, show_errors=False)
+    output = capsys.readouterr().out
+
+    assert "negated: n=3 median=0.000 p90=1.000 max=1.000" in output
+
+    cases[:] = [cases[-1]]
+    fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": measurement.CHEAP_MODEL,
+                "questions_digest": measurement.questions_digest(),
+                "rows": [{"case_id": "word-count", "reply": reply("word_count", True)}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    measurement.report(recording, show_errors=False)
+    output = capsys.readouterr().out
+
+    assert "negated: n=0 (no usable valid_json readings)" in output
+
+
 def test_unknown_split_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown split"):
         load_cases("not-in-fixture")

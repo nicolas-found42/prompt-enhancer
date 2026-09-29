@@ -645,6 +645,23 @@ def _print_distribution(
             f"median={statistics.median(probabilities):.3f} "
             f"p90={p90:.3f} max={max(probabilities):.3f}"
         )
+    negations = [
+        reading.noul["negated"]
+        for case in cases
+        if (reading := readings[case["id"]]) is not None
+        and reading.kind == "valid_json"
+    ]
+    negations.sort()
+    if not negations:
+        print("  negated: n=0 (no usable valid_json readings)")
+    else:
+        p90 = negations[math.ceil(0.9 * len(negations)) - 1]
+        print(
+            f"  negated: n={len(negations)} "
+            f"median={statistics.median(negations):.3f} "
+            f"p90={p90:.3f} max={max(negations):.3f}"
+        )
+
     print()
 
 
