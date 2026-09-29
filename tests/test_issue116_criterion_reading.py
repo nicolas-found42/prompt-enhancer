@@ -191,7 +191,13 @@ def test_malformed_chat_replies_are_unusable_rows(reply: str) -> None:
 
 @pytest.mark.parametrize(
     ("field", "value"),
-    [("kind", "bogus"), ("op", "bogus"), ("bound", "bogus")],
+    [
+        ("kind", "bogus"),
+        ("op", "bogus"),
+        ("bound", "bogus"),
+        ("low", "bogus"),
+        ("high", "bogus"),
+    ],
 )
 def test_chat_replies_with_out_of_schema_choices_are_unusable_rows(
     field: str, value: str
@@ -512,8 +518,14 @@ def test_nonconforming_chat_fields_are_unusable_rows(invalid_field: str) -> None
     else:
         data[invalid_field] = True
 
+    # Candidates keep bound/low/high in-schema so the partial and unexpected
+    # variants reach the field validation they target instead of failing on
+    # the bound enum with empty candidates.
     assert (
-        parse_recorded_reading({"reader": "cheap"}, {"reply": json.dumps(data)}) is None
+        parse_recorded_reading(
+            {"reader": "cheap"}, {"reply": json.dumps(data)}, ["100"]
+        )
+        is None
     )
 
 
