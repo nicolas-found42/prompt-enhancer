@@ -189,6 +189,32 @@ def test_malformed_chat_replies_are_unusable_rows(reply: str) -> None:
     assert parse_recorded_reading({"reader": "cheap"}, {"reply": reply}) is None
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("kind", "bogus"), ("op", "bogus"), ("bound", "bogus")],
+)
+def test_chat_replies_with_out_of_schema_choices_are_unusable_rows(
+    field: str, value: str
+) -> None:
+    data = {
+        "kind": "word_count",
+        "op": "under",
+        "bound": "100",
+        "low": "none",
+        "high": "none",
+        "partial": False,
+        "conditional": False,
+        "negated": False,
+        "approximate": False,
+    }
+    data[field] = value
+
+    row = {"reply": json.dumps(data)}
+    assert parse_recorded_reading({"reader": "cheap"}, row, ["100"]) is None
+    with pytest.raises(ValueError):
+        measurement.read_chat(row["reply"], ["100"])
+
+
 def test_read_jev_rejects_an_unexpected_decision_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -323,7 +349,7 @@ def test_read_chat_parses_a_well_formed_reply() -> None:
         }
     )
 
-    reading = measurement.read_chat(reply)
+    reading = measurement.read_chat(reply, ["100"])
 
     assert reading == _reading(
         noul={

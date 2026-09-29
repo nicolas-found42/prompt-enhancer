@@ -254,11 +254,12 @@ def read_jev(answers: Mapping[str, Any]) -> Reading:
     return Reading(noul=nouls, **choices)
 
 
-def read_chat(reply: str) -> Reading:
-    """A chat model answers each yes/no question with a hard 0 or 1."""
+def read_chat(reply: str, candidates: Sequence[str]) -> Reading:
+    """Read a chat reply whose choices must match its requested schema."""
     data = json.loads(reply)
     if not isinstance(data, Mapping):
         raise TypeError("chat reply must be a JSON object")
+    schema = chat_schema(candidates)["json_schema"]["schema"]["properties"]
     choice_keys = ("kind", "op", "bound", "low", "high")
     if set(data) != {*choice_keys, *NOUL_KEYS}:
         raise ValueError("chat reply fields do not match the reading schema")
@@ -267,6 +268,8 @@ def read_chat(reply: str) -> Reading:
         value = data[key]
         if not isinstance(value, str):
             raise TypeError(f"{key} must be a string")
+        if value not in schema[key]["enum"]:
+            raise ValueError(f"{key} is not an allowed choice")
         choices[key] = value
     nouls: dict[str, float] = {}
     for key in NOUL_KEYS:
@@ -487,11 +490,15 @@ def record(
         print(f"{case['id']} {len(saved['rows'])}/{len(cases)}", flush=True)
 
 
-def _reading(recording: Mapping[str, Any], row: Mapping[str, Any]) -> Reading | None:
+def _reading(
+    recording: Mapping[str, Any],
+    row: Mapping[str, Any],
+    candidates: Sequence[str] = (),
+) -> Reading | None:
     try:
         if recording["reader"] == "jev":
             return read_jev(row["answers"])
-        return read_chat(row["reply"])
+        return read_chat(row["reply"], candidates)
     except (ValueError, KeyError, TypeError):
         return None
 
@@ -531,7 +538,14 @@ def report(
         f"{tokens / max(len(cases), 1):.0f} tokens and ${cost / max(len(cases), 1):.6f} "
         f"each, ${cost:.4f} total\n"
     )
-    readings = {case["id"]: _reading(recording, rows[case["id"]]) for case in cases}
+    readings = {
+        case["id"]: _reading(
+            recording,
+            rows[case["id"]],
+            list(number_candidates(case["criterion"])),
+        )
+        for case in cases
+    }
     unread = [case["id"] for case in cases if readings[case["id"]] is None]
     if unread:
         print(f"unusable answers: {', '.join(unread)}\n")
@@ -651,7 +665,11 @@ def _print_errors(
     for case in cases:
         kind = outcome(checks[case["id"]], case["expected"])
         if kind in {"missed", "wrong_confident"}:
-            reading = _reading(recording, rows[case["id"]])
+            reading = _reading(
+                recording,
+                rows[case["id"]],
+                list(number_candidates(case["criterion"])),
+            )
             print(
                 f"  {kind}: {case['criterion']!r}\n    expected {case['expected']}"
                 f"\n    got      {checks[case['id']]}\n    read     {reading}"
