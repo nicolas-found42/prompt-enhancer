@@ -157,6 +157,52 @@ def test_close_branch_split_batches_both_paths_and_can_choose_second_branch() ->
     assert len(diagnosis["taxonomy_evidence"]["explored_paths"]) == 2
 
 
+@pytest.mark.parametrize(
+    ("leaf_confidence", "expected_task"),
+    [(0.95, "research"), (0.5, "investigation")],
+)
+def test_selected_root_branch_is_explored_even_when_another_has_more_probability(
+    leaf_confidence: float, expected_task: str
+) -> None:
+    rubric = replace(DEFAULT_RUBRIC, task_beam_width=1, task_branch_margin=0.01)
+    optimizer, gateway = _optimizer(
+        {
+            "task_type": {
+                "type": "choice",
+                "choice": "investigation",
+                "probabilities": {
+                    "communication": 0.6,
+                    "investigation": 0.3,
+                    "execution": 0.0,
+                    "general": 0.05,
+                    "unknown": 0.05,
+                },
+                "confidence": 0.95,
+            },
+            "task_type:investigation": {
+                "type": "choice",
+                "choice": "research",
+                "probabilities": {"research": 0.9, "analysis": 0.1, "unknown": 0.0},
+                "confidence": leaf_confidence,
+            },
+        },
+        rubric=rubric,
+    )
+
+    result = optimizer.optimize("Investigate this topic.", {"tier": "fast"})
+    diagnosis = result["report"]["diagnosis"]
+    leaf_requests = {
+        key
+        for batch in gateway.decision_batches
+        for key in batch
+        if key.startswith("task_type:")
+    }
+
+    assert leaf_requests == {"task_type:investigation"}
+    assert diagnosis["task_type"] == expected_task
+    assert diagnosis["task_type_path"][0]["key"] == "investigation"
+
+
 def _execution_decisions(*, leaf_confidence: float) -> dict[str, Any]:
     return {
         "task_type": {
@@ -590,3 +636,43 @@ def test_matching_task_type_calibration_can_override_default_confidence() -> Non
         ]
         == 0.7
     )
+
+
+def test_selected_root_fills_beam_and_is_parent_fallback() -> None:
+    optimizer, gateway = _optimizer(
+        {
+            "task_type": {
+                "type": "choice",
+                "choice": "execution",
+                "probabilities": {
+                    "communication": 0.41,
+                    "investigation": 0.40,
+                    "execution": 0.18,
+                    "general": 0.005,
+                    "unknown": 0.005,
+                },
+                "confidence": 0.95,
+            },
+            "task_type:communication": None,
+            "task_type:execution": None,
+        },
+        rubric=replace(DEFAULT_RUBRIC, task_beam_width=2, task_branch_margin=0.05),
+    )
+
+    result = optimizer.optimize("Implement this behavior.", {"tier": "fast"})
+
+    leaf_batches = [
+        batch
+        for batch in gateway.decision_batches
+        if any(key.startswith("task_type:") for key in batch)
+    ]
+    assert len(leaf_batches) == 1
+    assert len(leaf_batches[0]) == 2
+    assert set(leaf_batches[0]) == {
+        "task_type:communication",
+        "task_type:execution",
+    }
+    diagnosis = result["report"]["diagnosis"]
+    assert diagnosis["task_type"] == "execution"
+    assert diagnosis["task_type_path"][0]["key"] == "execution"
+    assert diagnosis["task_type_fallback_reason"] == "leaf_missing_or_malformed"

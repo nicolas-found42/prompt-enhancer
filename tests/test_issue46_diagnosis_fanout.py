@@ -355,6 +355,9 @@ def test_over_character_cap_returns_incomplete_without_inference() -> None:
     assert gateway.batches == []
     assert result["original_kept"] is True
     assert result["report"]["diagnosis"]["request_evidence"]["complete"] is False
+    assert result["report"]["diagnosis"]["sentence_protocol_version"] == (
+        diagnosis_module.SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+    )
 
 
 def test_provider_failure_keeps_original_with_incomplete_diagnosis() -> None:

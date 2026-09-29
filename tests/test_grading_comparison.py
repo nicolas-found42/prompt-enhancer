@@ -71,6 +71,12 @@ def test_comparison_requires_matched_case_ids() -> None:
         )
 
 
+@pytest.mark.parametrize("unsafe_labels", [["t0"], {"same": "t0"}, {"same": [1]}])
+def test_comparison_rejects_invalid_unsafe_label_shape(unsafe_labels) -> None:
+    with pytest.raises(ValueError, match="unsafe labels must map"):
+        compare_grading_results([], [], unsafe_labels=unsafe_labels)
+
+
 def test_comparison_cli_writes_unavailable_evidence_honestly(tmp_path: Path) -> None:
     before = tmp_path / "before.json"
     after = tmp_path / "after.json"
@@ -79,8 +85,121 @@ def test_comparison_cli_writes_unavailable_evidence_honestly(tmp_path: Path) -> 
         path.write_text(json.dumps({"status": "completed", "report": {}, "cost": {}}))
 
     assert main([str(before), str(after), "--output", str(output)]) == 0
-
     report = json.loads(output.read_text())
     assert report["matched_cases"] == 1
     assert report["cases"][0]["grading_requests"]["delta"] is None
     assert report["screen_false_positive_rate"]["rate"] is None
+
+
+def test_unsafe_labels_accept_list_and_tuple_values() -> None:
+    before = [{"case_id": "same", "result": {}}]
+    after = [{"case_id": "same", "result": {}}]
+
+    for labels in ({"same": ["t0"]}, {"same": ("t0",)}):
+        report = compare_grading_results(before, after, unsafe_labels=labels)
+
+        assert report["cases"][0]["screen_false_positives"] == 0
+
+
+@pytest.mark.parametrize(
+    "labels", [{"same": "t0"}, {"same": b"t0"}, {"same": ["t0", 1]}]
+)
+def test_unsafe_labels_reject_invalid_values(labels: object) -> None:
+    with pytest.raises(ValueError, match="unsafe labels"):
+        compare_grading_results(
+            [{"case_id": "same", "result": {}}],
+            [{"case_id": "same", "result": {}}],
+            unsafe_labels=labels,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("labels", [["t0"], "t0", b"t0"])
+def test_unsafe_labels_reject_invalid_top_level_values(labels: object) -> None:
+    with pytest.raises(ValueError, match="unsafe labels"):
+        compare_grading_results(
+            [{"case_id": "same", "result": {}}],
+            [{"case_id": "same", "result": {}}],
+            unsafe_labels=labels,  # type: ignore[arg-type]
+        )
+
+
+def test_comparison_cli_rejects_explicit_null_labels_before_writing(
+    tmp_path: Path,
+) -> None:
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    labels = tmp_path / "labels.json"
+    output = tmp_path / "report.json"
+    for path in (before, after):
+        path.write_text(json.dumps({"status": "completed", "report": {}, "cost": {}}))
+    labels.write_text("null")
+
+    with pytest.raises(ValueError, match="JSON null"):
+        main(
+            [
+                str(before),
+                str(after),
+                "--unsafe-labels",
+                str(labels),
+                "--output",
+                str(output),
+            ]
+        )
+
+    assert not output.exists()
+
+
+def test_comparison_cli_accepts_json_label_lists(tmp_path: Path) -> None:
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    labels = tmp_path / "labels.json"
+    output = tmp_path / "report.json"
+
+    def _case_payload(accepted: bool) -> dict:
+        return {
+            "cases": [
+                {
+                    "case_id": "case-0",
+                    "result": {
+                        "status": "completed",
+                        "report": {
+                            "test_screening": {
+                                "screening_checks": [
+                                    {"test_id": "t0", "accepted": accepted}
+                                ]
+                            }
+                        },
+                        "cost": {},
+                    },
+                }
+            ]
+        }
+
+    # The false-positive rate is computed from the after record: only `after`
+    # accepts the labeled t0, so sampling the before record must fail the rate
+    # assertion below.
+    before.write_text(json.dumps(_case_payload(accepted=False)))
+    after.write_text(json.dumps(_case_payload(accepted=True)))
+    labels.write_text(json.dumps({"case-0": ["t0"]}))
+
+    assert (
+        main(
+            [
+                str(before),
+                str(after),
+                "--unsafe-labels",
+                str(labels),
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    report = json.loads(output.read_text())
+    assert report["matched_cases"] == 1
+    assert report["cases"][0]["case_id"] == "case-0"
+    assert report["screen_false_positive_rate"] == {
+        "labeled_unsafe_tests": 1,
+        "false_positives": 1,
+        "rate": 1.0,
+    }

@@ -1206,13 +1206,15 @@ class Diagnoser:
         )
         if selected_branch is None:
             return general_selection("root_branch_probability_missing")
-        beam = [branch_probabilities[0]]
+        beam = [selected_branch]
         if (
             len(branch_probabilities) > 1
             and branch_probabilities[0][1] - branch_probabilities[1][1]
             < rubric.task_branch_margin
         ):
-            beam = branch_probabilities[: rubric.task_beam_width]
+            beam = [selected_branch] + [
+                item for item in branch_probabilities if item[0].key != selected_root
+            ][: rubric.task_beam_width - 1]
 
         requests: list[Mapping[str, Any]] = [
             self._task_leaf_request(branch, task_by_key, state)
@@ -1338,7 +1340,7 @@ class Diagnoser:
             )
             return selection
 
-        parent_branch, parent_probability, _parent_index = branch_probabilities[0]
+        parent_branch, parent_probability, _parent_index = selected_branch
         checklist, empty_intersection = _parent_checklist(parent_branch, task_by_key)
         checklist_source = (
             "explicit_parent"
@@ -1526,6 +1528,7 @@ class Diagnoser:
                     confirmed_gaps=(),
                     problem_sentences=(),
                     rubric_version=self.rubric_version,
+                    sentence_protocol_version=self.sentence_protocol_version,
                     request_evidence={
                         "protocol": "diagnosis-fanout-v1",
                         "complete": False,

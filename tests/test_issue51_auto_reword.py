@@ -759,6 +759,103 @@ def test_suppressed_active_update_cannot_report_adoption_or_rollback(
     assert store.active_rubric().version_id == adopted["adopted_version_id"]
 
 
+def test_rollback_missing_parent_keeps_active_version_unchanged(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "missing-parent.sqlite3")
+    adopted = optimize_reword(
+        store, RewordGateway(), "task-clarity", _dataset(), attempt_id="adopted"
+    )
+    assert adopted["status"] == "adopted"
+    active_version_id = adopted["adopted_version_id"]
+
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(
+            "DELETE FROM rubric_versions WHERE version_id = ?", ("rubric-v1",)
+        )
+
+    with pytest.raises(StaleProposalError, match="the parent rubric is missing"):
+        store.rollback_reword(active_version_id)
+
+    assert store.active_rubric().version_id == active_version_id
+
+
+def test_rollback_prevents_parent_deletion_between_read_and_update(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _store(tmp_path / "rollback-race.sqlite3")
+    adopted = optimize_reword(
+        store, RewordGateway(), "task-clarity", _dataset(), attempt_id="adopted"
+    )
+    assert adopted["status"] == "adopted"
+    parent_version_id = "rubric-v1"
+    rival_outcomes: list[str] = []
+
+    def rival_delete() -> None:
+        try:
+            with sqlite3.connect(store.database_path, timeout=0) as rival:
+                deleted = rival.execute(
+                    "DELETE FROM rubric_versions WHERE version_id = ?",
+                    (parent_version_id,),
+                )
+                rival_outcomes.append(f"deleted:{deleted.rowcount}")
+        except sqlite3.OperationalError as error:
+            rival_outcomes.append(str(error))
+
+    class CursorAfterParentRead:
+        def __init__(self, cursor: sqlite3.Cursor) -> None:
+            self.cursor = cursor
+
+        def fetchone(self):
+            row = self.cursor.fetchone()
+            if row is not None:
+                rival_delete()
+            return row
+
+    class ConnectionAfterParentRead:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self.connection = connection
+
+        def __enter__(self):
+            self.connection.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self.connection.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.connection, name)
+
+        def execute(self, sql: str, parameters=()):
+            cursor = self.connection.execute(sql, parameters)
+            if (
+                sql.strip()
+                == "SELECT payload FROM rubric_versions WHERE version_id = ?"
+                and parameters == (parent_version_id,)
+            ):
+                return CursorAfterParentRead(cursor)
+            return cursor
+
+    original_connect = store._connect
+    monkeypatch.setattr(
+        store,
+        "_connect",
+        lambda: ConnectionAfterParentRead(original_connect()),
+    )
+
+    restored = store.rollback_reword(adopted["adopted_version_id"])
+
+    assert restored.version_id == parent_version_id
+    assert rival_outcomes == ["database is locked"]
+    assert store.active_rubric().version_id == parent_version_id
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute(
+            "SELECT 1 FROM rubric_versions WHERE version_id = ?",
+            (parent_version_id,),
+        ).fetchone() == (1,)
+
+
 def test_paired_repeat_noise_floor_is_measured_in_brier_units(tmp_path: Path) -> None:
     store = _store(tmp_path / "repeat.sqlite3")
     dataset = _dataset()
