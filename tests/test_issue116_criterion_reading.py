@@ -2,25 +2,31 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+import measure_criterion_reading as measurement
 from measure_criterion_reading import (
+    OPERATORS,
     Reading,
     load_cases,
     number_candidates,
     outcome,
+    read_jev,
     regex_check,
     resolve,
     score,
 )
+from measure_criterion_reading import _reading as parse_recorded_reading
 
-OPERATORS = {"at most", "under", "at least", "more than", "exactly", "between"}
+from prompt_enhancer.jev import NoulDecision
 
 
 def _reading(**overrides: object) -> Reading:
@@ -176,3 +182,273 @@ def test_outcome_separates_wrong_from_missed_and_correctly_unchecked() -> None:
     assert outcome({"kind": "valid_json", "negated": True}, expected) == (
         "wrong_confident"
     )
+
+
+@pytest.mark.parametrize("reply", ["[]", "null", "1", "{}"])
+def test_malformed_chat_replies_are_unusable_rows(reply: str) -> None:
+    assert parse_recorded_reading({"reader": "cheap"}, {"reply": reply}) is None
+
+
+def test_read_jev_rejects_an_unexpected_decision_kind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        measurement,
+        "parse_decision",
+        lambda _payload: NoulDecision(probability=0.25, confidence=0.75),
+    )
+
+    with pytest.raises(TypeError, match="expected choice"):
+        read_jev({"kind": {}})
+
+    assert parse_recorded_reading({"reader": "jev"}, {"answers": {"kind": {}}}) is None
+
+
+def test_record_refuses_to_resume_with_a_different_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "recording.json"
+    output.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "reader": "jev",
+                "model": "old-model",
+                "questions_digest": measurement.questions_digest(),
+                "rows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        measurement,
+        "HttpGateway",
+        lambda **_kwargs: SimpleNamespace(jev_model="current-model"),
+    )
+
+    with pytest.raises(ValueError, match="model"):
+        measurement.record("jev", [], output)
+
+
+def test_read_chat_parses_a_well_formed_reply() -> None:
+    reply = json.dumps(
+        {
+            "kind": "word_count",
+            "op": "under",
+            "bound": "100",
+            "low": "none",
+            "high": "none",
+            "partial": True,
+            "conditional": False,
+            "negated": False,
+            "approximate": False,
+        }
+    )
+
+    reading = measurement.read_chat(reply)
+
+    assert reading == _reading(
+        noul={
+            "partial": 1.0,
+            "conditional": 0.0,
+            "negated": 0.0,
+            "approximate": 0.0,
+        }
+    )
+
+
+def test_report_warns_when_question_wording_digest_is_stale(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": "old-digest",
+                "rows": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(recording, show_errors=False)
+    output = capsys.readouterr().out
+
+    assert "WARNING" in output
+    assert "question wording" in output
+
+
+def test_report_scores_recording_with_truncation_and_fixture_splits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cases = [
+        {
+            "id": "dev-case",
+            "split": "development",
+            "criterion": "The answer is under 100 words",
+            "expected": {
+                "kind": "word_count",
+                "operator": "under",
+                "bound": 100,
+                "upper_bound": None,
+            },
+        },
+        {
+            "id": "extra-case",
+            "split": "challenge",
+            "criterion": "Write a friendly answer",
+            "expected": None,
+        },
+    ]
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+
+    choices = {
+        "kind": "word_count",
+        "op": "under",
+        "bound": "100",
+        "low": "none",
+        "high": "none",
+    }
+    answers = {
+        key: {
+            "type": "choice",
+            "choice": value,
+            "probabilities": {value: 1.0},
+        }
+        for key, value in choices.items()
+    }
+    answers.update(
+        {
+            key: {"type": "noul", "probability_true": probability}
+            for key, probability in {
+                "partial": 0.25,
+                "conditional": 0.5,
+                "negated": 0.1,
+                "approximate": 0.75,
+            }.items()
+        }
+    )
+    extra_answers: dict[str, object] = {}
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "jev",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "max_tokens": 50,
+                "rows": [
+                    {
+                        "case_id": "dev-case",
+                        "answers": answers,
+                        "usage": {"completion_tokens": 50},
+                    },
+                    {
+                        "case_id": "extra-case",
+                        "answers": extra_answers,
+                        "usage": {"completion_tokens": 2},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(
+        recording,
+        show_errors=False,
+        cutoffs=measurement.parse_cutoffs(
+            "partial=0.2,conditional=0.5,approximate=0.5"
+        ),
+    )
+    output = capsys.readouterr().out
+
+    assert "| challenge |" in output
+    assert "unusable answers: extra-case" in output
+    assert "truncation-suspect: dev-case" in output
+    assert "partial: n=1 median=0.250 p90=0.250 max=0.250" in output
+    assert "conditional: n=1 median=0.500 p90=0.500 max=0.500" in output
+    assert "approximate: n=1 median=0.750 p90=0.750 max=0.750" in output
+    assert "| development | per-judgment cutoffs partial >= 0.2" in output
+
+
+def test_unknown_split_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown split"):
+        load_cases("not-in-fixture")
+
+
+def test_per_judgment_cutoffs_parse_and_change_resolution() -> None:
+    cutoffs = measurement.parse_cutoffs("partial=0.7,conditional=0.5,approximate=0.5")
+    reading = _reading(
+        noul={
+            "partial": 0.6,
+            "conditional": 0.4,
+            "negated": 0.1,
+            "approximate": 0.4,
+        }
+    )
+
+    assert cutoffs == {"partial": 0.7, "conditional": 0.5, "approximate": 0.5}
+    assert resolve(reading, {"100": 100}, (0.5, 0.5)) is None
+    assert resolve(reading, {"100": 100}, (0.5, 0.5), cutoffs=cutoffs) == {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": None,
+    }
+
+
+@pytest.mark.parametrize("invalid_field", ["partial", "unexpected"])
+def test_nonconforming_chat_fields_are_unusable_rows(invalid_field: str) -> None:
+    data: dict[str, object] = {
+        "kind": "word_count",
+        "op": "under",
+        "bound": "100",
+        "low": "none",
+        "high": "none",
+        "partial": False,
+        "conditional": False,
+        "negated": False,
+        "approximate": False,
+    }
+    if invalid_field == "partial":
+        data["partial"] = "yes"
+    else:
+        data[invalid_field] = True
+
+    assert (
+        parse_recorded_reading({"reader": "cheap"}, {"reply": json.dumps(data)}) is None
+    )
+
+
+def test_report_flags_legacy_cheap_recording_at_default_token_cap(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    recording = tmp_path / "legacy-recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "rows": [
+                    {
+                        "case_id": "dev-001",
+                        "reply": "{}",
+                        "usage": {"completion_tokens": 300},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(recording, show_errors=False)
+
+    assert "truncation-suspect: dev-001" in capsys.readouterr().out
