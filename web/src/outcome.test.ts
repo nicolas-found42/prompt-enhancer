@@ -20,6 +20,26 @@ describe("outcomeOf", () => {
     expect(outcome.reason).toContain("wasn't tested");
   });
 
+  it("does not call an untested prompt with confirmed details optimized", () => {
+    const outcome = outcomeOf({
+      ...result({ status: "unverified" }),
+      original_kept: false,
+    });
+    expect(outcome.headline).toBe("We couldn't test this prompt");
+    expect(outcome.reason).toContain("details you confirmed");
+  });
+
+  it("still calls a verified rewrite optimized", () => {
+    expect(
+      outcomeOf({ ...result({ status: "selected" }), original_kept: false })
+        .headline
+    ).toBe("Optimized prompt");
+    expect(
+      outcomeOf({ ...result({ status: "edited" }), original_kept: false })
+        .headline
+    ).toBe("Updated prompt");
+  });
+
   it("uses the weakest model when describing evidence", () => {
     const outcome = outcomeOf(
       result({

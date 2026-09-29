@@ -53,7 +53,13 @@ function badgeFor(run: RunSummary | RunDetail): Badge {
   if (run.status === "failed") return { label: "Failed", tone: "bad" };
   if (run.status === "needs_input")
     return { label: "Waiting for answers", tone: "warn" };
-  if (run.original_kept === false) return { label: "Improved", tone: "good" };
+  if (run.original_kept === false) {
+    const untested =
+      run.outcome === "unverified" || reportStatus === "unverified";
+    return untested
+      ? { label: "Not tested", tone: "neutral" }
+      : { label: "Improved", tone: "good" };
+  }
   return { label: "Unchanged", tone: "neutral" };
 }
 

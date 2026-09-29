@@ -97,15 +97,18 @@ export type Outcome = { headline: string; reason: string | null };
 export function outcomeOf(result: OptimizeResult): Outcome {
   const status = String(result.report.status ?? "");
   if (status === "edited") return { headline: "Updated prompt", reason: null };
-  if (!result.original_kept)
-    return { headline: "Optimized prompt", reason: null };
+  // Without a verified test the run cannot claim an improvement, even when
+  // the user's confirmed clarification answers were appended to the prompt.
   if (status === "unverified") {
     return {
       headline: "We couldn't test this prompt",
-      reason:
-        "No reliable way to check the answers was found, so your prompt is returned as it was.",
+      reason: result.original_kept
+        ? "No reliable way to check the answers was found, so your prompt is returned as it was."
+        : "No reliable way to check the answers was found, so nothing was tested. The only change is the details you confirmed.",
     };
   }
+  if (!result.original_kept)
+    return { headline: "Optimized prompt", reason: null };
   const gaps = confirmedGaps(result);
   const rates = originalPassRates(result);
   const weakest = rates.length > 0 ? Math.min(...rates) : null;

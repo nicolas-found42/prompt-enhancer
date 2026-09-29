@@ -646,10 +646,19 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(page.getByText("What should the assistant do?")).toBeVisible();
   await page.getByRole("button", { name: "Continue", exact: true }).click();
+  // No success test was established, so the confirmed answer is not an improvement.
+  await expect(
+    page.getByRole("heading", { name: "We couldn't test this prompt" })
+  ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Optimized prompt" })
-  ).toBeVisible();
+  ).toHaveCount(0);
   await expect(page.locator(".final-prompt")).toContainText("goal: Summarize");
+  await expect(
+    page
+      .getByRole("list", { name: "Saved optimization runs" })
+      .getByRole("button")
+  ).toContainText("Not tested");
   const copyGuidance = page.getByText(
     "After copying, paste this prompt into an AI chat or another tool that accepts prompts."
   );

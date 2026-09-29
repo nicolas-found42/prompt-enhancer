@@ -126,11 +126,13 @@ def _normalise_record(
     )
     failure = report_map.get("failure")
     failure_kind = failure.get("kind") if isinstance(failure, Mapping) else None
-    outcome = (
-        "cancelled"
-        if report_map.get("status") == "cancelled" or failure_kind == "cancelled"
-        else str(status)
-    )
+    if report_map.get("status") == "cancelled" or failure_kind == "cancelled":
+        outcome = "cancelled"
+    elif str(status) == "completed" and report_map.get("status") == "unverified":
+        # No success test was established, so the run must not read as improved.
+        outcome = "unverified"
+    else:
+        outcome = str(status)
     metadata = source.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
     # Keep provider-specific and future fields searchable/visible without a

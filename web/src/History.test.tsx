@@ -199,6 +199,21 @@ it("shows one final prompt with additions highlighted when the original was kept
   ).toHaveTextContent("Clarifications: Keep it under 120 words.");
 });
 
+it("does not label an untested run with confirmed details as improved", async () => {
+  await openRunDetails({
+    ...savedRun,
+    status: "completed",
+    outcome: "unverified",
+    original_prompt: savedRun.prompt,
+    final_prompt: `${savedRun.prompt}\n\nClarifications:\nContext: my notes`,
+    original_kept: false,
+    report: { status: "unverified" },
+  });
+
+  expect(screen.queryByText("Improved")).not.toBeInTheDocument();
+  expect(screen.getAllByText("Not tested").length).toBeGreaterThanOrEqual(2);
+});
+
 it("states that an unchanged original was kept and shows it once", async () => {
   await openRunDetails({
     ...savedRun,
