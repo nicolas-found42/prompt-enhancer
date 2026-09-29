@@ -123,6 +123,40 @@ def test_history_summary_exposes_outcome_without_rewriting_legacy_status(
     assert summaries["run-failed"]["outcome"] == "failed"
 
 
+def test_history_summary_marks_unverified_completed_runs(tmp_path: Path):
+    history = RunHistory(RunStore(tmp_path / "history-unverified.sqlite3"))
+    history.save_run(
+        {
+            "run_id": "run-unverified",
+            "prompt": "Help with my homework.",
+            "result": {
+                "status": "completed",
+                "original_kept": False,
+                "final_prompt": "Help with my homework.\n\nClarifications:\nContext: notes",
+                "report": {"status": "unverified"},
+            },
+        }
+    )
+    history.save_run(
+        {
+            "run_id": "run-edited",
+            "prompt": "Help with my homework.",
+            "result": {
+                "status": "completed",
+                "original_kept": False,
+                "final_prompt": "Write a homework plan.",
+                "report": {"status": "edited"},
+            },
+        }
+    )
+
+    summaries = {run["run_id"]: run for run in history.list_runs()}
+
+    assert summaries["run-unverified"]["status"] == "completed"
+    assert summaries["run-unverified"]["outcome"] == "unverified"
+    assert summaries["run-edited"]["outcome"] == "completed"
+
+
 def test_history_rejects_feedback_for_incomplete_run(tmp_path: Path):
     history = RunHistory(RunStore(tmp_path / "history-incomplete.sqlite3"))
     history.save_run(
