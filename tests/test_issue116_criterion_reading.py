@@ -253,6 +253,61 @@ def test_record_refuses_to_resume_cheap_recording_with_a_different_token_cap(
         measurement.record("cheap", [], output, max_tokens=300)
 
 
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_cli_rejects_non_positive_max_tokens(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "measure_criterion_reading.py",
+            "run",
+            "--reader",
+            "cheap",
+            "--max-tokens",
+            value,
+            "--output",
+            "recording.json",
+        ],
+    )
+    monkeypatch.setattr(measurement, "record", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(SystemExit) as error:
+        measurement.main()
+
+    assert error.value.code == 2
+    assert "--max-tokens must be a positive integer" in capsys.readouterr().err
+
+
+def test_cli_rejects_max_tokens_for_jev_reader(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "measure_criterion_reading.py",
+            "run",
+            "--reader",
+            "jev",
+            "--max-tokens",
+            "250",
+            "--output",
+            "recording.json",
+        ],
+    )
+    monkeypatch.setattr(measurement, "record", lambda *_args, **_kwargs: None)
+
+    with pytest.raises(SystemExit) as error:
+        measurement.main()
+
+    assert error.value.code == 2
+    assert (
+        "--max-tokens applies only to the cheap chat reader" in capsys.readouterr().err
+    )
+
+
 def test_read_chat_parses_a_well_formed_reply() -> None:
     reply = json.dumps(
         {

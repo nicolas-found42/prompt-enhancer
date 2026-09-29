@@ -670,7 +670,7 @@ def main() -> None:
     run.add_argument(
         "--max-tokens",
         type=int,
-        default=300,
+        default=None,
         help="completion token limit for the cheap reader (default: 300)",
     )
     run.add_argument("--output", type=Path, required=True)
@@ -684,11 +684,17 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.command == "run":
+        if args.max_tokens is not None and args.max_tokens <= 0:
+            parser.error("--max-tokens must be a positive integer")
+        if args.reader == "jev" and args.max_tokens is not None:
+            parser.error(
+                "--max-tokens applies only to the cheap chat reader (--reader cheap)"
+            )
         record(
             args.reader,
             load_cases(args.split),
             args.output,
-            max_tokens=args.max_tokens,
+            max_tokens=300 if args.max_tokens is None else args.max_tokens,
         )
     else:
         report(args.recording, show_errors=args.errors, cutoffs=args.cutoff)
