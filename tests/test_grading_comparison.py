@@ -155,7 +155,28 @@ def test_comparison_cli_accepts_json_label_lists(tmp_path: Path) -> None:
     labels = tmp_path / "labels.json"
     output = tmp_path / "report.json"
     for path in (before, after):
-        path.write_text(json.dumps({"status": "completed", "report": {}, "cost": {}}))
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "case_id": "case-0",
+                            "result": {
+                                "status": "completed",
+                                "report": {
+                                    "test_screening": {
+                                        "screening_checks": [
+                                            {"test_id": "t0", "accepted": True}
+                                        ]
+                                    }
+                                },
+                                "cost": {},
+                            },
+                        }
+                    ]
+                }
+            )
+        )
     labels.write_text(json.dumps({"case-0": ["t0"]}))
 
     assert (
@@ -171,4 +192,11 @@ def test_comparison_cli_accepts_json_label_lists(tmp_path: Path) -> None:
         )
         == 0
     )
-    assert json.loads(output.read_text())["matched_cases"] == 1
+    report = json.loads(output.read_text())
+    assert report["matched_cases"] == 1
+    assert report["cases"][0]["case_id"] == "case-0"
+    assert report["screen_false_positive_rate"] == {
+        "labeled_unsafe_tests": 1,
+        "false_positives": 1,
+        "rate": 1.0,
+    }
