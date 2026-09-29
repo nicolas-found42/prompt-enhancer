@@ -186,7 +186,8 @@ def _run_order_bias(args: argparse.Namespace, *, out: TextIO) -> int:
         or args.max_order_question_evaluations > ORDER_BIAS_MAX_QUESTION_EVALUATIONS
     ):
         raise OrderBiasError(
-            "--max-order-question-evaluations must be between 1 and 1000"
+            "--max-order-question-evaluations must be between 1 and "
+            f"{ORDER_BIAS_MAX_QUESTION_EVALUATIONS}"
         )
     manifest = load_order_bias_manifest(args.datasets[0])
     if len(manifest.cases) > args.max_order_cases:

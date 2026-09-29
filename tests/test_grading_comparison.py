@@ -71,6 +71,12 @@ def test_comparison_requires_matched_case_ids() -> None:
         )
 
 
+@pytest.mark.parametrize("unsafe_labels", [["t0"], {"same": "t0"}, {"same": [1]}])
+def test_comparison_rejects_invalid_unsafe_label_shape(unsafe_labels) -> None:
+    with pytest.raises(ValueError, match="unsafe labels must map"):
+        compare_grading_results([], [], unsafe_labels=unsafe_labels)
+
+
 def test_comparison_cli_writes_unavailable_evidence_honestly(tmp_path: Path) -> None:
     before = tmp_path / "before.json"
     after = tmp_path / "after.json"

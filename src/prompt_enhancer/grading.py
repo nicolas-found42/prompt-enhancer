@@ -266,7 +266,7 @@ def grade_panel_with_jev(
             resolution = {
                 **resolution,
                 "primitive": kind,
-                "test_id": str(test.get("id", f"test-{test_index + 1:03d}")),
+                "test_id": str(test.get("id", f"t{test_index}")),
                 "question": str(test.get("question", "")),
             }
             selected_policy = str(resolution.get("policy", LEGACY_GRADING_POLICY))

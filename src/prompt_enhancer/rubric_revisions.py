@@ -1178,7 +1178,13 @@ class SQLiteRubricStore:
             current = _rubric_from_dict(json.loads(row[0]))
             if current.parent_version_id is None:
                 raise StaleProposalError("the active rubric has no parent")
-            parent = self.get_rubric(current.parent_version_id)
+            parent_row = connection.execute(
+                "SELECT payload FROM rubric_versions WHERE version_id = ?",
+                (current.parent_version_id,),
+            ).fetchone()
+            if parent_row is None:
+                raise StaleProposalError("the parent rubric is missing")
+            parent = _rubric_from_dict(json.loads(parent_row[0]))
             restored = connection.execute(
                 "UPDATE active_rubric SET version_id = ? WHERE singleton = 1 AND version_id = ?",
                 (parent.version_id, version_id),

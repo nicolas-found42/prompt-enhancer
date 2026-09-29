@@ -156,6 +156,16 @@ def compare_grading_results(
     unsafe_labels: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Compare matched cases without inferring accuracy from synthetic outputs."""
+    if unsafe_labels is not None and (
+        not isinstance(unsafe_labels, Mapping)
+        or not all(
+            isinstance(case_id, str)
+            and isinstance(test_ids, list)
+            and all(isinstance(test_id, str) for test_id in test_ids)
+            for case_id, test_ids in unsafe_labels.items()
+        )
+    ):
+        raise ValueError("unsafe labels must map case IDs to arrays of test IDs")
     before = _cases(before_input)
     after = _cases(after_input)
     if set(before) != set(after):

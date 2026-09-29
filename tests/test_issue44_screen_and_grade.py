@@ -26,6 +26,29 @@ from prompt_enhancer.store import RunStore
 from prompt_enhancer.success_tests import SuccessTestCompiler
 
 
+def test_grading_without_explicit_test_id_uses_shared_state_key() -> None:
+    requests: list[dict[str, Any]] = []
+
+    def decide(request, **_kwargs):
+        requests.append(dict(request))
+        return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
+
+    gateway = ScriptedGateway(decision=decide)
+    grade_panel_with_jev(
+        [PanelResult("candidate", "weak", 0, 7, "An answer.", "A prompt.")],
+        [{"kind": "noul", "question": "Is the answer complete?"}],
+        gateway,
+        judge_model=gateway.jev_model,
+        run_id="missing-test-id",
+        shared_state=True,
+    )
+
+    assert requests[0]["state"]["success_tests"]["t0"]["criterion"] == (
+        "Is the answer complete?"
+    )
+    assert requests[0]["question"]["criterion"] == "state.success_tests.t0.criterion"
+
+
 def test_screening_uses_current_log_when_gateway_replaces_the_list() -> None:
     class ReplacingLogGateway(ScriptedGateway):
         def decide_batch(self, requests, *, role="judge", run_id=None):
