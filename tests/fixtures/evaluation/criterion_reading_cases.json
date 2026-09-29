@@ -1,0 +1,1372 @@
+{
+  "schema_version": 1,
+  "name": "criterion-reading-cases",
+  "description": "Success criteria with the constraint code could verify, or null when the criterion is conditional, part-scoped, approximate, about another unit or not countable. Used to measure reading criteria with a model (issue #116).",
+  "expected_format": {
+    "kind": "word_count | sentence_count | valid_json",
+    "operator": "at most | under | at least | more than | exactly | between",
+    "negated": "valid_json only: the criterion requires the output NOT to parse",
+    "null": "no whole-output constraint code can verify"
+  },
+  "splits": {
+    "development": "The 50 criteria and labels from issue #116, used to word the extraction questions.",
+    "heldout": "100 criteria written after the questions were fixed and never used to word or tune them. Labelled by Claude on 2026-09-29; not yet reviewed by a maintainer."
+  },
+  "cases": [
+    {
+      "id": "dev-001",
+      "split": "development",
+      "criterion": "The answer is under 100 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-002",
+      "split": "development",
+      "criterion": "The answer has at most 1,000 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 1000,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-003",
+      "split": "development",
+      "criterion": "Has between 3 and 5 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 3,
+        "upper_bound": 5
+      }
+    },
+    {
+      "id": "dev-004",
+      "split": "development",
+      "criterion": "Is the letter itself 200 words or fewer, with no unnecessary preamble or explanation?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 200,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-005",
+      "split": "development",
+      "criterion": "Does the message keep the update to 50 words or fewer, using short, readable wording?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 50,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-006",
+      "split": "development",
+      "criterion": "No more than 50 words, using short sentences or bullets and no unnecessary preamble.",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 50,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-007",
+      "split": "development",
+      "criterion": "The reply is no longer than 100 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-008",
+      "split": "development",
+      "criterion": "The summary is limited to 80 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 80,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-009",
+      "split": "development",
+      "criterion": "The response doesn't exceed 120 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 120,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-010",
+      "split": "development",
+      "criterion": "The response must not exceed 90 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 90,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-011",
+      "split": "development",
+      "criterion": "Response must not be longer than 90 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 90,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-012",
+      "split": "development",
+      "criterion": "Does the answer stay within a 40-word limit?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 40,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-013",
+      "split": "development",
+      "criterion": "Word count of the reply is 75 or lower",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 75,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-014",
+      "split": "development",
+      "criterion": "Keep it to 25 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 25,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-015",
+      "split": "development",
+      "criterion": "Is the response shorter than 30 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 30,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-016",
+      "split": "development",
+      "criterion": "The essay is 500 words or more",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 500,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-017",
+      "split": "development",
+      "criterion": "The essay has 500+ words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 500,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-018",
+      "split": "development",
+      "criterion": "The essay has a minimum of 500 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 500,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-019",
+      "split": "development",
+      "criterion": "Answer is longer than 50 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "more than",
+        "bound": 50,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-020",
+      "split": "development",
+      "criterion": "The response is over 200 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "more than",
+        "bound": 200,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-021",
+      "split": "development",
+      "criterion": "The answer runs 100 to 150 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 100,
+        "upper_bound": 150
+      }
+    },
+    {
+      "id": "dev-022",
+      "split": "development",
+      "criterion": "The answer is 100–150 words long",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 100,
+        "upper_bound": 150
+      }
+    },
+    {
+      "id": "dev-023",
+      "split": "development",
+      "criterion": "Keeps the answer under one hundred words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-024",
+      "split": "development",
+      "criterion": "The response is not under 100 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-025",
+      "split": "development",
+      "criterion": "The answer is never more than 60 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 60,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-026",
+      "split": "development",
+      "criterion": "Total across all sections is under 500 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 500,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-027",
+      "split": "development",
+      "criterion": "The response is under 100 words and each bullet starts with a verb",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-028",
+      "split": "development",
+      "criterion": "The response is valid JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "dev-029",
+      "split": "development",
+      "criterion": "Output must be parseable as JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "dev-030",
+      "split": "development",
+      "criterion": "Returns well-formed JSON only, no prose",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "dev-031",
+      "split": "development",
+      "criterion": "The response is not valid JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": true
+      }
+    },
+    {
+      "id": "dev-032",
+      "split": "development",
+      "criterion": "Does the welcome message contain exactly two sentences?",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 2,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-033",
+      "split": "development",
+      "criterion": "The reply is at most 3 sentences",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "at most",
+        "bound": 3,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "dev-034",
+      "split": "development",
+      "criterion": "Under 100 words, or a table if longer",
+      "expected": null
+    },
+    {
+      "id": "dev-035",
+      "split": "development",
+      "criterion": "Under 50 words if the user asks for a summary",
+      "expected": null
+    },
+    {
+      "id": "dev-036",
+      "split": "development",
+      "criterion": "If the assistant refuses, the reply is at least 100 words",
+      "expected": null
+    },
+    {
+      "id": "dev-037",
+      "split": "development",
+      "criterion": "Each bullet is under 15 words",
+      "expected": null
+    },
+    {
+      "id": "dev-038",
+      "split": "development",
+      "criterion": "Each paragraph has at least 3 sentences",
+      "expected": null
+    },
+    {
+      "id": "dev-039",
+      "split": "development",
+      "criterion": "The intro paragraph is under 50 words",
+      "expected": null
+    },
+    {
+      "id": "dev-040",
+      "split": "development",
+      "criterion": "The title is at most 10 words",
+      "expected": null
+    },
+    {
+      "id": "dev-041",
+      "split": "development",
+      "criterion": "The response uses fewer than 20 words per sentence",
+      "expected": null
+    },
+    {
+      "id": "dev-042",
+      "split": "development",
+      "criterion": "The reply contains valid JSON followed by a short explanation",
+      "expected": null
+    },
+    {
+      "id": "dev-043",
+      "split": "development",
+      "criterion": "The JSON has a 'name' field holding the customer's name",
+      "expected": null
+    },
+    {
+      "id": "dev-044",
+      "split": "development",
+      "criterion": "The answer cites at least 2 sources",
+      "expected": null
+    },
+    {
+      "id": "dev-045",
+      "split": "development",
+      "criterion": "Uses no more than 2 exclamation marks",
+      "expected": null
+    },
+    {
+      "id": "dev-046",
+      "split": "development",
+      "criterion": "Response is between 2 and 3 paragraphs",
+      "expected": null
+    },
+    {
+      "id": "dev-047",
+      "split": "development",
+      "criterion": "Roughly 100 words",
+      "expected": null
+    },
+    {
+      "id": "dev-048",
+      "split": "development",
+      "criterion": "Acknowledges the student's urgency or deadline without being condescending",
+      "expected": null
+    },
+    {
+      "id": "dev-049",
+      "split": "development",
+      "criterion": "Summarizes the execution plan clearly",
+      "expected": null
+    },
+    {
+      "id": "dev-050",
+      "split": "development",
+      "criterion": "Explains the reasoning in a friendly tone",
+      "expected": null
+    },
+    {
+      "id": "held-001",
+      "split": "heldout",
+      "criterion": "Is the reply capped at 150 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 150,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-002",
+      "split": "heldout",
+      "criterion": "Does the announcement fit in 60 words or fewer?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 60,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-003",
+      "split": "heldout",
+      "criterion": "The answer has a maximum of 300 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 300,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-004",
+      "split": "heldout",
+      "criterion": "Is the email body no greater than 120 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 120,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-005",
+      "split": "heldout",
+      "criterion": "Stay at or below 250 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 250,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-006",
+      "split": "heldout",
+      "criterion": "Does the note stick to a 35-word maximum, with a friendly tone?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 35,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-007",
+      "split": "heldout",
+      "criterion": "The description is not more than 45 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 45,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-008",
+      "split": "heldout",
+      "criterion": "Reply in 80 words tops",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 80,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-009",
+      "split": "heldout",
+      "criterion": "The answer is 20 words max",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 20,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-010",
+      "split": "heldout",
+      "criterion": "Is the whole reply within 140 words, including the greeting and sign-off?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 140,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-011",
+      "split": "heldout",
+      "criterion": "The message should not be longer than 70 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 70,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-012",
+      "split": "heldout",
+      "criterion": "Does the letter avoid going over 180 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 180,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-013",
+      "split": "heldout",
+      "criterion": "Word limit: 100.",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-014",
+      "split": "heldout",
+      "criterion": "The reply is short enough to fit within 2,000 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 2000,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-015",
+      "split": "heldout",
+      "criterion": "Is the message not more than 55 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 55,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-016",
+      "split": "heldout",
+      "criterion": "The text may not exceed 65 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 65,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-017",
+      "split": "heldout",
+      "criterion": "Not over 300 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 300,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-018",
+      "split": "heldout",
+      "criterion": "Is the reply fewer than 90 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 90,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-019",
+      "split": "heldout",
+      "criterion": "The text is below 400 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 400,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-020",
+      "split": "heldout",
+      "criterion": "Does the answer use less than 75 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 75,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-021",
+      "split": "heldout",
+      "criterion": "Is the summary shorter than 120 words, without losing the key facts?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 120,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-022",
+      "split": "heldout",
+      "criterion": "The response must be under 1,500 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 1500,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-023",
+      "split": "heldout",
+      "criterion": "Keeps the reply to fewer than fifteen words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 15,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-024",
+      "split": "heldout",
+      "criterion": "Is the article at least 800 words long?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 800,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-025",
+      "split": "heldout",
+      "criterion": "The report is no fewer than 600 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 600,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-026",
+      "split": "heldout",
+      "criterion": "Has a minimum of 250 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 250,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-027",
+      "split": "heldout",
+      "criterion": "The description runs 120 words or more",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 120,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-028",
+      "split": "heldout",
+      "criterion": "Answer with 300 or more words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 300,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-029",
+      "split": "heldout",
+      "criterion": "Is the answer not shorter than 150 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 150,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-030",
+      "split": "heldout",
+      "criterion": "The story needs at least fifty words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 50,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-031",
+      "split": "heldout",
+      "criterion": "Never fewer than 200 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 200,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-032",
+      "split": "heldout",
+      "criterion": "The answer is not fewer than 40 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 40,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-033",
+      "split": "heldout",
+      "criterion": "The reply does not go under 90 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 90,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-034",
+      "split": "heldout",
+      "criterion": "Is the response longer than 400 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "more than",
+        "bound": 400,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-035",
+      "split": "heldout",
+      "criterion": "Does the essay exceed 1,000 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "more than",
+        "bound": 1000,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-036",
+      "split": "heldout",
+      "criterion": "The answer is more than 30 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "more than",
+        "bound": 30,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-037",
+      "split": "heldout",
+      "criterion": "The slogan is exactly 6 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 6,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-038",
+      "split": "heldout",
+      "criterion": "Does the tagline have exactly four words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 4,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-039",
+      "split": "heldout",
+      "criterion": "Is the reply precisely 50 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 50,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-040",
+      "split": "heldout",
+      "criterion": "The answer is exactly 100 words long",
+      "expected": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-041",
+      "split": "heldout",
+      "criterion": "Is the reply between 50 and 80 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 50,
+        "upper_bound": 80
+      }
+    },
+    {
+      "id": "held-042",
+      "split": "heldout",
+      "criterion": "The blurb is 30-45 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 30,
+        "upper_bound": 45
+      }
+    },
+    {
+      "id": "held-043",
+      "split": "heldout",
+      "criterion": "Answer in 200 to 300 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 200,
+        "upper_bound": 300
+      }
+    },
+    {
+      "id": "held-044",
+      "split": "heldout",
+      "criterion": "The summary ranges from 60 to 90 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 60,
+        "upper_bound": 90
+      }
+    },
+    {
+      "id": "held-045",
+      "split": "heldout",
+      "criterion": "Does the bio run between two hundred and three hundred words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 200,
+        "upper_bound": 300
+      }
+    },
+    {
+      "id": "held-046",
+      "split": "heldout",
+      "criterion": "Explain the 3 causes in under 150 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 150,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-047",
+      "split": "heldout",
+      "criterion": "Is the 5-paragraph essay at least 500 words in total?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at least",
+        "bound": 500,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-048",
+      "split": "heldout",
+      "criterion": "Write for a 10-year-old reader in at most 100 words",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-049",
+      "split": "heldout",
+      "criterion": "Does the reply answer all 4 questions within 200 words?",
+      "expected": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 200,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-050",
+      "split": "heldout",
+      "criterion": "Under 100 words and mentions 3 benefits",
+      "expected": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-051",
+      "split": "heldout",
+      "criterion": "The response parses as valid JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "held-052",
+      "split": "heldout",
+      "criterion": "Is the output valid JSON with no text before or after it?",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "held-053",
+      "split": "heldout",
+      "criterion": "Output is well-formed JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "held-054",
+      "split": "heldout",
+      "criterion": "The output must not be malformed JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": false
+      }
+    },
+    {
+      "id": "held-055",
+      "split": "heldout",
+      "criterion": "The response must not be valid JSON",
+      "expected": {
+        "kind": "valid_json",
+        "negated": true
+      }
+    },
+    {
+      "id": "held-056",
+      "split": "heldout",
+      "criterion": "Is the reply plain prose that is not parseable as JSON?",
+      "expected": {
+        "kind": "valid_json",
+        "negated": true
+      }
+    },
+    {
+      "id": "held-057",
+      "split": "heldout",
+      "criterion": "Is the reply exactly three sentences?",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 3,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-058",
+      "split": "heldout",
+      "criterion": "The summary is no more than 4 sentences",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "at most",
+        "bound": 4,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-059",
+      "split": "heldout",
+      "criterion": "Does the message have at least two sentences?",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "at least",
+        "bound": 2,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-060",
+      "split": "heldout",
+      "criterion": "Fewer than 5 sentences",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "under",
+        "bound": 5,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-061",
+      "split": "heldout",
+      "criterion": "The welcome message is two sentences long",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 2,
+        "upper_bound": null
+      }
+    },
+    {
+      "id": "held-062",
+      "split": "heldout",
+      "criterion": "The answer is between 3 and 6 sentences long",
+      "expected": {
+        "kind": "sentence_count",
+        "operator": "between",
+        "bound": 3,
+        "upper_bound": 6
+      }
+    },
+    {
+      "id": "held-063",
+      "split": "heldout",
+      "criterion": "Under 200 words unless the user asks for more detail",
+      "expected": null
+    },
+    {
+      "id": "held-064",
+      "split": "heldout",
+      "criterion": "Either under 80 words or organised as a bulleted list",
+      "expected": null
+    },
+    {
+      "id": "held-065",
+      "split": "heldout",
+      "criterion": "If the request is urgent, the reply is at most 50 words",
+      "expected": null
+    },
+    {
+      "id": "held-066",
+      "split": "heldout",
+      "criterion": "At least 300 words when the topic is complex",
+      "expected": null
+    },
+    {
+      "id": "held-067",
+      "split": "heldout",
+      "criterion": "Is the reply under 100 words, or does it link to a longer document?",
+      "expected": null
+    },
+    {
+      "id": "held-068",
+      "split": "heldout",
+      "criterion": "The answer is at most 150 words, or longer only if the code sample needs it",
+      "expected": null
+    },
+    {
+      "id": "held-069",
+      "split": "heldout",
+      "criterion": "When the user gives a word limit, the reply is within 10% of it",
+      "expected": null
+    },
+    {
+      "id": "held-070",
+      "split": "heldout",
+      "criterion": "Fewer than 60 words for a beginner; at least 200 for an expert",
+      "expected": null
+    },
+    {
+      "id": "held-071",
+      "split": "heldout",
+      "criterion": "The subject line is at most 8 words",
+      "expected": null
+    },
+    {
+      "id": "held-072",
+      "split": "heldout",
+      "criterion": "Each section is under 100 words",
+      "expected": null
+    },
+    {
+      "id": "held-073",
+      "split": "heldout",
+      "criterion": "The first paragraph is no more than 40 words",
+      "expected": null
+    },
+    {
+      "id": "held-074",
+      "split": "heldout",
+      "criterion": "Every bullet has fewer than 12 words",
+      "expected": null
+    },
+    {
+      "id": "held-075",
+      "split": "heldout",
+      "criterion": "The summary at the top is at most 60 words",
+      "expected": null
+    },
+    {
+      "id": "held-076",
+      "split": "heldout",
+      "criterion": "The code comment is under 25 words",
+      "expected": null
+    },
+    {
+      "id": "held-077",
+      "split": "heldout",
+      "criterion": "The explanation after the code block is under 120 words",
+      "expected": null
+    },
+    {
+      "id": "held-078",
+      "split": "heldout",
+      "criterion": "Is the greeting no longer than 5 words?",
+      "expected": null
+    },
+    {
+      "id": "held-079",
+      "split": "heldout",
+      "criterion": "The email body is at least 50 words, excluding the signature",
+      "expected": null
+    },
+    {
+      "id": "held-080",
+      "split": "heldout",
+      "criterion": "Each answer stays under 30 words",
+      "expected": null
+    },
+    {
+      "id": "held-081",
+      "split": "heldout",
+      "criterion": "Each sentence has at most 25 words",
+      "expected": null
+    },
+    {
+      "id": "held-082",
+      "split": "heldout",
+      "criterion": "The headline has between 4 and 9 words",
+      "expected": null
+    },
+    {
+      "id": "held-083",
+      "split": "heldout",
+      "criterion": "The JSON has an 'id' field",
+      "expected": null
+    },
+    {
+      "id": "held-084",
+      "split": "heldout",
+      "criterion": "The reply is valid JSON followed by a one-line explanation",
+      "expected": null
+    },
+    {
+      "id": "held-085",
+      "split": "heldout",
+      "criterion": "The JSON output is wrapped in a markdown code fence",
+      "expected": null
+    },
+    {
+      "id": "held-086",
+      "split": "heldout",
+      "criterion": "The 'summary' field in the JSON is under 40 words",
+      "expected": null
+    },
+    {
+      "id": "held-087",
+      "split": "heldout",
+      "criterion": "Every JSON key is in snake_case",
+      "expected": null
+    },
+    {
+      "id": "held-088",
+      "split": "heldout",
+      "criterion": "About 150 words",
+      "expected": null
+    },
+    {
+      "id": "held-089",
+      "split": "heldout",
+      "criterion": "Approximately three sentences",
+      "expected": null
+    },
+    {
+      "id": "held-090",
+      "split": "heldout",
+      "criterion": "Around 50 words, give or take",
+      "expected": null
+    },
+    {
+      "id": "held-091",
+      "split": "heldout",
+      "criterion": "Has at least 3 bullet points",
+      "expected": null
+    },
+    {
+      "id": "held-092",
+      "split": "heldout",
+      "criterion": "Includes no more than 2 emojis",
+      "expected": null
+    },
+    {
+      "id": "held-093",
+      "split": "heldout",
+      "criterion": "Is the reply under 300 characters?",
+      "expected": null
+    },
+    {
+      "id": "held-094",
+      "split": "heldout",
+      "criterion": "Has three to five paragraphs",
+      "expected": null
+    },
+    {
+      "id": "held-095",
+      "split": "heldout",
+      "criterion": "The tone is warm and professional",
+      "expected": null
+    },
+    {
+      "id": "held-096",
+      "split": "heldout",
+      "criterion": "Does the letter mention the warranty?",
+      "expected": null
+    },
+    {
+      "id": "held-097",
+      "split": "heldout",
+      "criterion": "Keeps it short",
+      "expected": null
+    },
+    {
+      "id": "held-098",
+      "split": "heldout",
+      "criterion": "Fits on one page",
+      "expected": null
+    },
+    {
+      "id": "held-099",
+      "split": "heldout",
+      "criterion": "Lists exactly 5 tips",
+      "expected": null
+    },
+    {
+      "id": "held-100",
+      "split": "heldout",
+      "criterion": "Uses at most 4 hashtags",
+      "expected": null
+    }
+  ]
+}
