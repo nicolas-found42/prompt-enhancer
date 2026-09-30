@@ -978,3 +978,55 @@ def test_cli_rejects_completion_token_cap_above_configured_bound(
         f"--max-tokens must be at most {measurement.MAX_COMPLETION_TOKENS}"
         in capsys.readouterr().err
     )
+
+
+def test_report_cli_scores_a_temporary_recording_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "id": "report-case",
+                        "split": "development",
+                        "criterion": "Write a friendly answer",
+                        "expected": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "max_tokens": 300,
+                "rows": [
+                    {
+                        "case_id": "report-case",
+                        "reply": "{}",
+                        "usage": {"completion_tokens": 4},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["measure_criterion_reading.py", "report", "--recording", str(recording)],
+    )
+
+    measurement.main()
+
+    output = capsys.readouterr().out
+    assert "# cheap (test-model): 1 criteria" in output
+    assert "| development | unresolved if p >= 0.5 | 0 | 1 | 0 | 0 |" in output
