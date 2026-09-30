@@ -29,8 +29,9 @@ from .jev import (
     parse_decision,
 )
 
-SENTENCE_DIAGNOSIS_PROTOCOL_VERSION = 2
+SENTENCE_DIAGNOSIS_PROTOCOL_VERSION = 3
 HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION = 1
+PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION = 2
 SENTENCE_EXISTENCE_QUESTION_VERSION = 1
 HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION = 1
 TASK_TAXONOMY_PROTOCOL_VERSION = 2
@@ -423,23 +424,109 @@ def default_gap_question(key: str) -> str:
     return cast(str, gap_question(item))
 
 
-_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])(?:[\"'”’\)\]]*)(?=\s+|$)|\n{2,}")
+# Possessive quantifiers and the lookbehind keep every scan linear: adjacent
+# character classes here never overlap, so backtracking could not change a match.
+_LEGACY_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])[\"'”’\)\]]*+(?=\s|$)|\n{2,}")
+_SENTENCE_TERMINAL = re.compile(r"(?<![.!?])[.!?]++[\"'”’)\]]*+(?=\s|$)")
+_NUMBER_ONLY = re.compile(r"\s*+\d++")
+_LIST_ITEM = re.compile(r"\s*+(?:[-*+]\s++|\d++[.)]\s++)")
+_ABBREVIATION = re.compile(
+    r"(?:\b(?:e\.g|i\.e|etc|vs|Dr|Mr|Mrs|Ms|Prof|Fig|Inc|U\.S)\.)$", re.IGNORECASE
+)
+_CONTINUATION = re.compile(r"\s*+(?:or|and|answers?|responses?)\b", re.IGNORECASE)
+_LONGEST_ABBREVIATION = 6
 _PROBLEM_QUESTIONS = {
     ProblemKind(key): value for key, value in jev_questions.PROBLEM_QUESTIONS.items()
 }
 POINTER_CALIBRATION_CRITERIA = "sentence-id-options-with-none"
 
 
-def split_sentences(prompt: str) -> tuple[Sentence, ...]:
-    """Split text while preserving exact offsets and deterministic IDs."""
+def split_sentences(
+    prompt: str, *, protocol_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION
+) -> tuple[Sentence, ...]:
+    """Split text while preserving exact offsets and deterministic IDs.
+
+    Protocol versions before 3 keep the original punctuation-only boundaries so
+    recorded replays reproduce the sentences they were captured with.
+    """
 
     if not prompt.strip():
         return ()
+    if protocol_version < SENTENCE_DIAGNOSIS_PROTOCOL_VERSION:
+        return _split_sentences_legacy(prompt)
+    boundaries: set[int] = set()
+    quoted = _quoted_spans(prompt)
+    opened = 0
+    latest_close = -1
+    scanned = 0
+    line_start = 0
+    numbered_line = -1
+    for match in _SENTENCE_TERMINAL.finditer(prompt):
+        start = match.start()
+        newline = prompt.rfind("\n", scanned, start)
+        if newline >= 0:
+            line_start = newline + 1
+        scanned = start
+        # Only a line's first terminal can follow a bare list number.
+        if line_start != numbered_line:
+            numbered_line = line_start
+            if _NUMBER_ONLY.fullmatch(prompt, line_start, start):
+                continue
+        if _ABBREVIATION.search(
+            prompt, max(0, start + 1 - _LONGEST_ABBREVIATION), start + 1
+        ):
+            continue
+        while opened < len(quoted) and quoted[opened][0] < match.end():
+            latest_close = max(latest_close, quoted[opened][1])
+            opened += 1
+        if latest_close >= match.end():
+            continue
+        if _CONTINUATION.match(prompt, match.end()):
+            continue
+        boundaries.add(match.end())
+    for match in re.finditer(r"\n+", prompt):
+        previous_start = prompt.rfind("\n", 0, match.start()) + 1
+        next_end = prompt.find("\n", match.end())
+        if next_end < 0:
+            next_end = len(prompt)
+        if _LIST_ITEM.match(prompt, previous_start, match.start()) or _LIST_ITEM.match(
+            prompt, match.end(), next_end
+        ):
+            boundaries.add(match.start())
+    boundaries.update(match.start() for match in re.finditer(r"\n{2,}", prompt))
     sentences: list[Sentence] = []
     position = 0
-    for match in _SENTENCE_BOUNDARY.finditer(prompt):
+    for end in sorted(boundaries):
+        _append_sentence(sentences, prompt[position:end], position, end)
+        position = end
+    _append_sentence(sentences, prompt[position:], position, len(prompt))
+    return tuple(sentences)
+
+
+def _quoted_spans(prompt: str) -> list[tuple[int, int]]:
+    """Return matched quotation spans ordered by their opening mark.
+
+    ASCII quotes pair in order and typographic quotes nest; an unmatched mark
+    opens no span, so it cannot hide later sentence boundaries.
+    """
+
+    straight = [match.start() for match in re.finditer('"', prompt)]
+    spans = list(zip(straight[0::2], straight[1::2], strict=False))
+    opening: list[int] = []
+    for match in re.finditer("[“”]", prompt):
+        if match.group() == "“":
+            opening.append(match.start())
+        elif opening:
+            spans.append((opening.pop(), match.start()))
+    return sorted(spans)
+
+
+def _split_sentences_legacy(prompt: str) -> tuple[Sentence, ...]:
+    sentences: list[Sentence] = []
+    position = 0
+    for match in _LEGACY_SENTENCE_BOUNDARY.finditer(prompt):
         end = match.start()
-        _append_sentence(sentences, prompt[position:end], position, position + end)
+        _append_sentence(sentences, prompt[position:end], position, end)
         position = end
     _append_sentence(sentences, prompt[position:], position, len(prompt))
     return tuple(sentences)
@@ -582,6 +669,7 @@ class Diagnoser:
     ) -> None:
         if sentence_protocol_version not in {
             HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
             SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         }:
             raise ValueError("unsupported sentence diagnosis protocol version")
@@ -1455,7 +1543,10 @@ class Diagnoser:
             planned.append(
                 _request(gap_question(item), state, type="noul", key=f"gap:{item.key}")
             )
-        for pair in self._sentence_request_pairs(split_sentences(prompt), state):
+        sentences = split_sentences(
+            prompt, protocol_version=self.sentence_protocol_version
+        )
+        for pair in self._sentence_request_pairs(sentences, state):
             planned.extend((pair["pointer_request"], pair["existence_request"]))
         planned.extend(self.additional_requests)
         seen: set[str] = set()
@@ -1691,7 +1782,13 @@ class Diagnoser:
                             threshold=threshold,
                         )
                     )
-        return tuple(gaps), tuple(near_misses), split_sentences(str(state["prompt"]))
+        return (
+            tuple(gaps),
+            tuple(near_misses),
+            split_sentences(
+                str(state["prompt"]), protocol_version=self.sentence_protocol_version
+            ),
+        )
 
     def _diagnose_sentences(
         self,

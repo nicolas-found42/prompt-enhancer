@@ -12,6 +12,7 @@ from prompt_enhancer.diagnosis import (
     TaskType,
 )
 from prompt_enhancer.gateway import ProviderError, ScriptedGateway
+from prompt_enhancer.optimizer import _apply_assumption
 
 # These regressions pin the pre-screening request protocol; current screening
 # and shared-state grading are exercised in test_issue44_screen_and_grade.py.
@@ -973,6 +974,93 @@ def test_update_assumption_requires_recorded_assumption_and_jev_answer() -> None
         assert "meaning check" in str(exc)
     else:
         raise AssertionError("unavailable Jev check should block the edit")
+
+
+def test_assumption_edit_does_not_replace_substrings_or_ambiguous_occurrences() -> None:
+    assert (
+        _apply_assumption(
+            "Do not mention skids or trucks.", "Audience", "kids", "teens"
+        )
+        is None
+    )
+    assert (
+        _apply_assumption(
+            "Return the result as JSON. Explain the json schema briefly.",
+            "Format",
+            "json",
+            "YAML",
+        )
+        is None
+    )
+
+
+def test_assumption_edit_treats_underscores_as_part_of_the_word() -> None:
+    assert _apply_assumption("Use the foo_bar option.", "Option", "foo", "baz") is None
+
+
+def test_assumption_edit_keeps_offsets_when_case_folding_changes_length() -> None:
+    assert (
+        _apply_assumption("Context: Straße. Now answer.", "Address", "STRASSE", "Weg")
+        is None
+    )
+    assert (
+        _apply_assumption("Context: Straße. Now answer.", "Address", "Straße", "Weg")
+        == "Context: Weg. Now answer."
+    )
+
+
+def test_assumption_edit_rejects_a_match_that_spans_a_sentence_boundary() -> None:
+    assert (
+        _apply_assumption(
+            "Summarize it. Keep it short.", "Style", "it. Keep", "them. Keep"
+        )
+        is None
+    )
+
+
+def test_assumption_edit_uses_the_runs_sentence_protocol() -> None:
+    prompt = "Use e.g. Python. Keep it short."
+
+    assert (
+        _apply_assumption(
+            prompt, "Style", "e.g. Python", "Rust", sentence_protocol_version=3
+        )
+        == "Use Rust. Keep it short."
+    )
+    assert (
+        _apply_assumption(
+            prompt, "Style", "e.g. Python", "Rust", sentence_protocol_version=2
+        )
+        is None
+    )
+
+
+def test_assumption_edit_replaces_a_unique_whole_word_occurrence() -> None:
+    assert (
+        _apply_assumption("Return the result as JSON.", "Format", "json", "YAML")
+        == "Return the result as YAML."
+    )
+
+
+def test_assumption_edit_rejects_repeated_or_reworded_values() -> None:
+    assert (
+        _apply_assumption(
+            "Summarize in 5 bullets. Address the 5 stakeholders by name.",
+            "Length",
+            "5",
+            "3",
+        )
+        is None
+    )
+    assert (
+        _apply_assumption(
+            "Aim this at a general readership. Keep it short.",
+            "Audience",
+            "general public",
+            "engineers",
+        )
+        is None
+    )
 
 
 def _clarification_gateway(

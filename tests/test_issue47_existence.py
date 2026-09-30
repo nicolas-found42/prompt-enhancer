@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -13,6 +14,7 @@ from prompt_enhancer.diagnosis import (
     Diagnoser,
     DiagnosisRubric,
     ProblemKind,
+    split_sentences,
 )
 from prompt_enhancer.evaluation.calibration import (
     CalibrationArtifact,
@@ -394,7 +396,10 @@ def test_matching_existence_calibration_overrides_the_rubric_cutoff(
         },
         "type": "noul",
         "key": "existence:vagueness:0",
-        "question_schema": {"protocol": 2, "question": 1},
+        "question_schema": {
+            "protocol": SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            "question": 1,
+        },
     }
     identity = runtime_question_identity(
         "existence:vagueness",
@@ -491,3 +496,137 @@ def test_legacy_diagnosis_payload_deserializes_without_inventing_existence_value
     assert (
         DiagnosisRubric(task_types=()).existence_threshold_for("contradiction") == 0.8
     )
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        (
+            "Use e.g. Python 3.5 to parse v1.2. Dr. Smith wrote it.",
+            ["Use e.g. Python 3.5 to parse v1.2.", "Dr. Smith wrote it."],
+        ),
+        (
+            "You are a helpful assistant. Do not mention the U.S. government. Be concise.",
+            [
+                "You are a helpful assistant.",
+                "Do not mention the U.S. government.",
+                "Be concise.",
+            ],
+        ),
+        (
+            "Rules:\n- be brief\n- be kind\nWrite a poem",
+            ["Rules:", "- be brief", "- be kind", "Write a poem"],
+        ),
+        (
+            "Steps:\n1. Read the file.\n2. Summarize it.",
+            ["Steps:", "1. Read the file.", "2. Summarize it."],
+        ),
+        (
+            'Translate to French: "Hello. How are you?" Keep the tone friendly.',
+            ['Translate to French: "Hello. How are you?"', "Keep the tone friendly."],
+        ),
+        (
+            '"Yes." or "No." answers are not acceptable.',
+            ['"Yes." or "No." answers are not acceptable.'],
+        ),
+        (
+            "Use option A. Then do option B.",
+            ["Use option A.", "Then do option B."],
+        ),
+        (
+            "See https://a.com/x.html. Then reply.",
+            ["See https://a.com/x.html.", "Then reply."],
+        ),
+        ("Email a@example.com. Then reply.", ["Email a@example.com.", "Then reply."]),
+        (
+            "Version 2.0 is out. Update your code to v2.1.3.",
+            ["Version 2.0 is out.", "Update your code to v2.1.3."],
+        ),
+    ],
+)
+def test_split_sentences_preserves_natural_units_and_offsets(
+    prompt: str, expected: list[str]
+) -> None:
+    sentences = split_sentences(prompt)
+
+    assert [sentence.text for sentence in sentences] == expected
+    assert all(
+        prompt[sentence.start : sentence.end] == sentence.text for sentence in sentences
+    )
+    assert [sentence.id for sentence in sentences] == [
+        f"s{index:04d}" for index in range(1, len(sentences) + 1)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        (
+            "Translate to French: “Hello. How are you?” Keep the tone friendly.",
+            ["Translate to French: “Hello. How are you?”", "Keep the tone friendly."],
+        ),
+        (
+            "“Yes.” or “No.” answers are not acceptable.",
+            ["“Yes.” or “No.” answers are not acceptable."],
+        ),
+        (
+            "She said “stop. Now leave. Then go.",
+            ["She said “stop.", "Now leave.", "Then go."],
+        ),
+        (
+            'He said "stop. Now leave. Then go.',
+            ['He said "stop.', "Now leave.", "Then go."],
+        ),
+    ],
+)
+def test_split_sentences_handles_typographic_and_unmatched_quotes(
+    prompt: str, expected: list[str]
+) -> None:
+    assert [sentence.text for sentence in split_sentences(prompt)] == expected
+
+
+def test_sentence_protocol_version_tracks_splitter_change() -> None:
+    assert SENTENCE_DIAGNOSIS_PROTOCOL_VERSION == 3
+
+
+def test_historical_sentence_protocols_keep_the_original_boundaries() -> None:
+    prompt = "Use e.g. Python 3.5 to parse v1.2.\n- be brief\n- be kind"
+
+    current = [sentence.text for sentence in split_sentences(prompt)]
+    legacy = [sentence.text for sentence in split_sentences(prompt, protocol_version=2)]
+
+    assert current == ["Use e.g. Python 3.5 to parse v1.2.", "- be brief", "- be kind"]
+    assert legacy == ["Use e.g.", "Python 3.5 to parse v1.2.", "- be brief\n- be kind"]
+
+
+@pytest.mark.parametrize("protocol_version", [2, 3])
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "x" + "!" * 200_000 + "y",
+        'a."' + '"' * 200_000 + "y",
+        "Hello there. " * 15_000,
+        "- item\n" * 30_000,
+        "a.\tb" * 50_000,
+        "a.\n" + "0" * 200_000 + "x\n" + "0" * 200_000 + "\n- y",
+        "a." + " " * 200_000 + "x\n" + " " * 200_000 + "b",
+    ],
+    ids=[
+        "punctuation-run",
+        "closing-quote-run",
+        "one-line",
+        "bullet-lines",
+        "tab-gaps",
+        "digit-runs",
+        "space-runs",
+    ],
+)
+def test_split_sentences_scales_linearly_on_adversarial_prompts(
+    prompt: str, protocol_version: int
+) -> None:
+    started = time.perf_counter()
+    sentences = split_sentences(prompt, protocol_version=protocol_version)
+
+    # The quadratic splitter needed several seconds here; linear needs tens of ms.
+    assert time.perf_counter() - started < 1.5
+    assert all(prompt[item.start : item.end] == item.text for item in sentences)

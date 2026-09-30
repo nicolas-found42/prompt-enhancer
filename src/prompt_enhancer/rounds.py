@@ -432,6 +432,7 @@ def run_round(
             writer_model=settings.writer_model,
             faithfulness_threshold=plan.faithfulness_threshold,
             screen_protocol_version=2 if plan.writer_instruction_version >= 5 else 1,
+            strict_expected=plan.writer_instruction_version >= 11,
             screen_cache=plan.screen_cache,
             decision_policy=plan.decision_policy,
             run_id=plan.run_id,

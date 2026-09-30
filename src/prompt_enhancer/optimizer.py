@@ -9,6 +9,7 @@ and a durable run identifier.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -32,6 +33,7 @@ from .diagnosis import (
     DEFAULT_RUBRIC,
     HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+    PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     TASK_TAXONOMY_PROTOCOL_VERSION,
     ConfirmedGap,
@@ -39,6 +41,7 @@ from .diagnosis import (
     DiagnosisReport,
     DiagnosisRubric,
     GapImpact,
+    split_sentences,
 )
 from .failures import describe_failure
 from .gateway import (
@@ -47,8 +50,6 @@ from .gateway import (
     HttpGateway,
     HttpTransport,
     ScriptedGateway,
-    completion_text,
-    writer_messages,
 )
 from .history import RunHistory
 from .jev import NoulDecision, parse_decision
@@ -136,6 +137,7 @@ class PromptOptimizer:
             raise ValueError("faithfulness threshold must be a probability")
         if sentence_diagnosis_version not in {
             HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
             SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         }:
             raise ValueError("unsupported sentence diagnosis protocol version")
@@ -970,30 +972,17 @@ class PromptOptimizer:
         final_prompt = str(result.get("final_prompt") or record.get("prompt") or "")
         usage_before = self._usage_cost()
         updated_prompt = _apply_assumption(
-            final_prompt, key, old_value, value, previous.get("source")
+            final_prompt,
+            key,
+            old_value,
+            value,
+            previous.get("source"),
+            sentence_protocol_version=self.sentence_diagnosis_version,
         )
         if updated_prompt is None:
-            try:
-                response = self.gateway.chat(
-                    self.config.writer_model,
-                    writer_messages(
-                        "Revise only the stated assumption in the final prompt. Preserve all other wording and return only the revised prompt.",
-                        {
-                            "original_prompt": record["prompt"],
-                            "final_prompt": final_prompt,
-                            "assumption": {
-                                "key": key,
-                                "previous": old_value,
-                                "corrected": value,
-                            },
-                        },
-                    ),
-                    role="writer",
-                    run_id=run_id,
-                )
-                updated_prompt = completion_text(response).strip()
-            except Exception as exc:
-                raise RuntimeError("assumption edit could not be applied") from exc
+            raise ValueError(
+                "assumption value is not stated unambiguously in the final prompt"
+            )
         if not updated_prompt or updated_prompt == final_prompt:
             raise ValueError("assumption edit did not update the final prompt")
         check = self._assumption_meaning_check(
@@ -1213,7 +1202,13 @@ def _clarification_label(key: str, source: object = None) -> str:
 
 
 def _apply_assumption(
-    prompt: str, key: str, old_value: str, value: str, source: object = None
+    prompt: str,
+    key: str,
+    old_value: str,
+    value: str,
+    source: object = None,
+    *,
+    sentence_protocol_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
 ) -> str | None:
     label = _clarification_label(key, source)
     line = f"{label}: {value}"
@@ -1222,9 +1217,22 @@ def _apply_assumption(
         if existing.strip().casefold() == f"{label.casefold()}: {old_value.casefold()}":
             lines[index] = line
             return "\n".join(lines)
-    if old_value and prompt.count(old_value) == 1:
-        return prompt.replace(old_value, value, 1)
-    return None
+    if not old_value:
+        return None
+    # Match on the original string so offsets stay valid when case folding would
+    # change its length (for example "ß"); underscores count as word characters.
+    matches = list(
+        re.finditer(rf"(?<!\w){re.escape(old_value)}(?!\w)", prompt, re.IGNORECASE)
+    )
+    if len(matches) != 1:
+        return None
+    start, end = matches[0].span()
+    if not any(
+        item.start <= start and end <= item.end
+        for item in split_sentences(prompt, protocol_version=sentence_protocol_version)
+    ):
+        return None
+    return prompt[:start] + value + prompt[end:]
 
 
 def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
