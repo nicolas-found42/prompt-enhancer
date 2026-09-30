@@ -1107,10 +1107,95 @@ def test_every_fixture_case_declares_a_valid_label_origin_and_review_status() ->
     }
 
 
-def test_shipped_labels_are_unreviewed_and_carry_no_reviewer_claims() -> None:
+AUDIT_RECORD = (
+    Path(__file__).parent
+    / "fixtures"
+    / "evaluation"
+    / "criterion_label_audit_2026-09-30.json"
+)
+
+
+def _audit_record() -> dict[str, object]:
+    return json.loads(AUDIT_RECORD.read_text(encoding="utf-8"))
+
+
+def test_shipped_labels_are_audited_and_never_claimed_as_human_reviewed() -> None:
+    record = _audit_record()
+
     for case in load_cases("all"):
-        assert case["review_status"] == "unreviewed"
-        assert not {"reviewed_by", "reviewed_on", "audit_ref"} & set(case)
+        assert case["review_status"] == "audited"
+        assert "not a person" in case["reviewed_by"]
+        assert case["audit_ref"] == (
+            "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
+        )
+        assert "previous_expected" not in case
+    assert record["human_review"] is False
+    assert "Not a human review" in str(record["note"])
+
+
+def test_the_audit_record_covers_every_label_and_explains_each_contested_case() -> None:
+    record = _audit_record()
+    cases = {case["id"]: case for case in load_cases("all")}
+    per_case = record["per_case"]
+    contested = record["contested_cases"]
+
+    assert set(per_case) == set(cases)
+    assert record["result"]["cases"] == len(cases)
+    assert record["result"]["labels_changed"] == 0
+    assert record["result"]["agree_in_all_five_runs"] == sum(
+        row["agree_runs"] == 5 for row in per_case.values()
+    )
+    assert record["result"]["contested"] == len(contested)
+    unanimous = {cid for cid, row in per_case.items() if row["agree_runs"] == 5}
+    assert record["result"]["contested_also_agreed_in_all_five_runs"] == len(
+        {entry["id"] for entry in contested} & unanimous
+    )
+    for entry in contested:
+        case = cases[entry["id"]]
+        assert entry["criterion"] == case["criterion"]
+        assert entry["label"] == case["expected"]
+        assert entry["adjudication"] == "label stands"
+        assert entry["rationale"]
+    assert len({entry["id"] for entry in contested}) == len(contested)
+
+
+def test_the_recommended_cutoff_keeps_a_margin_below_the_lowest_risky_case() -> None:
+    record = _audit_record()
+    policy = record["policy"]
+    cases = {case["id"]: case for case in load_cases("all")}
+    risky = policy["null_labelled_cases_that_could_yield_a_check"]["cases"]
+
+    # Every listed case is null-labelled and could yield a check without the gate.
+    assert risky
+    for entry in risky:
+        assert cases[entry["id"]]["expected"] is None
+        assert record["per_case"][entry["id"]]["yields_check_without_partial_gate"]
+    # Only those cases can be confidently wrong, so the cutoff must sit clearly
+    # below the lowest `partial` among the ones that only `partial` blocks.
+    lowest = min(e["partial"][0] for e in risky if e["blocked_by"] == "partial")
+    assert (
+        lowest
+        == policy["null_labelled_cases_that_could_yield_a_check"][
+            "lowest_partial_among_cases_blocked_only_by_partial"
+        ]
+    )
+    recommended = policy["recommended"]
+    assert recommended["partial"] <= lowest - 0.05
+    assert recommended["conditional"] == recommended["approximate"] == 0.50
+    assert recommended["json_negation_band"] == [0.35, 0.65]
+    # Criteria that cannot yield a check are not confident-wrong risks.
+    assert not record["per_case"]["held-084"]["yields_check_without_partial_gate"]
+
+
+def test_a_valid_audited_case_has_no_provenance_errors() -> None:
+    audited = _labelled(
+        review_status="audited",
+        reviewed_by="auditors (not a person)",
+        reviewed_on="2026-09-30",
+        audit_ref="tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json",
+    )
+
+    assert measurement.label_provenance_errors(audited) == []
 
 
 def test_a_valid_unreviewed_case_has_no_provenance_errors() -> None:
@@ -1126,6 +1211,25 @@ def test_a_valid_unreviewed_case_has_no_provenance_errors() -> None:
         ({"review_status": "approved"}, "review_status"),
         ({"reviewed_by": "maintainer"}, "unreviewed"),
         ({"audit_ref": "#116"}, "unreviewed"),
+        ({"review_status": "audited"}, "reviewed_by"),
+        (
+            {
+                "review_status": "audited",
+                "reviewed_by": "auditors",
+                "reviewed_on": "2026-09-30",
+            },
+            "audit_ref",
+        ),
+        (
+            {
+                "review_status": "audited",
+                "reviewed_by": "auditors",
+                "reviewed_on": "2026-09-30",
+                "audit_ref": "record.json",
+                "previous_expected": None,
+            },
+            "audited case must not carry previous_expected",
+        ),
         ({"review_status": "reviewed"}, "reviewed_by"),
         (
             {
@@ -1334,7 +1438,12 @@ def test_synthetic_jev_recording_report_tallies_are_pinned_offline(
         for line in lines
     )
     assert "unusable answers: held-099" in lines
-    assert "Label review: development 10 unreviewed; heldout 4 unreviewed" in lines
+    assert "Label review: development 10 audited; heldout 4 audited" in lines
+    assert not any(line.startswith("Unreviewed labels") for line in lines)
+    assert any(
+        line.startswith("Audited labels: confirmed by blind Jev readings")
+        for line in lines
+    )
     assert _table_rows(lines) == [
         "| split | policy | correct check | correct abstain | missed | wrong |",
         "| development | regex `check_criterion` | 3 | 3 | 2 | 2 |",

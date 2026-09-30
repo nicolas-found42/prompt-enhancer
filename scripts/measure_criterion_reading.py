@@ -386,7 +386,7 @@ def fixture_splits() -> tuple[str, ...]:
 
 
 LABEL_ORIGINS = ("issue-116", "claude-2026-09-29")
-REVIEW_STATUSES = ("unreviewed", "reviewed", "corrected")
+REVIEW_STATUSES = ("unreviewed", "audited", "reviewed", "corrected")
 UNREVIEWED = "unreviewed"
 _CASE_FIELDS = frozenset({"id", "split", "criterion", "expected"})
 _REVIEW_FIELDS = frozenset({"reviewed_by", "reviewed_on", "audit_ref"})
@@ -408,9 +408,11 @@ def label_provenance_errors(case: Mapping[str, Any]) -> list[str]:
 
     Every case names where its label came from and whether a person has
     reviewed it. ``unreviewed`` cases may not carry any reviewer claim, so a
-    generated label can never look approved. ``reviewed`` needs a reviewer and
-    an ISO date; ``corrected`` also needs the audit reference for the change
-    and the label it replaced.
+    generated label can never look approved. ``audited`` means an automated
+    audit confirmed the label and no person did: it needs the auditors, an ISO
+    date and the audit record. ``reviewed`` needs a reviewer and an ISO date;
+    ``corrected`` also needs the audit reference for the change and the label
+    it replaced.
     """
     errors: list[str] = []
     if case.get("label_origin") not in LABEL_ORIGINS:
@@ -422,19 +424,21 @@ def label_provenance_errors(case: Mapping[str, Any]) -> list[str]:
     if status == UNREVIEWED and (present or "previous_expected" in case):
         claims = ", ".join(sorted(present | {"previous_expected"} & set(case)))
         errors.append(f"an unreviewed case must not carry review fields: {claims}")
-    if status in {"reviewed", "corrected"}:
+    if status in {"audited", "reviewed", "corrected"}:
         for field in ("reviewed_by", "reviewed_on"):
             if not isinstance(case.get(field), str) or not case[field].strip():
                 errors.append(f"a {status} case needs {field}")
         reviewed_on = case.get("reviewed_on")
         if isinstance(reviewed_on, str) and not _is_iso_date(reviewed_on):
             errors.append("reviewed_on must be an existing ISO date (YYYY-MM-DD)")
-    if status == "corrected":
+    if status in {"audited", "corrected"}:
         audit_ref = case.get("audit_ref")
         if not isinstance(audit_ref, str) or not audit_ref.strip():
-            errors.append("a corrected case needs an audit_ref")
-        if "previous_expected" not in case:
-            errors.append("a corrected case needs previous_expected")
+            errors.append(f"an {status} case needs an audit_ref")
+    if status == "corrected" and "previous_expected" not in case:
+        errors.append("a corrected case needs previous_expected")
+    if status == "audited" and "previous_expected" in case:
+        errors.append("an audited case must not carry previous_expected")
     allowed = _CASE_FIELDS | {"label_origin", "review_status", "previous_expected"}
     allowed |= _REVIEW_FIELDS
     errors.extend(f"unknown field {field}" for field in sorted(set(case) - allowed))
@@ -768,6 +772,11 @@ def _print_label_review(cases: Sequence[Mapping[str, Any]]) -> None:
         print(
             "Unreviewed labels: scores measure agreement with labels no maintainer "
             "has reviewed (review is tracked in issue #116).\n"
+        )
+    if any(counter["audited"] for counter in statuses.values()):
+        print(
+            "Audited labels: confirmed by blind Jev readings and a model re-read, "
+            "not by a person (see each case's audit_ref).\n"
         )
 
 

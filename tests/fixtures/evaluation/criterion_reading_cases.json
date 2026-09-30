@@ -16,13 +16,14 @@
     "review_status": {
       "unreviewed": "No person has reviewed the label. Must not carry reviewed_by, reviewed_on, audit_ref or previous_expected.",
       "reviewed": "A person confirmed the label as written. Needs reviewed_by and reviewed_on (YYYY-MM-DD).",
-      "corrected": "A person changed the label. Also needs audit_ref (link to the review record) and previous_expected (the label it replaced)."
+      "corrected": "A person changed the label. Also needs audit_ref (link to the review record) and previous_expected (the label it replaced).",
+      "audited": "Confirmed by automated audit, not by a person: compared with blind Jev readings and re-read by a model. Needs reviewed_by (the auditors), reviewed_on and audit_ref (the audit record). Never counts as human review."
     },
-    "note": "Every case starts unreviewed. Reviewing the held-out labels is tracked in issue #116; a generated label is never marked reviewed here without that record."
+    "note": "Every case starts unreviewed. All 150 were audited on 2026-09-30 (see the audit record); no person has reviewed them. Human review is still welcome and would set reviewed or corrected."
   },
   "splits": {
     "development": "The 50 criteria and labels from issue #116, used to word the extraction questions.",
-    "heldout": "100 criteria written after the questions were fixed and never used to word or tune them. Labelled by Claude on 2026-09-29; not yet reviewed by a maintainer."
+    "heldout": "100 criteria written after the questions were fixed and never used to word or tune them. Labelled by Claude on 2026-09-29; audited (not human-reviewed) on 2026-09-30."
   },
   "cases": [
     {
@@ -36,7 +37,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-002",
@@ -49,7 +53,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-003",
@@ -62,7 +69,10 @@
         "upper_bound": 5
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-004",
@@ -75,7 +85,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-005",
@@ -88,7 +101,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-006",
@@ -101,7 +117,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-007",
@@ -114,7 +133,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-008",
@@ -127,7 +149,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-009",
@@ -140,7 +165,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-010",
@@ -153,7 +181,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-011",
@@ -166,7 +197,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-012",
@@ -179,7 +213,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-013",
@@ -192,7 +229,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-014",
@@ -205,7 +245,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-015",
@@ -218,7 +261,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-016",
@@ -231,7 +277,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-017",
@@ -244,7 +293,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-018",
@@ -257,7 +309,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-019",
@@ -270,7 +325,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-020",
@@ -283,7 +341,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-021",
@@ -296,7 +357,10 @@
         "upper_bound": 150
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-022",
@@ -309,7 +373,10 @@
         "upper_bound": 150
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-023",
@@ -322,7 +389,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-024",
@@ -335,7 +405,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-025",
@@ -348,7 +421,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-026",
@@ -361,7 +437,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-027",
@@ -374,7 +453,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-028",
@@ -385,7 +467,10 @@
         "negated": false
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-029",
@@ -396,7 +481,10 @@
         "negated": false
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-030",
@@ -407,7 +495,10 @@
         "negated": false
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-031",
@@ -418,7 +509,10 @@
         "negated": true
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-032",
@@ -431,7 +525,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-033",
@@ -444,7 +541,10 @@
         "upper_bound": null
       },
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-034",
@@ -452,7 +552,10 @@
       "criterion": "Under 100 words, or a table if longer",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-035",
@@ -460,7 +563,10 @@
       "criterion": "Under 50 words if the user asks for a summary",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-036",
@@ -468,7 +574,10 @@
       "criterion": "If the assistant refuses, the reply is at least 100 words",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-037",
@@ -476,7 +585,10 @@
       "criterion": "Each bullet is under 15 words",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-038",
@@ -484,7 +596,10 @@
       "criterion": "Each paragraph has at least 3 sentences",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-039",
@@ -492,7 +607,10 @@
       "criterion": "The intro paragraph is under 50 words",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-040",
@@ -500,7 +618,10 @@
       "criterion": "The title is at most 10 words",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-041",
@@ -508,7 +629,10 @@
       "criterion": "The response uses fewer than 20 words per sentence",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-042",
@@ -516,7 +640,10 @@
       "criterion": "The reply contains valid JSON followed by a short explanation",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-043",
@@ -524,7 +651,10 @@
       "criterion": "The JSON has a 'name' field holding the customer's name",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-044",
@@ -532,7 +662,10 @@
       "criterion": "The answer cites at least 2 sources",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-045",
@@ -540,7 +673,10 @@
       "criterion": "Uses no more than 2 exclamation marks",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-046",
@@ -548,7 +684,10 @@
       "criterion": "Response is between 2 and 3 paragraphs",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-047",
@@ -556,7 +695,10 @@
       "criterion": "Roughly 100 words",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-048",
@@ -564,7 +706,10 @@
       "criterion": "Acknowledges the student's urgency or deadline without being condescending",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-049",
@@ -572,7 +717,10 @@
       "criterion": "Summarizes the execution plan clearly",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "dev-050",
@@ -580,7 +728,10 @@
       "criterion": "Explains the reasoning in a friendly tone",
       "expected": null,
       "label_origin": "issue-116",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-001",
@@ -593,7 +744,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-002",
@@ -606,7 +760,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-003",
@@ -619,7 +776,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-004",
@@ -632,7 +792,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-005",
@@ -645,7 +808,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-006",
@@ -658,7 +824,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-007",
@@ -671,7 +840,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-008",
@@ -684,7 +856,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-009",
@@ -697,7 +872,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-010",
@@ -710,7 +888,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-011",
@@ -723,7 +904,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-012",
@@ -736,7 +920,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-013",
@@ -749,7 +936,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-014",
@@ -762,7 +952,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-015",
@@ -775,7 +968,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-016",
@@ -788,7 +984,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-017",
@@ -801,7 +1000,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-018",
@@ -814,7 +1016,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-019",
@@ -827,7 +1032,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-020",
@@ -840,7 +1048,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-021",
@@ -853,7 +1064,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-022",
@@ -866,7 +1080,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-023",
@@ -879,7 +1096,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-024",
@@ -892,7 +1112,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-025",
@@ -905,7 +1128,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-026",
@@ -918,7 +1144,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-027",
@@ -931,7 +1160,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-028",
@@ -944,7 +1176,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-029",
@@ -957,7 +1192,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-030",
@@ -970,7 +1208,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-031",
@@ -983,7 +1224,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-032",
@@ -996,7 +1240,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-033",
@@ -1009,7 +1256,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-034",
@@ -1022,7 +1272,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-035",
@@ -1035,7 +1288,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-036",
@@ -1048,7 +1304,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-037",
@@ -1061,7 +1320,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-038",
@@ -1074,7 +1336,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-039",
@@ -1087,7 +1352,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-040",
@@ -1100,7 +1368,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-041",
@@ -1113,7 +1384,10 @@
         "upper_bound": 80
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-042",
@@ -1126,7 +1400,10 @@
         "upper_bound": 45
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-043",
@@ -1139,7 +1416,10 @@
         "upper_bound": 300
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-044",
@@ -1152,7 +1432,10 @@
         "upper_bound": 90
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-045",
@@ -1165,7 +1448,10 @@
         "upper_bound": 300
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-046",
@@ -1178,7 +1464,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-047",
@@ -1191,7 +1480,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-048",
@@ -1204,7 +1496,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-049",
@@ -1217,7 +1512,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-050",
@@ -1230,7 +1528,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-051",
@@ -1241,7 +1542,10 @@
         "negated": false
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-052",
@@ -1252,7 +1556,10 @@
         "negated": false
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-053",
@@ -1263,7 +1570,10 @@
         "negated": false
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-054",
@@ -1274,7 +1584,10 @@
         "negated": false
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-055",
@@ -1285,7 +1598,10 @@
         "negated": true
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-056",
@@ -1296,7 +1612,10 @@
         "negated": true
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-057",
@@ -1309,7 +1628,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-058",
@@ -1322,7 +1644,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-059",
@@ -1335,7 +1660,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-060",
@@ -1348,7 +1676,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-061",
@@ -1361,7 +1692,10 @@
         "upper_bound": null
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-062",
@@ -1374,7 +1708,10 @@
         "upper_bound": 6
       },
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-063",
@@ -1382,7 +1719,10 @@
       "criterion": "Under 200 words unless the user asks for more detail",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-064",
@@ -1390,7 +1730,10 @@
       "criterion": "Either under 80 words or organised as a bulleted list",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-065",
@@ -1398,7 +1741,10 @@
       "criterion": "If the request is urgent, the reply is at most 50 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-066",
@@ -1406,7 +1752,10 @@
       "criterion": "At least 300 words when the topic is complex",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-067",
@@ -1414,7 +1763,10 @@
       "criterion": "Is the reply under 100 words, or does it link to a longer document?",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-068",
@@ -1422,7 +1774,10 @@
       "criterion": "The answer is at most 150 words, or longer only if the code sample needs it",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-069",
@@ -1430,7 +1785,10 @@
       "criterion": "When the user gives a word limit, the reply is within 10% of it",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-070",
@@ -1438,7 +1796,10 @@
       "criterion": "Fewer than 60 words for a beginner; at least 200 for an expert",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-071",
@@ -1446,7 +1807,10 @@
       "criterion": "The subject line is at most 8 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-072",
@@ -1454,7 +1818,10 @@
       "criterion": "Each section is under 100 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-073",
@@ -1462,7 +1829,10 @@
       "criterion": "The first paragraph is no more than 40 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-074",
@@ -1470,7 +1840,10 @@
       "criterion": "Every bullet has fewer than 12 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-075",
@@ -1478,7 +1851,10 @@
       "criterion": "The summary at the top is at most 60 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-076",
@@ -1486,7 +1862,10 @@
       "criterion": "The code comment is under 25 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-077",
@@ -1494,7 +1873,10 @@
       "criterion": "The explanation after the code block is under 120 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-078",
@@ -1502,7 +1884,10 @@
       "criterion": "Is the greeting no longer than 5 words?",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-079",
@@ -1510,7 +1895,10 @@
       "criterion": "The email body is at least 50 words, excluding the signature",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-080",
@@ -1518,7 +1906,10 @@
       "criterion": "Each answer stays under 30 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-081",
@@ -1526,7 +1917,10 @@
       "criterion": "Each sentence has at most 25 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-082",
@@ -1534,7 +1928,10 @@
       "criterion": "The headline has between 4 and 9 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-083",
@@ -1542,7 +1939,10 @@
       "criterion": "The JSON has an 'id' field",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-084",
@@ -1550,7 +1950,10 @@
       "criterion": "The reply is valid JSON followed by a one-line explanation",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-085",
@@ -1558,7 +1961,10 @@
       "criterion": "The JSON output is wrapped in a markdown code fence",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-086",
@@ -1566,7 +1972,10 @@
       "criterion": "The 'summary' field in the JSON is under 40 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-087",
@@ -1574,7 +1983,10 @@
       "criterion": "Every JSON key is in snake_case",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-088",
@@ -1582,7 +1994,10 @@
       "criterion": "About 150 words",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-089",
@@ -1590,7 +2005,10 @@
       "criterion": "Approximately three sentences",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-090",
@@ -1598,7 +2016,10 @@
       "criterion": "Around 50 words, give or take",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-091",
@@ -1606,7 +2027,10 @@
       "criterion": "Has at least 3 bullet points",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-092",
@@ -1614,7 +2038,10 @@
       "criterion": "Includes no more than 2 emojis",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-093",
@@ -1622,7 +2049,10 @@
       "criterion": "Is the reply under 300 characters?",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-094",
@@ -1630,7 +2060,10 @@
       "criterion": "Has three to five paragraphs",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-095",
@@ -1638,7 +2071,10 @@
       "criterion": "The tone is warm and professional",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-096",
@@ -1646,7 +2082,10 @@
       "criterion": "Does the letter mention the warranty?",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-097",
@@ -1654,7 +2093,10 @@
       "criterion": "Keeps it short",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-098",
@@ -1662,7 +2104,10 @@
       "criterion": "Fits on one page",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-099",
@@ -1670,7 +2115,10 @@
       "criterion": "Lists exactly 5 tips",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     },
     {
       "id": "held-100",
@@ -1678,7 +2126,10 @@
       "criterion": "Uses at most 4 hashtags",
       "expected": null,
       "label_origin": "claude-2026-09-29",
-      "review_status": "unreviewed"
+      "review_status": "audited",
+      "reviewed_by": "jev typesafe/jev-1.13-20260917 (5 blind readings) and claude-sonnet-5-5 (second read); not a person",
+      "reviewed_on": "2026-09-30",
+      "audit_ref": "tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json"
     }
   ]
 }

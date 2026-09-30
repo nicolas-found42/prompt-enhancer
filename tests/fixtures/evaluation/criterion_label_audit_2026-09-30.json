@@ -1,0 +1,2457 @@
+{
+  "schema_version": 1,
+  "audited_on": "2026-09-30",
+  "delegated_by": "maintainer (issue #116 owner), instructing that Jev do the review",
+  "human_review": false,
+  "note": "Not a human review. Labels were compared with five blind Jev readings and re-read once by the model that wrote the held-out labels. Nothing here replaces a person confirming them.",
+  "auditors": [
+    {
+      "name": "jev",
+      "model": "typesafe/jev-1.13-20260917",
+      "runs": 5,
+      "blind_to_labels": true,
+      "questions_digest": "b11d101b67e6619b",
+      "cost_usd_per_criterion": 5.5e-05,
+      "median_request_seconds": 0.26
+    },
+    {
+      "name": "claude",
+      "model": "claude-sonnet-5-5",
+      "role": "second read of all 150 labels and adjudication of contested cases; also wrote the 100 held-out labels, so it is not independent of them"
+    }
+  ],
+  "result": {
+    "cases": 150,
+    "agree_in_all_five_runs": 141,
+    "contested": 15,
+    "labels_changed": 0,
+    "finding": "No label was found to be wrong. One labelling-convention inconsistency was found: short-form named artifacts are treated as the whole output for some nouns (tagline, slogan, blurb, bio, welcome message, email body) and as a part for others (headline, title, subject line, greeting, code comment). Both are context-dependent; consumers should abstain when the scope is ambiguous, which `partial` >= 0.40 does.",
+    "contested_also_agreed_in_all_five_runs": 6,
+    "explanation": "141 criteria agree with their label in all five runs and 9 do not. The 15 contested criteria are those 9 plus 6 that agreed in every run but have ambiguous scope, so the two counts overlap and must not be added."
+  },
+  "contested_cases": [
+    {
+      "id": "dev-027",
+      "category": "compound-soft-requirement",
+      "criterion": "The response is under 100 words and each bullet starts with a verb",
+      "label": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.45,
+        0.51
+      ],
+      "adjudication": "label stands",
+      "rationale": "The limit ('under 100 words') is unconditional and about the whole output. The other clause ('each bullet starts with a verb') is a separate content requirement. Label stands (checkable); Jev's `partial` fires on that second clause."
+    },
+    {
+      "id": "held-046",
+      "category": "compound-soft-requirement",
+      "criterion": "Explain the 3 causes in under 150 words",
+      "label": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 150,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.45,
+        0.5
+      ],
+      "adjudication": "label stands",
+      "rationale": "The limit ('under 150 words') is unconditional and about the whole output. 'Explain the 3 causes' is a separate content requirement. Label stands (checkable); Jev's `partial` sits at about 0.5 because of it."
+    },
+    {
+      "id": "dev-032",
+      "category": "deliverable-noun",
+      "criterion": "Does the welcome message contain exactly two sentences?",
+      "label": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 2,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.72,
+        0.78
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-004",
+      "category": "deliverable-noun",
+      "criterion": "Is the email body no greater than 120 words?",
+      "label": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 120,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.54,
+        0.59
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-037",
+      "category": "deliverable-noun",
+      "criterion": "The slogan is exactly 6 words",
+      "label": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 6,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.36,
+        0.44
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-038",
+      "category": "deliverable-noun",
+      "criterion": "Does the tagline have exactly four words?",
+      "label": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 4,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.65,
+        0.67
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-042",
+      "category": "deliverable-noun",
+      "criterion": "The blurb is 30-45 words",
+      "label": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 30,
+        "upper_bound": 45
+      },
+      "jev_partial_range": [
+        0.46,
+        0.53
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-045",
+      "category": "deliverable-noun",
+      "criterion": "Does the bio run between two hundred and three hundred words?",
+      "label": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 200,
+        "upper_bound": 300
+      },
+      "jev_partial_range": [
+        0.44,
+        0.55
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-061",
+      "category": "deliverable-noun",
+      "criterion": "The welcome message is two sentences long",
+      "label": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 2,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.57,
+        0.68
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-076",
+      "category": "component-noun",
+      "criterion": "The code comment is under 25 words",
+      "label": null,
+      "jev_partial_range": [
+        0.49,
+        0.52
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names a component that normally sits inside a larger output (code comment, greeting). Label stands (null). Jev's `partial` is about 0.5."
+    },
+    {
+      "id": "held-078",
+      "category": "component-noun",
+      "criterion": "Is the greeting no longer than 5 words?",
+      "label": null,
+      "jev_partial_range": [
+        0.5,
+        0.54
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names a component that normally sits inside a larger output (code comment, greeting). Label stands (null). Jev's `partial` is about 0.5."
+    },
+    {
+      "id": "held-079",
+      "category": "explicit-scope-words",
+      "criterion": "The email body is at least 50 words, excluding the signature",
+      "label": null,
+      "jev_partial_range": [
+        0.61,
+        0.68
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    },
+    {
+      "id": "held-080",
+      "category": "explicit-scope-words",
+      "criterion": "Each answer stays under 30 words",
+      "label": null,
+      "jev_partial_range": [
+        0.71,
+        0.74
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    },
+    {
+      "id": "held-084",
+      "category": "explicit-scope-words",
+      "criterion": "The reply is valid JSON followed by a one-line explanation",
+      "label": null,
+      "jev_partial_range": [
+        0.42,
+        0.57
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    },
+    {
+      "id": "dev-038",
+      "category": "explicit-scope-words",
+      "criterion": "Each paragraph has at least 3 sentences",
+      "label": null,
+      "jev_partial_range": [
+        0.62,
+        0.7
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    }
+  ],
+  "jev_as_verifier": {
+    "outcome": "negative result; not used to decide anything",
+    "v1": "Asked whether a proposed label was a faithful summary. Accepted both questions for 69 of 150 true labels and 3 of 150 deliberately wrong controls; it rejected every null label because 'cannot be checked' is not a summary.",
+    "v2": "Asked whether the criterion requires the proposed constraint. Accepted 80 of 95 true labels but also 13 of 95 wrong controls, and rejected trivially correct labels such as 'exactly 6 words' for 'The slogan is exactly 6 words' because it cannot tell whether 'the slogan' is the whole output, which is the scope question under audit."
+  },
+  "stability": {
+    "runs": 5,
+    "criteria": 150,
+    "noul_probability_range_median": {
+      "partial": 0.02,
+      "conditional": 0.01,
+      "negated": 0.01,
+      "approximate": 0.0
+    },
+    "noul_probability_range_max": {
+      "partial": 0.15,
+      "conditional": 0.08,
+      "negated": 0.11,
+      "approximate": 0.02
+    },
+    "criteria_whose_outcome_changed_at_cutoff_0.5": [
+      "dev-027",
+      "held-042",
+      "held-045",
+      "held-046",
+      "held-076"
+    ],
+    "confident_wrong_per_run_at_cutoff_0.5": {
+      "orig": 0,
+      "r1": 1,
+      "r2": 1,
+      "r3": 0,
+      "r4": 0
+    }
+  },
+  "policy": {
+    "recommended": {
+      "partial": 0.4,
+      "conditional": 0.5,
+      "approximate": 0.5,
+      "json_negation_band": [
+        0.35,
+        0.65
+      ]
+    },
+    "why_partial_is_0.40": "Among null-labelled criteria that could yield a check and are blocked only by `partial`, the lowest `partial` seen in any run is 0.49; run-to-run range is up to 0.15 and typically 0.02. 0.40 leaves about 0.09 of clearance. Fitting the cutoff exactly is unstable: leave-one-criterion-out picks 0.45 in 149 folds and 0.50 in one, and that fold yields a wrong check.",
+    "separation": {
+      "conditional": "null-labelled >= 0.89, checkable <= 0.26",
+      "approximate": "null-labelled >= 0.89, checkable <= 0.08",
+      "json_negation": "negated >= 0.70, not negated <= 0.30"
+    },
+    "per_run_outcomes_on_150": {
+      "correct_check": 86.6,
+      "correct_abstain": 55.0,
+      "missed": 8.4,
+      "wrong_confident": 0.0
+    },
+    "regex_check_criterion": {
+      "correct_check": 29,
+      "correct_abstain": 33,
+      "missed": 62,
+      "wrong_confident": 26
+    },
+    "cheap_chat_reader_mistral_nemo_heldout": {
+      "correct_check": 53,
+      "correct_abstain": 31,
+      "missed": 5,
+      "wrong_confident": 11
+    },
+    "zero_wrong_upper_bound_95pct_one_sided": {
+      "150": 0.02,
+      "100": 0.03,
+      "55": 0.053
+    },
+    "caveats": [
+      "The cutoff was chosen after seeing the held-out split, so held-out numbers are optimistic.",
+      "No untouched labelled set exists; more labels would be needed to tighten the wrong-rate bound.",
+      "The 150 criteria over-represent checkable and hard cases; real prevalence is unknown."
+    ],
+    "null_labelled_cases_that_could_yield_a_check": {
+      "note": "Null-labelled criteria for which Jev's kind, operator and bound would produce a check in at least one run if no abstention rule fired. Criteria that cannot produce a check (for example held-084, which reads sentence_count with operator none, or held-085, which reads other) are not confident-wrong risks whatever their `partial` is.",
+      "cases": [
+        {
+          "id": "dev-036",
+          "blocked_by": "conditional",
+          "partial": [
+            0.11,
+            0.12
+          ],
+          "conditional_max": 0.94,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-063",
+          "blocked_by": "conditional",
+          "partial": [
+            0.12,
+            0.15
+          ],
+          "conditional_max": 0.97,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-065",
+          "blocked_by": "conditional",
+          "partial": [
+            0.13,
+            0.14
+          ],
+          "conditional_max": 0.95,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "held-066",
+          "blocked_by": "conditional",
+          "partial": [
+            0.13,
+            0.13
+          ],
+          "conditional_max": 0.94,
+          "approximate_max": 0.06
+        },
+        {
+          "id": "held-068",
+          "blocked_by": "conditional",
+          "partial": [
+            0.13,
+            0.15
+          ],
+          "conditional_max": 0.93,
+          "approximate_max": 0.05
+        },
+        {
+          "id": "dev-035",
+          "blocked_by": "conditional",
+          "partial": [
+            0.14,
+            0.14
+          ],
+          "conditional_max": 0.9,
+          "approximate_max": 0.05
+        },
+        {
+          "id": "held-067",
+          "blocked_by": "conditional",
+          "partial": [
+            0.15,
+            0.18
+          ],
+          "conditional_max": 0.93,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "held-064",
+          "blocked_by": "conditional",
+          "partial": [
+            0.17,
+            0.19
+          ],
+          "conditional_max": 0.92,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "dev-034",
+          "blocked_by": "conditional",
+          "partial": [
+            0.2,
+            0.22
+          ],
+          "conditional_max": 0.97,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-088",
+          "blocked_by": "approximate",
+          "partial": [
+            0.23,
+            0.25
+          ],
+          "conditional_max": 0.16,
+          "approximate_max": 0.91
+        },
+        {
+          "id": "dev-047",
+          "blocked_by": "approximate",
+          "partial": [
+            0.24,
+            0.25
+          ],
+          "conditional_max": 0.16,
+          "approximate_max": 0.96
+        },
+        {
+          "id": "held-089",
+          "blocked_by": "approximate",
+          "partial": [
+            0.24,
+            0.28
+          ],
+          "conditional_max": 0.13,
+          "approximate_max": 0.94
+        },
+        {
+          "id": "held-076",
+          "blocked_by": "partial",
+          "partial": [
+            0.49,
+            0.52
+          ],
+          "conditional_max": 0.12,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-078",
+          "blocked_by": "partial",
+          "partial": [
+            0.5,
+            0.54
+          ],
+          "conditional_max": 0.13,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "held-079",
+          "blocked_by": "partial",
+          "partial": [
+            0.61,
+            0.68
+          ],
+          "conditional_max": 0.13,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "dev-038",
+          "blocked_by": "partial",
+          "partial": [
+            0.62,
+            0.7
+          ],
+          "conditional_max": 0.07,
+          "approximate_max": 0.02
+        },
+        {
+          "id": "held-080",
+          "blocked_by": "partial",
+          "partial": [
+            0.71,
+            0.74
+          ],
+          "conditional_max": 0.09,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-081",
+          "blocked_by": "partial",
+          "partial": [
+            0.78,
+            0.82
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "dev-041",
+          "blocked_by": "partial",
+          "partial": [
+            0.8,
+            0.82
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "dev-042",
+          "blocked_by": "partial",
+          "partial": [
+            0.84,
+            0.86
+          ],
+          "conditional_max": 0.17,
+          "approximate_max": 0.05
+        },
+        {
+          "id": "held-082",
+          "blocked_by": "partial",
+          "partial": [
+            0.84,
+            0.85
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "held-077",
+          "blocked_by": "partial",
+          "partial": [
+            0.85,
+            0.87
+          ],
+          "conditional_max": 0.14,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-075",
+          "blocked_by": "partial",
+          "partial": [
+            0.86,
+            0.88
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-071",
+          "blocked_by": "partial",
+          "partial": [
+            0.88,
+            0.91
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-073",
+          "blocked_by": "partial",
+          "partial": [
+            0.89,
+            0.9
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-086",
+          "blocked_by": "partial",
+          "partial": [
+            0.89,
+            0.9
+          ],
+          "conditional_max": 0.11,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "dev-040",
+          "blocked_by": "partial",
+          "partial": [
+            0.9,
+            0.91
+          ],
+          "conditional_max": 0.09,
+          "approximate_max": 0.03
+        },
+        {
+          "id": "held-072",
+          "blocked_by": "partial",
+          "partial": [
+            0.9,
+            0.91
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "dev-037",
+          "blocked_by": "partial",
+          "partial": [
+            0.91,
+            0.92
+          ],
+          "conditional_max": 0.08,
+          "approximate_max": 0.04
+        },
+        {
+          "id": "held-074",
+          "blocked_by": "partial",
+          "partial": [
+            0.92,
+            0.92
+          ],
+          "conditional_max": 0.1,
+          "approximate_max": 0.02
+        },
+        {
+          "id": "dev-039",
+          "blocked_by": "partial",
+          "partial": [
+            0.93,
+            0.93
+          ],
+          "conditional_max": 0.09,
+          "approximate_max": 0.04
+        }
+      ],
+      "lowest_partial_among_cases_blocked_only_by_partial": 0.49
+    }
+  },
+  "per_case": {
+    "dev-001": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.13,
+      "reading": "word_count/under/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-002": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.03,
+      "negated_max": 0.12,
+      "reading": "word_count/at most/1,000",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-003": {
+      "agree_runs": 5,
+      "partial": [
+        0.32,
+        0.35
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.05,
+      "reading": "word_count/between/5",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-004": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.03,
+      "negated_max": 0.31,
+      "reading": "word_count/at most/200",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-005": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.27
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.06,
+      "reading": "word_count/at most/50",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-006": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.2
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.05,
+      "negated_max": 0.29,
+      "reading": "word_count/at most/50",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-007": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.13
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.21,
+      "reading": "word_count/at most/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-008": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.27
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.11,
+      "reading": "word_count/at most/80",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-009": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.14
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.19,
+      "reading": "word_count/at most/120",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-010": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.31,
+      "reading": "word_count/at most/90",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-011": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.38,
+      "reading": "word_count/at most/90",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-012": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.13,
+      "reading": "word_count/at most/40",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-013": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.12
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.08,
+      "reading": "word_count/at most/75",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-014": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.05,
+      "negated_max": 0.12,
+      "reading": "word_count/at most/25",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-015": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.23,
+      "reading": "word_count/under/30",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-016": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.04,
+      "reading": "word_count/at least/500",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-017": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.14
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.05,
+      "negated_max": 0.05,
+      "reading": "word_count/at least/500",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-018": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.09
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.03,
+      "negated_max": 0.04,
+      "reading": "word_count/at least/500",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-019": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.16
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.09,
+      "reading": "word_count/more than/50",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-020": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.12,
+      "reading": "word_count/more than/200",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-021": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.06,
+      "negated_max": 0.07,
+      "reading": "word_count/between/150",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-022": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.19
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.05,
+      "negated_max": 0.06,
+      "reading": "word_count/between/150",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-023": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.16
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.12,
+      "reading": "word_count/under/one hundred",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-024": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.35,
+      "reading": "word_count/at least/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-025": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.14,
+      "reading": "word_count/at most/60",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-026": {
+      "agree_runs": 5,
+      "partial": [
+        0.08,
+        0.09
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.16,
+      "reading": "word_count/under/500",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-027": {
+      "agree_runs": 4,
+      "partial": [
+        0.45,
+        0.51
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.05,
+      "negated_max": 0.09,
+      "reading": "word_count/under/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-028": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.18
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.02,
+      "negated_max": 0.03,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-029": {
+      "agree_runs": 5,
+      "partial": [
+        0.1,
+        0.11
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.02,
+      "negated_max": 0.04,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-030": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.08,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-031": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.26
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.05,
+      "negated_max": 0.74,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-032": {
+      "agree_runs": 0,
+      "partial": [
+        0.72,
+        0.78
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.03,
+      "negated_max": 0.08,
+      "reading": "sentence_count/exactly/two",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-033": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.13
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.05,
+      "negated_max": 0.11,
+      "reading": "sentence_count/at most/3",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-034": {
+      "agree_runs": 5,
+      "partial": [
+        0.2,
+        0.22
+      ],
+      "conditional_max": 0.97,
+      "approximate_max": 0.04,
+      "negated_max": 0.12,
+      "reading": "word_count/under/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-035": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.14
+      ],
+      "conditional_max": 0.9,
+      "approximate_max": 0.05,
+      "negated_max": 0.11,
+      "reading": "word_count/under/50",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-036": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.94,
+      "approximate_max": 0.04,
+      "negated_max": 0.17,
+      "reading": "word_count/at least/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-037": {
+      "agree_runs": 5,
+      "partial": [
+        0.91,
+        0.92
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.1,
+      "reading": "word_count/under/15",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-038": {
+      "agree_runs": 5,
+      "partial": [
+        0.62,
+        0.7
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.02,
+      "negated_max": 0.04,
+      "reading": "sentence_count/at least/3",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-039": {
+      "agree_runs": 5,
+      "partial": [
+        0.93,
+        0.93
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.1,
+      "reading": "word_count/under/50",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-040": {
+      "agree_runs": 5,
+      "partial": [
+        0.9,
+        0.91
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.07,
+      "reading": "word_count/at most/10",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-041": {
+      "agree_runs": 5,
+      "partial": [
+        0.8,
+        0.82
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.11,
+      "reading": "word_count/under/20",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-042": {
+      "agree_runs": 5,
+      "partial": [
+        0.84,
+        0.86
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.05,
+      "negated_max": 0.06,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-043": {
+      "agree_runs": 5,
+      "partial": [
+        0.55,
+        0.59
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "dev-044": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.05,
+      "negated_max": 0.06,
+      "reading": "other/at least/2",
+      "yields_check_without_partial_gate": false
+    },
+    "dev-045": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.21
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.17,
+      "reading": "other/at most/2",
+      "yields_check_without_partial_gate": false
+    },
+    "dev-046": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.07,
+      "negated_max": 0.08,
+      "reading": "other/between/none",
+      "yields_check_without_partial_gate": false
+    },
+    "dev-047": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.25
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.96,
+      "negated_max": 0.1,
+      "reading": "word_count/exactly/100",
+      "yields_check_without_partial_gate": true
+    },
+    "dev-048": {
+      "agree_runs": 5,
+      "partial": [
+        0.34,
+        0.35
+      ],
+      "conditional_max": 0.18,
+      "approximate_max": 0.03,
+      "negated_max": 0.18,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "dev-049": {
+      "agree_runs": 5,
+      "partial": [
+        0.29,
+        0.32
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "dev-050": {
+      "agree_runs": 5,
+      "partial": [
+        0.33,
+        0.35
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.07,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-001": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.18,
+      "approximate_max": 0.07,
+      "negated_max": 0.19,
+      "reading": "word_count/at most/150",
+      "yields_check_without_partial_gate": true
+    },
+    "held-002": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.03,
+      "negated_max": 0.12,
+      "reading": "word_count/at most/60",
+      "yields_check_without_partial_gate": true
+    },
+    "held-003": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.14
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.1,
+      "reading": "word_count/at most/300",
+      "yields_check_without_partial_gate": true
+    },
+    "held-004": {
+      "agree_runs": 0,
+      "partial": [
+        0.54,
+        0.59
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.22,
+      "reading": "word_count/at most/120",
+      "yields_check_without_partial_gate": true
+    },
+    "held-005": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.17
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.12,
+      "reading": "word_count/at most/250",
+      "yields_check_without_partial_gate": true
+    },
+    "held-006": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.27
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.07,
+      "reading": "word_count/at most/35",
+      "yields_check_without_partial_gate": true
+    },
+    "held-007": {
+      "agree_runs": 5,
+      "partial": [
+        0.31,
+        0.34
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.38,
+      "reading": "word_count/at most/45",
+      "yields_check_without_partial_gate": true
+    },
+    "held-008": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.05,
+      "negated_max": 0.17,
+      "reading": "word_count/at most/80",
+      "yields_check_without_partial_gate": true
+    },
+    "held-009": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.25
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.15,
+      "reading": "word_count/at most/20",
+      "yields_check_without_partial_gate": true
+    },
+    "held-010": {
+      "agree_runs": 5,
+      "partial": [
+        0.06,
+        0.07
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.09,
+      "reading": "word_count/at most/140",
+      "yields_check_without_partial_gate": true
+    },
+    "held-011": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.17
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.34,
+      "reading": "word_count/at most/70",
+      "yields_check_without_partial_gate": true
+    },
+    "held-012": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.16
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.5,
+      "reading": "word_count/at most/180",
+      "yields_check_without_partial_gate": true
+    },
+    "held-013": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.11,
+      "reading": "word_count/at most/100",
+      "yields_check_without_partial_gate": true
+    },
+    "held-014": {
+      "agree_runs": 5,
+      "partial": [
+        0.08,
+        0.09
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.06,
+      "reading": "word_count/at most/2,000",
+      "yields_check_without_partial_gate": true
+    },
+    "held-015": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.19
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.54,
+      "reading": "word_count/at most/55",
+      "yields_check_without_partial_gate": true
+    },
+    "held-016": {
+      "agree_runs": 5,
+      "partial": [
+        0.21,
+        0.22
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.21,
+      "reading": "word_count/at most/65",
+      "yields_check_without_partial_gate": true
+    },
+    "held-017": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.16
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.4,
+      "reading": "word_count/at most/300",
+      "yields_check_without_partial_gate": true
+    },
+    "held-018": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.03,
+      "negated_max": 0.24,
+      "reading": "word_count/under/90",
+      "yields_check_without_partial_gate": true
+    },
+    "held-019": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.16
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.2,
+      "reading": "word_count/under/400",
+      "yields_check_without_partial_gate": true
+    },
+    "held-020": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.17
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.24,
+      "reading": "word_count/under/75",
+      "yields_check_without_partial_gate": true
+    },
+    "held-021": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.26,
+      "approximate_max": 0.03,
+      "negated_max": 0.18,
+      "reading": "word_count/under/120",
+      "yields_check_without_partial_gate": true
+    },
+    "held-022": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.03,
+      "negated_max": 0.13,
+      "reading": "word_count/under/1,500",
+      "yields_check_without_partial_gate": true
+    },
+    "held-023": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.18
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.11,
+      "reading": "word_count/under/fifteen",
+      "yields_check_without_partial_gate": true
+    },
+    "held-024": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.16
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.05,
+      "negated_max": 0.08,
+      "reading": "word_count/at least/800",
+      "yields_check_without_partial_gate": true
+    },
+    "held-025": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.08,
+      "reading": "word_count/at least/600",
+      "yields_check_without_partial_gate": true
+    },
+    "held-026": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.04,
+      "reading": "word_count/at least/250",
+      "yields_check_without_partial_gate": true
+    },
+    "held-027": {
+      "agree_runs": 5,
+      "partial": [
+        0.21,
+        0.22
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "word_count/at least/120",
+      "yields_check_without_partial_gate": true
+    },
+    "held-028": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.06,
+      "negated_max": 0.1,
+      "reading": "word_count/at least/300",
+      "yields_check_without_partial_gate": true
+    },
+    "held-029": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.6,
+      "reading": "word_count/at least/150",
+      "yields_check_without_partial_gate": true
+    },
+    "held-030": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "word_count/at least/fifty",
+      "yields_check_without_partial_gate": true
+    },
+    "held-031": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.07,
+      "reading": "word_count/at least/200",
+      "yields_check_without_partial_gate": true
+    },
+    "held-032": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.2,
+      "reading": "word_count/at least/40",
+      "yields_check_without_partial_gate": true
+    },
+    "held-033": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.16
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.14,
+      "reading": "word_count/at least/90",
+      "yields_check_without_partial_gate": true
+    },
+    "held-034": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.16,
+      "reading": "word_count/more than/400",
+      "yields_check_without_partial_gate": true
+    },
+    "held-035": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.13,
+      "reading": "word_count/more than/1,000",
+      "yields_check_without_partial_gate": true
+    },
+    "held-036": {
+      "agree_runs": 5,
+      "partial": [
+        0.22,
+        0.25
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.12,
+      "reading": "word_count/more than/30",
+      "yields_check_without_partial_gate": true
+    },
+    "held-037": {
+      "agree_runs": 5,
+      "partial": [
+        0.36,
+        0.44
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.02,
+      "negated_max": 0.05,
+      "reading": "word_count/exactly/6",
+      "yields_check_without_partial_gate": true
+    },
+    "held-038": {
+      "agree_runs": 0,
+      "partial": [
+        0.65,
+        0.67
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.08,
+      "reading": "word_count/exactly/four",
+      "yields_check_without_partial_gate": true
+    },
+    "held-039": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.15,
+      "approximate_max": 0.03,
+      "negated_max": 0.12,
+      "reading": "word_count/exactly/50",
+      "yields_check_without_partial_gate": true
+    },
+    "held-040": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.13
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.02,
+      "negated_max": 0.06,
+      "reading": "word_count/exactly/100",
+      "yields_check_without_partial_gate": true
+    },
+    "held-041": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.21
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.03,
+      "negated_max": 0.08,
+      "reading": "word_count/between/80",
+      "yields_check_without_partial_gate": true
+    },
+    "held-042": {
+      "agree_runs": 2,
+      "partial": [
+        0.46,
+        0.53
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.06,
+      "negated_max": 0.07,
+      "reading": "word_count/between/45",
+      "yields_check_without_partial_gate": true
+    },
+    "held-043": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.2
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.07,
+      "negated_max": 0.11,
+      "reading": "word_count/between/300",
+      "yields_check_without_partial_gate": true
+    },
+    "held-044": {
+      "agree_runs": 5,
+      "partial": [
+        0.32,
+        0.35
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.05,
+      "negated_max": 0.06,
+      "reading": "word_count/between/90",
+      "yields_check_without_partial_gate": true
+    },
+    "held-045": {
+      "agree_runs": 1,
+      "partial": [
+        0.44,
+        0.55
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.06,
+      "negated_max": 0.08,
+      "reading": "word_count/between/three hundred",
+      "yields_check_without_partial_gate": true
+    },
+    "held-046": {
+      "agree_runs": 2,
+      "partial": [
+        0.45,
+        0.5
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.08,
+      "negated_max": 0.16,
+      "reading": "word_count/under/150",
+      "yields_check_without_partial_gate": true
+    },
+    "held-047": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.06,
+      "negated_max": 0.08,
+      "reading": "word_count/at least/500",
+      "yields_check_without_partial_gate": true
+    },
+    "held-048": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.05,
+      "negated_max": 0.13,
+      "reading": "word_count/at most/100",
+      "yields_check_without_partial_gate": true
+    },
+    "held-049": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.2
+      ],
+      "conditional_max": 0.22,
+      "approximate_max": 0.04,
+      "negated_max": 0.12,
+      "reading": "word_count/at most/200",
+      "yields_check_without_partial_gate": true
+    },
+    "held-050": {
+      "agree_runs": 5,
+      "partial": [
+        0.26,
+        0.27
+      ],
+      "conditional_max": 0.26,
+      "approximate_max": 0.07,
+      "negated_max": 0.08,
+      "reading": "word_count/under/100",
+      "yields_check_without_partial_gate": true
+    },
+    "held-051": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.18
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.04,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "held-052": {
+      "agree_runs": 5,
+      "partial": [
+        0.1,
+        0.12
+      ],
+      "conditional_max": 0.15,
+      "approximate_max": 0.03,
+      "negated_max": 0.11,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "held-053": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.02,
+      "negated_max": 0.03,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "held-054": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.02,
+      "negated_max": 0.3,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "held-055": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.02,
+      "negated_max": 0.95,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "held-056": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.25
+      ],
+      "conditional_max": 0.28,
+      "approximate_max": 0.04,
+      "negated_max": 0.91,
+      "reading": "valid_json/none/none",
+      "yields_check_without_partial_gate": true
+    },
+    "held-057": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.1,
+      "reading": "sentence_count/exactly/three",
+      "yields_check_without_partial_gate": true
+    },
+    "held-058": {
+      "agree_runs": 5,
+      "partial": [
+        0.32,
+        0.37
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.14,
+      "reading": "sentence_count/at most/4",
+      "yields_check_without_partial_gate": true
+    },
+    "held-059": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.06,
+      "reading": "sentence_count/at least/two",
+      "yields_check_without_partial_gate": true
+    },
+    "held-060": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.24
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.17,
+      "reading": "sentence_count/under/5",
+      "yields_check_without_partial_gate": true
+    },
+    "held-061": {
+      "agree_runs": 0,
+      "partial": [
+        0.57,
+        0.68
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.07,
+      "reading": "sentence_count/exactly/two",
+      "yields_check_without_partial_gate": true
+    },
+    "held-062": {
+      "agree_runs": 5,
+      "partial": [
+        0.2,
+        0.22
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.06,
+      "negated_max": 0.08,
+      "reading": "sentence_count/between/6",
+      "yields_check_without_partial_gate": true
+    },
+    "held-063": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.15
+      ],
+      "conditional_max": 0.97,
+      "approximate_max": 0.04,
+      "negated_max": 0.16,
+      "reading": "word_count/under/200",
+      "yields_check_without_partial_gate": true
+    },
+    "held-064": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.92,
+      "approximate_max": 0.04,
+      "negated_max": 0.15,
+      "reading": "word_count/under/80",
+      "yields_check_without_partial_gate": true
+    },
+    "held-065": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.14
+      ],
+      "conditional_max": 0.95,
+      "approximate_max": 0.03,
+      "negated_max": 0.1,
+      "reading": "word_count/at most/50",
+      "yields_check_without_partial_gate": true
+    },
+    "held-066": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.13
+      ],
+      "conditional_max": 0.94,
+      "approximate_max": 0.06,
+      "negated_max": 0.05,
+      "reading": "word_count/at least/300",
+      "yields_check_without_partial_gate": true
+    },
+    "held-067": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.18
+      ],
+      "conditional_max": 0.93,
+      "approximate_max": 0.03,
+      "negated_max": 0.17,
+      "reading": "word_count/under/100",
+      "yields_check_without_partial_gate": true
+    },
+    "held-068": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.93,
+      "approximate_max": 0.05,
+      "negated_max": 0.1,
+      "reading": "word_count/at most/150",
+      "yields_check_without_partial_gate": true
+    },
+    "held-069": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.94,
+      "approximate_max": 0.18,
+      "negated_max": 0.05,
+      "reading": "word_count/between/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-070": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.33,
+      "approximate_max": 0.04,
+      "negated_max": 0.09,
+      "reading": "word_count/between/60",
+      "yields_check_without_partial_gate": false
+    },
+    "held-071": {
+      "agree_runs": 5,
+      "partial": [
+        0.88,
+        0.91
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.08,
+      "reading": "word_count/at most/8",
+      "yields_check_without_partial_gate": true
+    },
+    "held-072": {
+      "agree_runs": 5,
+      "partial": [
+        0.9,
+        0.91
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.09,
+      "reading": "word_count/under/100",
+      "yields_check_without_partial_gate": true
+    },
+    "held-073": {
+      "agree_runs": 5,
+      "partial": [
+        0.89,
+        0.9
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.15,
+      "reading": "word_count/at most/40",
+      "yields_check_without_partial_gate": true
+    },
+    "held-074": {
+      "agree_runs": 5,
+      "partial": [
+        0.92,
+        0.92
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.02,
+      "negated_max": 0.13,
+      "reading": "word_count/under/12",
+      "yields_check_without_partial_gate": true
+    },
+    "held-075": {
+      "agree_runs": 5,
+      "partial": [
+        0.86,
+        0.88
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.09,
+      "reading": "word_count/at most/60",
+      "yields_check_without_partial_gate": true
+    },
+    "held-076": {
+      "agree_runs": 3,
+      "partial": [
+        0.49,
+        0.52
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.08,
+      "reading": "word_count/under/25",
+      "yields_check_without_partial_gate": true
+    },
+    "held-077": {
+      "agree_runs": 5,
+      "partial": [
+        0.85,
+        0.87
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.04,
+      "negated_max": 0.1,
+      "reading": "word_count/under/120",
+      "yields_check_without_partial_gate": true
+    },
+    "held-078": {
+      "agree_runs": 5,
+      "partial": [
+        0.5,
+        0.54
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.24,
+      "reading": "word_count/at most/5",
+      "yields_check_without_partial_gate": true
+    },
+    "held-079": {
+      "agree_runs": 5,
+      "partial": [
+        0.61,
+        0.68
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "word_count/at least/50",
+      "yields_check_without_partial_gate": true
+    },
+    "held-080": {
+      "agree_runs": 5,
+      "partial": [
+        0.71,
+        0.74
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.15,
+      "reading": "word_count/under/30",
+      "yields_check_without_partial_gate": true
+    },
+    "held-081": {
+      "agree_runs": 5,
+      "partial": [
+        0.78,
+        0.82
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.1,
+      "reading": "word_count/at most/25",
+      "yields_check_without_partial_gate": true
+    },
+    "held-082": {
+      "agree_runs": 5,
+      "partial": [
+        0.84,
+        0.85
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "word_count/between/9",
+      "yields_check_without_partial_gate": true
+    },
+    "held-083": {
+      "agree_runs": 5,
+      "partial": [
+        0.52,
+        0.59
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-084": {
+      "agree_runs": 5,
+      "partial": [
+        0.42,
+        0.57
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.06,
+      "reading": "sentence_count/none/one",
+      "yields_check_without_partial_gate": false
+    },
+    "held-085": {
+      "agree_runs": 5,
+      "partial": [
+        0.33,
+        0.42
+      ],
+      "conditional_max": 0.15,
+      "approximate_max": 0.04,
+      "negated_max": 0.14,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-086": {
+      "agree_runs": 5,
+      "partial": [
+        0.89,
+        0.9
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.05,
+      "reading": "word_count/under/40",
+      "yields_check_without_partial_gate": true
+    },
+    "held-087": {
+      "agree_runs": 5,
+      "partial": [
+        0.56,
+        0.61
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.02,
+      "negated_max": 0.06,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-088": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.25
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.91,
+      "negated_max": 0.12,
+      "reading": "word_count/at most/150",
+      "yields_check_without_partial_gate": true
+    },
+    "held-089": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.28
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.94,
+      "negated_max": 0.11,
+      "reading": "sentence_count/at most/three",
+      "yields_check_without_partial_gate": true
+    },
+    "held-090": {
+      "agree_runs": 5,
+      "partial": [
+        0.21,
+        0.23
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.97,
+      "negated_max": 0.09,
+      "reading": "word_count/between/50",
+      "yields_check_without_partial_gate": false
+    },
+    "held-091": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.05,
+      "reading": "other/at least/3",
+      "yields_check_without_partial_gate": false
+    },
+    "held-092": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.14,
+      "reading": "other/at most/2",
+      "yields_check_without_partial_gate": false
+    },
+    "held-093": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.17
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.15,
+      "reading": "other/under/300",
+      "yields_check_without_partial_gate": false
+    },
+    "held-094": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.2
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.06,
+      "reading": "other/between/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-095": {
+      "agree_runs": 5,
+      "partial": [
+        0.27,
+        0.29
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.05,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-096": {
+      "agree_runs": 5,
+      "partial": [
+        0.27,
+        0.29
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.05,
+      "negated_max": 0.13,
+      "reading": "other/none/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-097": {
+      "agree_runs": 5,
+      "partial": [
+        0.27,
+        0.28
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.06,
+      "negated_max": 0.11,
+      "reading": "word_count/at most/none",
+      "yields_check_without_partial_gate": false
+    },
+    "held-098": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.14
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.05,
+      "negated_max": 0.07,
+      "reading": "other/at most/one",
+      "yields_check_without_partial_gate": false
+    },
+    "held-099": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.27
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.07,
+      "reading": "other/exactly/5",
+      "yields_check_without_partial_gate": false
+    },
+    "held-100": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.09,
+      "reading": "other/at most/4",
+      "yields_check_without_partial_gate": false
+    }
+  }
+}
