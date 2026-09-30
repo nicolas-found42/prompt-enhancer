@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 from typing import Any
 
@@ -569,3 +570,32 @@ def test_historical_sentence_protocols_keep_the_original_boundaries() -> None:
 
     assert current == ["Use e.g. Python 3.5 to parse v1.2.", "- be brief", "- be kind"]
     assert legacy == ["Use e.g.", "Python 3.5 to parse v1.2.", "- be brief\n- be kind"]
+
+
+@pytest.mark.parametrize("protocol_version", [2, 3])
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "x" + "!" * 200_000 + "y",
+        'a."' + '"' * 200_000 + "y",
+        "Hello there. " * 15_000,
+        "- item\n" * 30_000,
+        "a.\tb" * 50_000,
+    ],
+    ids=[
+        "punctuation-run",
+        "closing-quote-run",
+        "one-line",
+        "bullet-lines",
+        "tab-gaps",
+    ],
+)
+def test_split_sentences_scales_linearly_on_adversarial_prompts(
+    prompt: str, protocol_version: int
+) -> None:
+    started = time.perf_counter()
+    sentences = split_sentences(prompt, protocol_version=protocol_version)
+
+    # The quadratic splitter needed several seconds here; linear needs tens of ms.
+    assert time.perf_counter() - started < 1.5
+    assert all(prompt[item.start : item.end] == item.text for item in sentences)

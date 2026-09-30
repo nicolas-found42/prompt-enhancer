@@ -424,12 +424,17 @@ def default_gap_question(key: str) -> str:
     return cast(str, gap_question(item))
 
 
-_LEGACY_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])(?:[\"'”’\)\]]*)(?=\s+|$)|\n{2,}")
-_SENTENCE_TERMINAL = re.compile(r"[.!?]+[\"'”’)\]]*(?=\s+|$)")
-_LIST_ITEM = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
+# Possessive quantifiers and the lookbehind keep every scan linear: closing marks
+# and whitespace never overlap, so backtracking could not change a match.
+_LEGACY_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])[\"'”’\)\]]*+(?=\s|$)|\n{2,}")
+_SENTENCE_TERMINAL = re.compile(r"(?<![.!?])[.!?]++[\"'”’)\]]*+(?=\s|$)")
+_NUMBER_ONLY = re.compile(r"\s*\d+")
+_LIST_ITEM = re.compile(r"\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _ABBREVIATION = re.compile(
     r"(?:\b(?:e\.g|i\.e|etc|vs|Dr|Mr|Mrs|Ms|Prof|Fig|Inc|U\.S)\.)$", re.IGNORECASE
 )
+_CONTINUATION = re.compile(r"\s*(?:or|and|answers?|responses?)\b", re.IGNORECASE)
+_LONGEST_ABBREVIATION = 6
 _PROBLEM_QUESTIONS = {
     ProblemKind(key): value for key, value in jev_questions.PROBLEM_QUESTIONS.items()
 }
@@ -450,29 +455,35 @@ def split_sentences(
     if protocol_version < SENTENCE_DIAGNOSIS_PROTOCOL_VERSION:
         return _split_sentences_legacy(prompt)
     boundaries: set[int] = set()
+    scanned = 0
+    quotes = 0
+    line_start = 0
     for match in _SENTENCE_TERMINAL.finditer(prompt):
         start = match.start()
-        line_start = prompt.rfind("\n", 0, start) + 1
-        if re.fullmatch(r"\s*\d+", prompt[line_start:start]):
+        quotes += prompt.count('"', scanned, start)
+        newline = prompt.rfind("\n", scanned, start)
+        if newline >= 0:
+            line_start = newline + 1
+        scanned = start
+        if _NUMBER_ONLY.fullmatch(prompt, line_start, start):
             continue
-        prefix = prompt[:start]
-        previous = prompt[: start + 1]
-        token_start = (
-            max(previous.rfind(" "), previous.rfind("\n"), previous.rfind("\t")) + 1
-        )
-        if _ABBREVIATION.search(previous[token_start:]):
+        if _ABBREVIATION.search(
+            prompt, max(0, start + 1 - _LONGEST_ABBREVIATION), start + 1
+        ):
             continue
-        if (prefix.count('"') + match.group(0).count('"')) % 2:
+        if (quotes + match.group(0).count('"')) % 2:
             continue
-        following = prompt[match.end() :].lstrip().casefold()
-        if re.match(r"(?:or|and|answers?|responses?)\b", following):
+        if _CONTINUATION.match(prompt, match.end()):
             continue
         boundaries.add(match.end())
     for match in re.finditer(r"\n+", prompt):
-        following = prompt[match.end() :]
-        previous_line = prompt[: match.start()].rsplit("\n", 1)[-1]
-        next_line = following.splitlines()[0] if following else ""
-        if _LIST_ITEM.match(previous_line) or _LIST_ITEM.match(next_line):
+        previous_start = prompt.rfind("\n", 0, match.start()) + 1
+        next_end = prompt.find("\n", match.end())
+        if next_end < 0:
+            next_end = len(prompt)
+        if _LIST_ITEM.match(prompt, previous_start, match.start()) or _LIST_ITEM.match(
+            prompt, match.end(), next_end
+        ):
             boundaries.add(match.start())
     boundaries.update(match.start() for match in re.finditer(r"\n{2,}", prompt))
     sentences: list[Sentence] = []
