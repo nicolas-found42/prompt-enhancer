@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "reader": "cheap",
+  "model": "synthetic-fixture",
+  "questions_digest": "b11d101b67e6619b",
+  "provenance": {
+    "kind": "synthetic",
+    "not_measurement_evidence": true,
+    "contains_real_model_output": false,
+    "evidence_class": "offline-regression-fixture",
+    "note": "SYNTHETIC: hand-authored answers, not a real model recording. No model produced these rows, so they say nothing about how well Jev or any chat model reads criteria. Their only job is to let a fresh clone replay `report` offline and pin its arithmetic.",
+    "purpose": "Regression fixture for the report's outcome scoring, unresolved bands, JSON negation bands, unusable-row and truncation handling. Real recordings stay in the git-ignored .local/criterion-reading/ and are single historical observations of one run each; they are not stability measurements and nothing here replaces them.",
+    "review": "Each row was written on purpose to land in a named outcome and was checked against the criterion text and its fixture label before the tallies were pinned in tests/test_issue116_criterion_reading.py. Authored and checked by Claude; no human maintainer has reviewed it.",
+    "privacy_review": "Only criteria already committed in criterion_reading_cases.json are referenced, by case id. No prompts, outputs, keys, costs, token counts or provider identifiers from any real run are included.",
+    "authored": "2026-09-30"
+  },
+  "max_tokens": 300,
+  "rows": [
+    {
+      "case_id": "dev-001",
+      "reply": "{\"kind\": \"word_count\", \"op\": \"under\", \"bound\": \"100\", \"low\": \"none\", \"high\": \"none\", \"partial\": false, \"conditional\": false, \"negated\": false, \"approximate\": false}",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "stop"
+    },
+    {
+      "case_id": "dev-031",
+      "reply": "{\"kind\": \"valid_json\", \"op\": \"none\", \"bound\": \"none\", \"low\": \"none\", \"high\": \"none\", \"partial\": false, \"conditional\": false, \"negated\": true, \"approximate\": false}",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "stop"
+    },
+    {
+      "case_id": "dev-034",
+      "reply": "{\"kind\": \"word_count\", \"op\": \"under\", \"bound\": \"100\", \"low\": \"none\", \"high\": \"none\", \"partial\": false, \"conditional\": true, \"negated\": false, \"approximate\": false}",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "stop"
+    },
+    {
+      "case_id": "dev-016",
+      "reply": "{\"kind\": \"word_count\", \"op\": \"more than\", \"bound\": \"500\", \"low\": \"none\", \"high\": \"none\", \"partial\": false, \"conditional\": false, \"negated\": false, \"approximate\": false}",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "stop"
+    },
+    {
+      "case_id": "dev-020",
+      "reply": "{\"kind\": \"word_c",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "length"
+    },
+    {
+      "case_id": "held-062",
+      "reply": "{\"kind\": \"sentence_count\", \"op\": \"between\", \"bound\": \"none\", \"low\": \"3\", \"high\": \"6\", \"partial\": false, \"conditional\": false, \"negated\": false, \"approximate\": false}",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "stop"
+    },
+    {
+      "case_id": "held-048",
+      "reply": "{\"kind\": \"word_count\", \"op\": \"at most\", \"bound\": \"10\", \"low\": \"none\", \"high\": \"none\", \"partial\": false, \"conditional\": false, \"negated\": false, \"approximate\": false}",
+      "answered_by": "synthetic-fixture",
+      "usage": {},
+      "finish_reason": "stop"
+    }
+  ]
+}

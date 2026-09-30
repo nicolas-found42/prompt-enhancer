@@ -24,6 +24,7 @@ import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -384,6 +385,62 @@ def fixture_splits() -> tuple[str, ...]:
     return tuple(dict.fromkeys(case["split"] for case in _fixture_cases()))
 
 
+LABEL_ORIGINS = ("issue-116", "claude-2026-09-29")
+REVIEW_STATUSES = ("unreviewed", "reviewed", "corrected")
+UNREVIEWED = "unreviewed"
+_CASE_FIELDS = frozenset({"id", "split", "criterion", "expected"})
+_REVIEW_FIELDS = frozenset({"reviewed_by", "reviewed_on", "audit_ref"})
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _is_iso_date(value: str) -> bool:
+    if not _ISO_DATE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def label_provenance_errors(case: Mapping[str, Any]) -> list[str]:
+    """Why a fixture case's label origin or review status is not valid.
+
+    Every case names where its label came from and whether a person has
+    reviewed it. ``unreviewed`` cases may not carry any reviewer claim, so a
+    generated label can never look approved. ``reviewed`` needs a reviewer and
+    an ISO date; ``corrected`` also needs the audit reference for the change
+    and the label it replaced.
+    """
+    errors: list[str] = []
+    if case.get("label_origin") not in LABEL_ORIGINS:
+        errors.append(f"label_origin must be one of {', '.join(LABEL_ORIGINS)}")
+    status = case.get("review_status")
+    if status not in REVIEW_STATUSES:
+        errors.append(f"review_status must be one of {', '.join(REVIEW_STATUSES)}")
+    present = _REVIEW_FIELDS & set(case)
+    if status == UNREVIEWED and (present or "previous_expected" in case):
+        claims = ", ".join(sorted(present | {"previous_expected"} & set(case)))
+        errors.append(f"an unreviewed case must not carry review fields: {claims}")
+    if status in {"reviewed", "corrected"}:
+        for field in ("reviewed_by", "reviewed_on"):
+            if not isinstance(case.get(field), str) or not case[field].strip():
+                errors.append(f"a {status} case needs {field}")
+        reviewed_on = case.get("reviewed_on")
+        if isinstance(reviewed_on, str) and not _is_iso_date(reviewed_on):
+            errors.append("reviewed_on must be an existing ISO date (YYYY-MM-DD)")
+    if status == "corrected":
+        audit_ref = case.get("audit_ref")
+        if not isinstance(audit_ref, str) or not audit_ref.strip():
+            errors.append("a corrected case needs an audit_ref")
+        if "previous_expected" not in case:
+            errors.append("a corrected case needs previous_expected")
+    allowed = _CASE_FIELDS | {"label_origin", "review_status", "previous_expected"}
+    allowed |= _REVIEW_FIELDS
+    errors.extend(f"unknown field {field}" for field in sorted(set(case) - allowed))
+    return errors
+
+
 def load_cases(split: str) -> list[dict[str, Any]]:
     cases = _fixture_cases()
     splits = tuple(dict.fromkeys(case["split"] for case in cases))
@@ -559,6 +616,17 @@ def report(
     cutoffs: Mapping[str, float] | None = None,
 ) -> None:
     recording = json.loads(recording_path.read_text(encoding="utf-8"))
+    provenance = recording.get("provenance")
+    if isinstance(provenance, Mapping) and provenance.get("kind") == "synthetic":
+        print(
+            "SYNTHETIC RECORDING: not a real model recording and not measurement "
+            "evidence; it only replays the report's arithmetic offline.\n"
+        )
+    elif not provenance:
+        print(
+            "Recording: no provenance recorded; treat it as a single historical run, "
+            "not a stability measurement.\n"
+        )
     if recording.get("questions_digest") != questions_digest():
         print(
             "WARNING: recording question wording digest does not match the current "
@@ -587,6 +655,7 @@ def report(
         f"{tokens / max(len(cases), 1):.0f} tokens and ${cost / max(len(cases), 1):.6f} "
         f"each, ${cost:.4f} total\n"
     )
+    _print_label_review(cases)
     readings = {
         case["id"]: _reading(
             recording,
@@ -674,6 +743,32 @@ def report(
             print(_row(split, label, score(subset, custom_checks)))
             if show_errors:
                 _print_errors(subset, custom_checks, rows, recording)
+
+
+def _print_label_review(cases: Sequence[Mapping[str, Any]]) -> None:
+    """Disclose how many scored labels a person has reviewed, split by split."""
+    statuses: dict[str, Counter[str]] = {}
+    for case in cases:
+        counter = statuses.setdefault(case["split"], Counter())
+        counter[case.get("review_status", UNREVIEWED)] += 1
+    parts = [
+        f"{split} "
+        + ", ".join(
+            f"{counter[status]} {status}"
+            for status in (
+                *REVIEW_STATUSES,
+                *sorted(set(counter) - set(REVIEW_STATUSES)),
+            )
+            if counter[status]
+        )
+        for split, counter in statuses.items()
+    ]
+    print(f"Label review: {'; '.join(parts)}\n")
+    if any(counter[UNREVIEWED] for counter in statuses.values()):
+        print(
+            "Unreviewed labels: scores measure agreement with labels no maintainer "
+            "has reviewed (review is tracked in issue #116).\n"
+        )
 
 
 def _print_distribution(

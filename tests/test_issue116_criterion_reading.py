@@ -1077,3 +1077,294 @@ def test_report_cli_scores_a_temporary_recording_offline(
     output = capsys.readouterr().out
     assert "# cheap (test-model): 1 criteria" in output
     assert "| development | unresolved if p >= 0.5 | 0 | 1 | 0 | 0 |" in output
+
+
+def _labelled(**overrides: object) -> dict[str, object]:
+    case: dict[str, object] = {
+        "id": "case-1",
+        "split": "heldout",
+        "criterion": "The answer is under 100 words",
+        "expected": None,
+        "label_origin": "claude-2026-09-29",
+        "review_status": "unreviewed",
+    }
+    return {**case, **overrides}
+
+
+def test_every_fixture_case_declares_a_valid_label_origin_and_review_status() -> None:
+    cases = load_cases("all")
+
+    errors = {case["id"]: measurement.label_provenance_errors(case) for case in cases}
+
+    assert {case_id: found for case_id, found in errors.items() if found} == {}
+    origins = {
+        split: {case["label_origin"] for case in cases if case["split"] == split}
+        for split in ("development", "heldout")
+    }
+    assert origins == {
+        "development": {"issue-116"},
+        "heldout": {"claude-2026-09-29"},
+    }
+
+
+def test_shipped_labels_are_unreviewed_and_carry_no_reviewer_claims() -> None:
+    for case in load_cases("all"):
+        assert case["review_status"] == "unreviewed"
+        assert not {"reviewed_by", "reviewed_on", "audit_ref"} & set(case)
+
+
+def test_a_valid_unreviewed_case_has_no_provenance_errors() -> None:
+    assert measurement.label_provenance_errors(_labelled()) == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "fragment"),
+    [
+        ({"label_origin": None}, "label_origin"),
+        ({"label_origin": "someone"}, "label_origin"),
+        ({"review_status": None}, "review_status"),
+        ({"review_status": "approved"}, "review_status"),
+        ({"reviewed_by": "maintainer"}, "unreviewed"),
+        ({"audit_ref": "#116"}, "unreviewed"),
+        ({"review_status": "reviewed"}, "reviewed_by"),
+        (
+            {
+                "review_status": "reviewed",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "yesterday",
+            },
+            "reviewed_on",
+        ),
+        (
+            {
+                "review_status": "reviewed",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "2026-02-30",
+            },
+            "existing ISO date",
+        ),
+        (
+            {
+                "review_status": "reviewed",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "2026-13-01",
+            },
+            "existing ISO date",
+        ),
+        (
+            {
+                "review_status": "corrected",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "2026-10-01",
+            },
+            "audit_ref",
+        ),
+        (
+            {
+                "review_status": "corrected",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "2026-10-01",
+                "audit_ref": "#116",
+            },
+            "previous_expected",
+        ),
+        ({"surprise": True}, "surprise"),
+    ],
+)
+def test_label_provenance_rejects_incomplete_or_inflated_review_claims(
+    overrides: dict[str, object], fragment: str
+) -> None:
+    errors = measurement.label_provenance_errors(_labelled(**overrides))
+
+    assert errors
+    assert any(fragment in error for error in errors)
+
+
+def test_label_provenance_accepts_a_reviewed_and_a_corrected_case() -> None:
+    reviewed = _labelled(
+        review_status="reviewed", reviewed_by="maintainer", reviewed_on="2026-10-01"
+    )
+    corrected = _labelled(
+        review_status="corrected",
+        reviewed_by="maintainer",
+        reviewed_on="2026-10-01",
+        audit_ref="https://github.com/nicolas-found42/prompt-enhancer/issues/116",
+        previous_expected={"kind": "valid_json", "negated": False},
+    )
+
+    assert measurement.label_provenance_errors(reviewed) == []
+    assert measurement.label_provenance_errors(corrected) == []
+
+
+def test_report_discloses_unreviewed_labels_and_an_unlabelled_recording(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cases = [
+        _labelled(id="dev-x", split="development", label_origin="issue-116"),
+        _labelled(
+            id="held-x",
+            split="heldout",
+            review_status="reviewed",
+            reviewed_by="maintainer",
+            reviewed_on="2026-10-01",
+        ),
+        {
+            "id": "bare",
+            "split": "heldout",
+            "criterion": "Keep it short",
+            "expected": None,
+        },
+    ]
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "rows": [
+                    {"case_id": case["id"], "reply": "{}", "usage": {}}
+                    for case in cases
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(recording, show_errors=False)
+    output = capsys.readouterr().out
+
+    assert (
+        "Label review: development 1 unreviewed; heldout 1 unreviewed, 1 reviewed"
+        in output
+    )
+    assert "scores measure agreement with labels no maintainer has reviewed" in output
+    assert "no provenance recorded" in output
+    assert "single historical run, not a stability measurement" in output
+
+
+def test_report_does_not_warn_when_every_scored_label_is_reviewed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    case = _labelled(
+        review_status="reviewed", reviewed_by="maintainer", reviewed_on="2026-10-01"
+    )
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(json.dumps({"cases": [case]}), encoding="utf-8")
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "rows": [{"case_id": "case-1", "reply": "{}", "usage": {}}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(recording, show_errors=False)
+    output = capsys.readouterr().out
+
+    assert "Label review: heldout 1 reviewed" in output
+    assert "no maintainer has reviewed" not in output
+
+
+EVALUATION_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "evaluation"
+SYNTHETIC_RECORDINGS = {
+    "jev": EVALUATION_FIXTURES / "criterion_reading_synthetic_jev.json",
+    "cheap": EVALUATION_FIXTURES / "criterion_reading_synthetic_cheap.json",
+}
+BAND_LABELS = (
+    "unresolved if p >= 0.5",
+    "unresolved if p >= 0.3, JSON negation p >= 0.7",
+    "unresolved if p >= 0.2, JSON negation p >= 0.8",
+    "unresolved if p >= 0.1, JSON negation p >= 0.9",
+    "unresolved if p >= 0.05, JSON negation p >= 0.95",
+)
+
+
+def _synthetic_report(reader: str, capsys: pytest.CaptureFixture[str]) -> list[str]:
+    measurement.report(SYNTHETIC_RECORDINGS[reader], show_errors=False)
+    return capsys.readouterr().out.splitlines()
+
+
+def _table_rows(lines: list[str]) -> list[str]:
+    return [line for line in lines if line.startswith("| ") and "---" not in line]
+
+
+@pytest.mark.parametrize("reader", ["jev", "cheap"])
+def test_synthetic_recordings_are_labelled_as_synthetic_and_not_measurements(
+    reader: str,
+) -> None:
+    recording = json.loads(SYNTHETIC_RECORDINGS[reader].read_text(encoding="utf-8"))
+
+    assert recording["reader"] == reader
+    assert recording["model"] == "synthetic-fixture"
+    provenance = recording["provenance"]
+    assert provenance["kind"] == "synthetic"
+    assert provenance["not_measurement_evidence"] is True
+    assert "not a real model recording" in provenance["note"]
+    assert provenance["contains_real_model_output"] is False
+    assert provenance["evidence_class"] == "offline-regression-fixture"
+    assert provenance["privacy_review"]
+    assert provenance["review"]
+    assert all(
+        not {"cost", "usage_cost"} & set(row.get("usage", {}))
+        for row in recording["rows"]
+    )
+    case_ids = {case["id"] for case in load_cases("all")}
+    assert {row["case_id"] for row in recording["rows"]} <= case_ids
+
+
+def test_synthetic_jev_recording_report_tallies_are_pinned_offline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lines = _synthetic_report("jev", capsys)
+
+    assert lines[0].startswith("SYNTHETIC RECORDING: not a real model recording")
+    assert not any(line.startswith("WARNING") for line in lines)
+    assert any(
+        line.startswith("# jev (synthetic-fixture): 14 criteria, 0 tokens")
+        for line in lines
+    )
+    assert "unusable answers: held-099" in lines
+    assert "Label review: development 10 unreviewed; heldout 4 unreviewed" in lines
+    assert _table_rows(lines) == [
+        "| split | policy | correct check | correct abstain | missed | wrong |",
+        "| development | regex `check_criterion` | 3 | 3 | 2 | 2 |",
+        f"| development | {BAND_LABELS[0]} | 4 | 3 | 1 | 2 |",
+        f"| development | {BAND_LABELS[1]} | 4 | 4 | 1 | 1 |",
+        f"| development | {BAND_LABELS[2]} | 4 | 4 | 1 | 1 |",
+        f"| development | {BAND_LABELS[3]} | 4 | 4 | 1 | 1 |",
+        f"| development | {BAND_LABELS[4]} | 4 | 4 | 1 | 1 |",
+        "| heldout | regex `check_criterion` | 1 | 1 | 1 | 1 |",
+        f"| heldout | {BAND_LABELS[0]} | 3 | 1 | 0 | 0 |",
+        f"| heldout | {BAND_LABELS[1]} | 2 | 1 | 1 | 0 |",
+        f"| heldout | {BAND_LABELS[2]} | 2 | 1 | 1 | 0 |",
+        f"| heldout | {BAND_LABELS[3]} | 2 | 1 | 1 | 0 |",
+        f"| heldout | {BAND_LABELS[4]} | 2 | 1 | 1 | 0 |",
+    ]
+
+
+def test_synthetic_cheap_recording_report_tallies_are_pinned_offline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lines = _synthetic_report("cheap", capsys)
+
+    assert lines[0].startswith("SYNTHETIC RECORDING: not a real model recording")
+    assert not any(line.startswith("WARNING") for line in lines)
+    assert "unusable answers: dev-020" in lines
+    assert any(line.startswith("truncation-suspect: dev-020") for line in lines)
+    assert _table_rows(lines) == [
+        "| split | policy | correct check | correct abstain | missed | wrong |",
+        "| development | regex `check_criterion` | 2 | 0 | 1 | 2 |",
+        *(f"| development | {label} | 2 | 1 | 1 | 1 |" for label in BAND_LABELS),
+        "| heldout | regex `check_criterion` | 1 | 0 | 1 | 0 |",
+        *(f"| heldout | {label} | 1 | 0 | 0 | 1 |" for label in BAND_LABELS),
+    ]

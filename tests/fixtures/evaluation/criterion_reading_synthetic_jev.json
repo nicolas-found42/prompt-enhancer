@@ -1,0 +1,1114 @@
+{
+  "schema_version": 1,
+  "reader": "jev",
+  "model": "synthetic-fixture",
+  "questions_digest": "b11d101b67e6619b",
+  "provenance": {
+    "kind": "synthetic",
+    "not_measurement_evidence": true,
+    "contains_real_model_output": false,
+    "evidence_class": "offline-regression-fixture",
+    "note": "SYNTHETIC: hand-authored answers, not a real model recording. No model produced these rows, so they say nothing about how well Jev or any chat model reads criteria. Their only job is to let a fresh clone replay `report` offline and pin its arithmetic.",
+    "purpose": "Regression fixture for the report's outcome scoring, unresolved bands, JSON negation bands, and unusable-row handling. Real recordings stay in the git-ignored .local/criterion-reading/ and are single historical observations of one run each; they are not stability measurements and nothing here replaces them.",
+    "review": "Each row was written on purpose to land in a named outcome and was checked against the criterion text and its fixture label before the tallies were pinned in tests/test_issue116_criterion_reading.py. Authored and checked by Claude; no human maintainer has reviewed it.",
+    "privacy_review": "Only criteria already committed in criterion_reading_cases.json are referenced, by case id. No prompts, outputs, keys, costs, token counts or provider identifiers from any real run are included.",
+    "authored": "2026-09-30"
+  },
+  "rows": [
+    {
+      "case_id": "dev-001",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "under",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.9,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "100",
+          "options": {
+            "100": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "100": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "100": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-003",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "between",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.9,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "3": 0.05,
+            "5": 0.05,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "3",
+          "options": {
+            "3": 0.9,
+            "5": 0.05,
+            "none": 0.05
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "5",
+          "options": {
+            "3": 0.05,
+            "5": 0.9,
+            "none": 0.05
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-016",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "more than",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.9,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "500",
+          "options": {
+            "500": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "500": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "500": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-028",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "valid_json",
+          "options": {
+            "word_count": 0.03333333333333333,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.9,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.02,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-031",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "valid_json",
+          "options": {
+            "word_count": 0.03333333333333333,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.9,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.95,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-037",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "under",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.9,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "15",
+          "options": {
+            "15": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "15": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "15": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.9,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-034",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "under",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.9,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "100",
+          "options": {
+            "100": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "100": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "100": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.35,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-047",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "exactly",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.9,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "100",
+          "options": {
+            "100": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "100": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "100": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.85,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-048",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "other",
+          "options": {
+            "word_count": 0.03333333333333333,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.9
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "dev-004",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "at most",
+          "options": {
+            "at most": 0.9,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "200",
+          "options": {
+            "200": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "200": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "200": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.6,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "held-055",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "valid_json",
+          "options": {
+            "word_count": 0.03333333333333333,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.9,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.5,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "held-024",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "word_count",
+          "options": {
+            "word_count": 0.9,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "at least",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.9,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "800",
+          "options": {
+            "800": 0.9,
+            "none": 0.1
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "800": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "800": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "held-062",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "sentence_count",
+          "options": {
+            "word_count": 0.03333333333333333,
+            "sentence_count": 0.9,
+            "valid_json": 0.03333333333333333,
+            "other": 0.03333333333333333
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "between",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.9,
+            "none": 0.016666666666666666
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "3": 0.05,
+            "6": 0.05,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "3",
+          "options": {
+            "3": 0.9,
+            "6": 0.05,
+            "none": 0.05
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "6",
+          "options": {
+            "3": 0.05,
+            "6": 0.9,
+            "none": 0.05
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "approximate": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    },
+    {
+      "case_id": "held-099",
+      "answers": {
+        "kind": {
+          "type": "choice",
+          "choice": "other",
+          "options": {
+            "word_count": 0.03333333333333333,
+            "sentence_count": 0.03333333333333333,
+            "valid_json": 0.03333333333333333,
+            "other": 0.9
+          },
+          "confidence": 0.9
+        },
+        "op": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "at most": 0.016666666666666666,
+            "under": 0.016666666666666666,
+            "at least": 0.016666666666666666,
+            "more than": 0.016666666666666666,
+            "exactly": 0.016666666666666666,
+            "between": 0.016666666666666666,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "bound": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "5": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "low": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "5": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "high": {
+          "type": "choice",
+          "choice": "none",
+          "options": {
+            "5": 0.1,
+            "none": 0.9
+          },
+          "confidence": 0.9
+        },
+        "partial": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "conditional": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        },
+        "negated": {
+          "type": "noul",
+          "probability": 0.01,
+          "confidence": 0.9
+        }
+      },
+      "answered_by": "synthetic-fixture",
+      "usage": {}
+    }
+  ]
+}
