@@ -569,13 +569,34 @@ def test_report_includes_negation_distribution_only_for_valid_json_readings(
 
     cases[:] = [cases[-1]]
     fixture.write_text(json.dumps({"cases": cases}), encoding="utf-8")
+    # The single fixture case now has one usable word_count-kind reading, so
+    # the n=0 line reflects kind exclusion, not an empty case set: dropping
+    # the valid_json filter would count this negated=True reading and fail
+    # the assertion below.
     recording.write_text(
         json.dumps(
             {
                 "reader": "cheap",
                 "model": measurement.CHEAP_MODEL,
                 "questions_digest": measurement.questions_digest(),
-                "rows": [{"case_id": "word-count", "reply": reply("word_count", True)}],
+                "rows": [
+                    {
+                        "case_id": "json-unusable",
+                        "reply": json.dumps(
+                            {
+                                "kind": "word_count",
+                                "op": "none",
+                                "bound": "none",
+                                "low": "none",
+                                "high": "none",
+                                "partial": False,
+                                "conditional": False,
+                                "negated": True,
+                                "approximate": False,
+                            }
+                        ),
+                    }
+                ],
             }
         ),
         encoding="utf-8",
