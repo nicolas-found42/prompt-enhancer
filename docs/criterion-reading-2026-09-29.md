@@ -4,27 +4,33 @@ The script measures whether Jev or a chat model can read a success criterion's
 countable property, comparison, number or range, and whether the requirement is
 partial, conditional, negated or approximate. It scores raw recorded answers
 offline against `tests/fixtures/evaluation/criterion_reading_cases.json`, which
-contains 50 development and 100 held-out cases. The held-out labels are not yet
-reviewed by a maintainer.
+contains 50 development and 100 held-out cases. No person has reviewed the labels;
+all 150 were audited by Jev and a model on 2026-09-30 (see the last section).
 
 ## Label provenance and review status
 
 Every case carries `label_origin` (`issue-116` for the development split,
 `claude-2026-09-29` for the held-out split) and `review_status`. All 150 cases are
-`unreviewed`; the maintainer review of the held-out labels is tracked in
-[issue #116](https://github.com/nicolas-found42/prompt-enhancer/issues/116) and no
-label is marked reviewed here.
+`audited`: confirmed by an automated audit and by no person. `unreviewed` is reserved
+for a label that has not been audited, and no label is marked `reviewed` or `corrected`
+here. Human review is tracked in
+[issue #116](https://github.com/nicolas-found42/prompt-enhancer/issues/116).
 `label_provenance_errors` in the script validates each case, and a test runs it over
 the whole fixture:
 
 - `unreviewed` may not carry `reviewed_by`, `reviewed_on`, `audit_ref` or
   `previous_expected`, so a generated label cannot look approved.
+- `audited` needs `reviewed_by` (the auditors), an ISO `reviewed_on` date and
+  `audit_ref` (the audit record). It is never a human review and may not carry
+  `previous_expected`.
 - `reviewed` needs `reviewed_by` and an ISO `reviewed_on` date.
 - `corrected` also needs `audit_ref`, the link to the review record, and
   `previous_expected`, the label it replaced.
 
-`report` prints how many scored labels are unreviewed per split and says that its
-scores measure agreement with labels no maintainer has reviewed until none remain.
+`report` prints how many scored labels have each status per split. It warns that scores
+measure agreement with labels no maintainer has reviewed while any are `unreviewed`, and
+states that `audited` labels were confirmed by blind Jev readings and a model re-read,
+not by a person.
 
 ## Offline replay data
 
@@ -105,8 +111,10 @@ commit them or the whole directory. Only the synthetic recordings above are comm
 All 150 labels are `audited`, not human-reviewed: the maintainer asked for Jev to do the
 review, so each label was compared with five blind Jev readings (`typesafe/jev-1.13-20260917`,
 `questions_digest` in the record) and re-read once by the model that wrote the held-out
-labels. **No label was changed.** 141 agree in every run; 15 were contested and each was
-adjudicated with a stated reason in
+labels. **No label was changed.** 141 agree with their label in every run and 9 do not.
+The 15 contested cases are those 9 plus 6 that agreed in every run but have ambiguous
+scope, so the counts overlap and must not be added. Each was adjudicated with a stated
+reason in
 [`criterion_label_audit_2026-09-30.json`](../tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json).
 The record also holds per-case probability ranges, the stability figures, and the negative
 result of using Jev as a label verifier (it cannot tell whether "the slogan" is the whole

@@ -1146,6 +1146,10 @@ def test_the_audit_record_covers_every_label_and_explains_each_contested_case() 
         row["agree_runs"] == 5 for row in per_case.values()
     )
     assert record["result"]["contested"] == len(contested)
+    unanimous = {cid for cid, row in per_case.items() if row["agree_runs"] == 5}
+    assert record["result"]["contested_also_agreed_in_all_five_runs"] == len(
+        {entry["id"] for entry in contested} & unanimous
+    )
     for entry in contested:
         case = cases[entry["id"]]
         assert entry["criterion"] == case["criterion"]
@@ -1155,14 +1159,32 @@ def test_the_audit_record_covers_every_label_and_explains_each_contested_case() 
     assert len({entry["id"] for entry in contested}) == len(contested)
 
 
-def test_the_recommended_policy_never_exceeds_the_recorded_safe_margin() -> None:
-    policy = _audit_record()["policy"]["recommended"]
+def test_the_recommended_cutoff_keeps_a_margin_below_the_lowest_risky_case() -> None:
+    record = _audit_record()
+    policy = record["policy"]
+    cases = {case["id"]: case for case in load_cases("all")}
+    risky = policy["null_labelled_cases_that_could_yield_a_check"]["cases"]
 
-    # The lowest `partial` among null-labelled criteria that would otherwise
-    # yield a check is 0.49; the recommended cutoff must sit below it.
-    assert policy["partial"] == 0.40 < 0.49
-    assert policy["conditional"] == policy["approximate"] == 0.50
-    assert policy["json_negation_band"] == [0.35, 0.65]
+    # Every listed case is null-labelled and could yield a check without the gate.
+    assert risky
+    for entry in risky:
+        assert cases[entry["id"]]["expected"] is None
+        assert record["per_case"][entry["id"]]["yields_check_without_partial_gate"]
+    # Only those cases can be confidently wrong, so the cutoff must sit clearly
+    # below the lowest `partial` among the ones that only `partial` blocks.
+    lowest = min(e["partial"][0] for e in risky if e["blocked_by"] == "partial")
+    assert (
+        lowest
+        == policy["null_labelled_cases_that_could_yield_a_check"][
+            "lowest_partial_among_cases_blocked_only_by_partial"
+        ]
+    )
+    recommended = policy["recommended"]
+    assert recommended["partial"] <= lowest - 0.05
+    assert recommended["conditional"] == recommended["approximate"] == 0.50
+    assert recommended["json_negation_band"] == [0.35, 0.65]
+    # Criteria that cannot yield a check are not confident-wrong risks.
+    assert not record["per_case"]["held-084"]["yields_check_without_partial_gate"]
 
 
 def test_a_valid_audited_case_has_no_provenance_errors() -> None:
