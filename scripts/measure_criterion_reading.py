@@ -24,6 +24,7 @@ import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -392,6 +393,16 @@ _REVIEW_FIELDS = frozenset({"reviewed_by", "reviewed_on", "audit_ref"})
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
+def _is_iso_date(value: str) -> bool:
+    if not _ISO_DATE.fullmatch(value):
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
 def label_provenance_errors(case: Mapping[str, Any]) -> list[str]:
     """Why a fixture case's label origin or review status is not valid.
 
@@ -416,8 +427,8 @@ def label_provenance_errors(case: Mapping[str, Any]) -> list[str]:
             if not isinstance(case.get(field), str) or not case[field].strip():
                 errors.append(f"a {status} case needs {field}")
         reviewed_on = case.get("reviewed_on")
-        if isinstance(reviewed_on, str) and not _ISO_DATE.fullmatch(reviewed_on):
-            errors.append("reviewed_on must be an ISO date (YYYY-MM-DD)")
+        if isinstance(reviewed_on, str) and not _is_iso_date(reviewed_on):
+            errors.append("reviewed_on must be an existing ISO date (YYYY-MM-DD)")
     if status == "corrected":
         audit_ref = case.get("audit_ref")
         if not isinstance(audit_ref, str) or not audit_ref.strip():

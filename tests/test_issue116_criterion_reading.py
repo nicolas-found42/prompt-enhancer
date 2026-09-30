@@ -1137,6 +1137,22 @@ def test_a_valid_unreviewed_case_has_no_provenance_errors() -> None:
         ),
         (
             {
+                "review_status": "reviewed",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "2026-02-30",
+            },
+            "existing ISO date",
+        ),
+        (
+            {
+                "review_status": "reviewed",
+                "reviewed_by": "maintainer",
+                "reviewed_on": "2026-13-01",
+            },
+            "existing ISO date",
+        ),
+        (
+            {
                 "review_status": "corrected",
                 "reviewed_by": "maintainer",
                 "reviewed_on": "2026-10-01",

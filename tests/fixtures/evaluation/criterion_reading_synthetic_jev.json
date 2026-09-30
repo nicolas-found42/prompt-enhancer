@@ -9,7 +9,7 @@
     "contains_real_model_output": false,
     "evidence_class": "offline-regression-fixture",
     "note": "SYNTHETIC: hand-authored answers, not a real model recording. No model produced these rows, so they say nothing about how well Jev or any chat model reads criteria. Their only job is to let a fresh clone replay `report` offline and pin its arithmetic.",
-    "purpose": "Regression fixture for the report's outcome scoring, unresolved bands, JSON negation bands, unusable-row and truncation handling. Real recordings stay in the git-ignored .local/criterion-reading/ and are single historical observations of one run each; they are not stability measurements and nothing here replaces them.",
+    "purpose": "Regression fixture for the report's outcome scoring, unresolved bands, JSON negation bands, and unusable-row handling. Real recordings stay in the git-ignored .local/criterion-reading/ and are single historical observations of one run each; they are not stability measurements and nothing here replaces them.",
     "review": "Each row was written on purpose to land in a named outcome and was checked against the criterion text and its fixture label before the tallies were pinned in tests/test_issue116_criterion_reading.py. Authored and checked by Claude; no human maintainer has reviewed it.",
     "privacy_review": "Only criteria already committed in criterion_reading_cases.json are referenced, by case id. No prompts, outputs, keys, costs, token counts or provider identifiers from any real run are included.",
     "authored": "2026-09-30"
