@@ -1,0 +1,1839 @@
+{
+  "schema_version": 1,
+  "audited_on": "2026-09-30",
+  "delegated_by": "maintainer (issue #116 owner), instructing that Jev do the review",
+  "human_review": false,
+  "note": "Not a human review. Labels were compared with five blind Jev readings and re-read once by the model that wrote the held-out labels. Nothing here replaces a person confirming them.",
+  "auditors": [
+    {
+      "name": "jev",
+      "model": "typesafe/jev-1.13-20260917",
+      "runs": 5,
+      "blind_to_labels": true,
+      "questions_digest": "b11d101b67e6619b",
+      "cost_usd_per_criterion": 5.5e-05,
+      "median_request_seconds": 0.26
+    },
+    {
+      "name": "claude",
+      "model": "claude-sonnet-5-5",
+      "role": "second read of all 150 labels and adjudication of contested cases; also wrote the 100 held-out labels, so it is not independent of them"
+    }
+  ],
+  "result": {
+    "cases": 150,
+    "agree_in_all_five_runs": 141,
+    "contested": 15,
+    "labels_changed": 0,
+    "finding": "No label was found to be wrong. One labelling-convention inconsistency was found: short-form named artifacts are treated as the whole output for some nouns (tagline, slogan, blurb, bio, welcome message, email body) and as a part for others (headline, title, subject line, greeting, code comment). Both are context-dependent; consumers should abstain when the scope is ambiguous, which `partial` >= 0.40 does."
+  },
+  "contested_cases": [
+    {
+      "id": "dev-027",
+      "category": "compound-soft-requirement",
+      "criterion": "The response is under 100 words and each bullet starts with a verb",
+      "label": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 100,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.45,
+        0.51
+      ],
+      "adjudication": "label stands",
+      "rationale": "The whole-output limit is unconditional. The other clause ('each bullet starts with a verb', 'the 3 causes') is a separate content requirement. Label stands (checkable); Jev's `partial` fires on the second clause."
+    },
+    {
+      "id": "held-046",
+      "category": "compound-soft-requirement",
+      "criterion": "Explain the 3 causes in under 150 words",
+      "label": {
+        "kind": "word_count",
+        "operator": "under",
+        "bound": 150,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.45,
+        0.5
+      ],
+      "adjudication": "label stands",
+      "rationale": "The whole-output limit is unconditional. The other clause ('each bullet starts with a verb', 'the 3 causes') is a separate content requirement. Label stands (checkable); Jev's `partial` fires on the second clause."
+    },
+    {
+      "id": "dev-032",
+      "category": "deliverable-noun",
+      "criterion": "Does the welcome message contain exactly two sentences?",
+      "label": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 2,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.72,
+        0.78
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-004",
+      "category": "deliverable-noun",
+      "criterion": "Is the email body no greater than 120 words?",
+      "label": {
+        "kind": "word_count",
+        "operator": "at most",
+        "bound": 120,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.54,
+        0.59
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-037",
+      "category": "deliverable-noun",
+      "criterion": "The slogan is exactly 6 words",
+      "label": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 6,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.36,
+        0.44
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-038",
+      "category": "deliverable-noun",
+      "criterion": "Does the tagline have exactly four words?",
+      "label": {
+        "kind": "word_count",
+        "operator": "exactly",
+        "bound": 4,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.65,
+        0.67
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-042",
+      "category": "deliverable-noun",
+      "criterion": "The blurb is 30-45 words",
+      "label": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 30,
+        "upper_bound": 45
+      },
+      "jev_partial_range": [
+        0.46,
+        0.53
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-045",
+      "category": "deliverable-noun",
+      "criterion": "Does the bio run between two hundred and three hundred words?",
+      "label": {
+        "kind": "word_count",
+        "operator": "between",
+        "bound": 200,
+        "upper_bound": 300
+      },
+      "jev_partial_range": [
+        0.44,
+        0.55
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-061",
+      "category": "deliverable-noun",
+      "criterion": "The welcome message is two sentences long",
+      "label": {
+        "kind": "sentence_count",
+        "operator": "exactly",
+        "bound": 2,
+        "upper_bound": null
+      },
+      "jev_partial_range": [
+        0.57,
+        0.68
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names the deliverable itself (welcome message, email body, slogan, tagline, blurb, bio), so the limit is treated as applying to the whole output. Label stands (checkable). Jev's `partial` (0.40-0.75) reflects that the same noun could be one part of a larger output."
+    },
+    {
+      "id": "held-076",
+      "category": "component-noun",
+      "criterion": "The code comment is under 25 words",
+      "label": null,
+      "jev_partial_range": [
+        0.49,
+        0.52
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names a component that normally sits inside a larger output (code comment, greeting). Label stands (null). Jev's `partial` is about 0.5."
+    },
+    {
+      "id": "held-078",
+      "category": "component-noun",
+      "criterion": "Is the greeting no longer than 5 words?",
+      "label": null,
+      "jev_partial_range": [
+        0.5,
+        0.54
+      ],
+      "adjudication": "label stands",
+      "rationale": "The noun names a component that normally sits inside a larger output (code comment, greeting). Label stands (null). Jev's `partial` is about 0.5."
+    },
+    {
+      "id": "held-079",
+      "category": "explicit-scope-words",
+      "criterion": "The email body is at least 50 words, excluding the signature",
+      "label": null,
+      "jev_partial_range": [
+        0.61,
+        0.68
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    },
+    {
+      "id": "held-080",
+      "category": "explicit-scope-words",
+      "criterion": "Each answer stays under 30 words",
+      "label": null,
+      "jev_partial_range": [
+        0.71,
+        0.74
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    },
+    {
+      "id": "held-084",
+      "category": "explicit-scope-words",
+      "criterion": "The reply is valid JSON followed by a one-line explanation",
+      "label": null,
+      "jev_partial_range": [
+        0.42,
+        0.57
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    },
+    {
+      "id": "dev-038",
+      "category": "explicit-scope-words",
+      "criterion": "Each paragraph has at least 3 sentences",
+      "label": null,
+      "jev_partial_range": [
+        0.62,
+        0.7
+      ],
+      "adjudication": "label stands",
+      "rationale": "The criterion states its part-scoping in words ('excluding the signature', 'Each ...', 'followed by ...'). Label null is clearly right."
+    }
+  ],
+  "jev_as_verifier": {
+    "outcome": "negative result; not used to decide anything",
+    "v1": "Asked whether a proposed label was a faithful summary. Accepted both questions for 69 of 150 true labels and 3 of 150 deliberately wrong controls; it rejected every null label because 'cannot be checked' is not a summary.",
+    "v2": "Asked whether the criterion requires the proposed constraint. Accepted 80 of 95 true labels but also 13 of 95 wrong controls, and rejected trivially correct labels such as 'exactly 6 words' for 'The slogan is exactly 6 words' because it cannot tell whether 'the slogan' is the whole output, which is the scope question under audit."
+  },
+  "stability": {
+    "runs": 5,
+    "criteria": 150,
+    "noul_probability_range_median": {
+      "partial": 0.02,
+      "conditional": 0.01,
+      "negated": 0.01,
+      "approximate": 0.0
+    },
+    "noul_probability_range_max": {
+      "partial": 0.15,
+      "conditional": 0.08,
+      "negated": 0.11,
+      "approximate": 0.02
+    },
+    "criteria_whose_outcome_changed_at_cutoff_0.5": [
+      "dev-027",
+      "held-042",
+      "held-045",
+      "held-046",
+      "held-076"
+    ],
+    "confident_wrong_per_run_at_cutoff_0.5": {
+      "orig": 0,
+      "r1": 1,
+      "r2": 1,
+      "r3": 0,
+      "r4": 0
+    }
+  },
+  "policy": {
+    "recommended": {
+      "partial": 0.4,
+      "conditional": 0.5,
+      "approximate": 0.5,
+      "json_negation_band": [
+        0.35,
+        0.65
+      ]
+    },
+    "why_partial_is_0.40": "The lowest `partial` among null-labelled criteria that would otherwise yield a check is 0.49; run-to-run range is up to 0.15 and typically 0.02. 0.40 leaves 0.09 of clearance. Fitting the cutoff exactly is unstable: leave-one-criterion-out picks 0.45 in 149 folds and 0.50 in one, and that fold yields a wrong check.",
+    "separation": {
+      "conditional": "null-labelled >= 0.89, checkable <= 0.26",
+      "approximate": "null-labelled >= 0.89, checkable <= 0.08",
+      "json_negation": "negated >= 0.70, not negated <= 0.30"
+    },
+    "per_run_outcomes_on_150": {
+      "correct_check": 86.6,
+      "correct_abstain": 55.0,
+      "missed": 8.4,
+      "wrong_confident": 0.0
+    },
+    "regex_check_criterion": {
+      "correct_check": 29,
+      "correct_abstain": 33,
+      "missed": 62,
+      "wrong_confident": 26
+    },
+    "cheap_chat_reader_mistral_nemo_heldout": {
+      "correct_check": 53,
+      "correct_abstain": 31,
+      "missed": 5,
+      "wrong_confident": 11
+    },
+    "zero_wrong_upper_bound_95pct_one_sided": {
+      "150": 0.02,
+      "100": 0.03,
+      "55": 0.053
+    },
+    "caveats": [
+      "The cutoff was chosen after seeing the held-out split, so held-out numbers are optimistic.",
+      "No untouched labelled set exists; more labels would be needed to tighten the wrong-rate bound.",
+      "The 150 criteria over-represent checkable and hard cases; real prevalence is unknown."
+    ]
+  },
+  "per_case": {
+    "dev-001": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.13
+    },
+    "dev-002": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.03,
+      "negated_max": 0.12
+    },
+    "dev-003": {
+      "agree_runs": 5,
+      "partial": [
+        0.32,
+        0.35
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.05
+    },
+    "dev-004": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.03,
+      "negated_max": 0.31
+    },
+    "dev-005": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.27
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.06
+    },
+    "dev-006": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.2
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.05,
+      "negated_max": 0.29
+    },
+    "dev-007": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.13
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.21
+    },
+    "dev-008": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.27
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.11
+    },
+    "dev-009": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.14
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.19
+    },
+    "dev-010": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.31
+    },
+    "dev-011": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.38
+    },
+    "dev-012": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.13
+    },
+    "dev-013": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.12
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.08
+    },
+    "dev-014": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.05,
+      "negated_max": 0.12
+    },
+    "dev-015": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.23
+    },
+    "dev-016": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.04
+    },
+    "dev-017": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.14
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.05,
+      "negated_max": 0.05
+    },
+    "dev-018": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.09
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.03,
+      "negated_max": 0.04
+    },
+    "dev-019": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.16
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.09
+    },
+    "dev-020": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.12
+    },
+    "dev-021": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.06,
+      "negated_max": 0.07
+    },
+    "dev-022": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.19
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.05,
+      "negated_max": 0.06
+    },
+    "dev-023": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.16
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.12
+    },
+    "dev-024": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.35
+    },
+    "dev-025": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.14
+    },
+    "dev-026": {
+      "agree_runs": 5,
+      "partial": [
+        0.08,
+        0.09
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.16
+    },
+    "dev-027": {
+      "agree_runs": 4,
+      "partial": [
+        0.45,
+        0.51
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.05,
+      "negated_max": 0.09
+    },
+    "dev-028": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.18
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.02,
+      "negated_max": 0.03
+    },
+    "dev-029": {
+      "agree_runs": 5,
+      "partial": [
+        0.1,
+        0.11
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.02,
+      "negated_max": 0.04
+    },
+    "dev-030": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.08
+    },
+    "dev-031": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.26
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.05,
+      "negated_max": 0.74
+    },
+    "dev-032": {
+      "agree_runs": 0,
+      "partial": [
+        0.72,
+        0.78
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.03,
+      "negated_max": 0.08
+    },
+    "dev-033": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.13
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.05,
+      "negated_max": 0.11
+    },
+    "dev-034": {
+      "agree_runs": 5,
+      "partial": [
+        0.2,
+        0.22
+      ],
+      "conditional_max": 0.97,
+      "approximate_max": 0.04,
+      "negated_max": 0.12
+    },
+    "dev-035": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.14
+      ],
+      "conditional_max": 0.9,
+      "approximate_max": 0.05,
+      "negated_max": 0.11
+    },
+    "dev-036": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.94,
+      "approximate_max": 0.04,
+      "negated_max": 0.17
+    },
+    "dev-037": {
+      "agree_runs": 5,
+      "partial": [
+        0.91,
+        0.92
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.1
+    },
+    "dev-038": {
+      "agree_runs": 5,
+      "partial": [
+        0.62,
+        0.7
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.02,
+      "negated_max": 0.04
+    },
+    "dev-039": {
+      "agree_runs": 5,
+      "partial": [
+        0.93,
+        0.93
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.1
+    },
+    "dev-040": {
+      "agree_runs": 5,
+      "partial": [
+        0.9,
+        0.91
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.07
+    },
+    "dev-041": {
+      "agree_runs": 5,
+      "partial": [
+        0.8,
+        0.82
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.11
+    },
+    "dev-042": {
+      "agree_runs": 5,
+      "partial": [
+        0.84,
+        0.86
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.05,
+      "negated_max": 0.06
+    },
+    "dev-043": {
+      "agree_runs": 5,
+      "partial": [
+        0.55,
+        0.59
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "dev-044": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.05,
+      "negated_max": 0.06
+    },
+    "dev-045": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.21
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.17
+    },
+    "dev-046": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.07,
+      "negated_max": 0.08
+    },
+    "dev-047": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.25
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.96,
+      "negated_max": 0.1
+    },
+    "dev-048": {
+      "agree_runs": 5,
+      "partial": [
+        0.34,
+        0.35
+      ],
+      "conditional_max": 0.18,
+      "approximate_max": 0.03,
+      "negated_max": 0.18
+    },
+    "dev-049": {
+      "agree_runs": 5,
+      "partial": [
+        0.29,
+        0.32
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "dev-050": {
+      "agree_runs": 5,
+      "partial": [
+        0.33,
+        0.35
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.07
+    },
+    "held-001": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.18,
+      "approximate_max": 0.07,
+      "negated_max": 0.19
+    },
+    "held-002": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.03,
+      "negated_max": 0.12
+    },
+    "held-003": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.14
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.1
+    },
+    "held-004": {
+      "agree_runs": 0,
+      "partial": [
+        0.54,
+        0.59
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.22
+    },
+    "held-005": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.17
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.12
+    },
+    "held-006": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.27
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.07
+    },
+    "held-007": {
+      "agree_runs": 5,
+      "partial": [
+        0.31,
+        0.34
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.38
+    },
+    "held-008": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.05,
+      "negated_max": 0.17
+    },
+    "held-009": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.25
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.15
+    },
+    "held-010": {
+      "agree_runs": 5,
+      "partial": [
+        0.06,
+        0.07
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.09
+    },
+    "held-011": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.17
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.34
+    },
+    "held-012": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.16
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.5
+    },
+    "held-013": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.11
+    },
+    "held-014": {
+      "agree_runs": 5,
+      "partial": [
+        0.08,
+        0.09
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.06
+    },
+    "held-015": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.19
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.54
+    },
+    "held-016": {
+      "agree_runs": 5,
+      "partial": [
+        0.21,
+        0.22
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.21
+    },
+    "held-017": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.16
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.4
+    },
+    "held-018": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.03,
+      "negated_max": 0.24
+    },
+    "held-019": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.16
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.2
+    },
+    "held-020": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.17
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.24
+    },
+    "held-021": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.26,
+      "approximate_max": 0.03,
+      "negated_max": 0.18
+    },
+    "held-022": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.03,
+      "negated_max": 0.13
+    },
+    "held-023": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.18
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.11
+    },
+    "held-024": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.16
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.05,
+      "negated_max": 0.08
+    },
+    "held-025": {
+      "agree_runs": 5,
+      "partial": [
+        0.09,
+        0.1
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.08
+    },
+    "held-026": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.04
+    },
+    "held-027": {
+      "agree_runs": 5,
+      "partial": [
+        0.21,
+        0.22
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "held-028": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.06,
+      "negated_max": 0.1
+    },
+    "held-029": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.6
+    },
+    "held-030": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.17
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "held-031": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.18
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.07
+    },
+    "held-032": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.2
+    },
+    "held-033": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.16
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.03,
+      "negated_max": 0.14
+    },
+    "held-034": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.16
+    },
+    "held-035": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.13
+    },
+    "held-036": {
+      "agree_runs": 5,
+      "partial": [
+        0.22,
+        0.25
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.12
+    },
+    "held-037": {
+      "agree_runs": 5,
+      "partial": [
+        0.36,
+        0.44
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.02,
+      "negated_max": 0.05
+    },
+    "held-038": {
+      "agree_runs": 0,
+      "partial": [
+        0.65,
+        0.67
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.08
+    },
+    "held-039": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.15,
+      "approximate_max": 0.03,
+      "negated_max": 0.12
+    },
+    "held-040": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.13
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.02,
+      "negated_max": 0.06
+    },
+    "held-041": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.21
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.03,
+      "negated_max": 0.08
+    },
+    "held-042": {
+      "agree_runs": 2,
+      "partial": [
+        0.46,
+        0.53
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.06,
+      "negated_max": 0.07
+    },
+    "held-043": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.2
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.07,
+      "negated_max": 0.11
+    },
+    "held-044": {
+      "agree_runs": 5,
+      "partial": [
+        0.32,
+        0.35
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.05,
+      "negated_max": 0.06
+    },
+    "held-045": {
+      "agree_runs": 1,
+      "partial": [
+        0.44,
+        0.55
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.06,
+      "negated_max": 0.08
+    },
+    "held-046": {
+      "agree_runs": 2,
+      "partial": [
+        0.45,
+        0.5
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.08,
+      "negated_max": 0.16
+    },
+    "held-047": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.06,
+      "negated_max": 0.08
+    },
+    "held-048": {
+      "agree_runs": 5,
+      "partial": [
+        0.14,
+        0.15
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.05,
+      "negated_max": 0.13
+    },
+    "held-049": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.2
+      ],
+      "conditional_max": 0.22,
+      "approximate_max": 0.04,
+      "negated_max": 0.12
+    },
+    "held-050": {
+      "agree_runs": 5,
+      "partial": [
+        0.26,
+        0.27
+      ],
+      "conditional_max": 0.26,
+      "approximate_max": 0.07,
+      "negated_max": 0.08
+    },
+    "held-051": {
+      "agree_runs": 5,
+      "partial": [
+        0.16,
+        0.18
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.03,
+      "negated_max": 0.04
+    },
+    "held-052": {
+      "agree_runs": 5,
+      "partial": [
+        0.1,
+        0.12
+      ],
+      "conditional_max": 0.15,
+      "approximate_max": 0.03,
+      "negated_max": 0.11
+    },
+    "held-053": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.02,
+      "negated_max": 0.03
+    },
+    "held-054": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.07,
+      "approximate_max": 0.02,
+      "negated_max": 0.3
+    },
+    "held-055": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.02,
+      "negated_max": 0.95
+    },
+    "held-056": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.25
+      ],
+      "conditional_max": 0.28,
+      "approximate_max": 0.04,
+      "negated_max": 0.91
+    },
+    "held-057": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.22
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.1
+    },
+    "held-058": {
+      "agree_runs": 5,
+      "partial": [
+        0.32,
+        0.37
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.14
+    },
+    "held-059": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.06
+    },
+    "held-060": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.24
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.04,
+      "negated_max": 0.17
+    },
+    "held-061": {
+      "agree_runs": 0,
+      "partial": [
+        0.57,
+        0.68
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.07
+    },
+    "held-062": {
+      "agree_runs": 5,
+      "partial": [
+        0.2,
+        0.22
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.06,
+      "negated_max": 0.08
+    },
+    "held-063": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.15
+      ],
+      "conditional_max": 0.97,
+      "approximate_max": 0.04,
+      "negated_max": 0.16
+    },
+    "held-064": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.92,
+      "approximate_max": 0.04,
+      "negated_max": 0.15
+    },
+    "held-065": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.14
+      ],
+      "conditional_max": 0.95,
+      "approximate_max": 0.03,
+      "negated_max": 0.1
+    },
+    "held-066": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.13
+      ],
+      "conditional_max": 0.94,
+      "approximate_max": 0.06,
+      "negated_max": 0.05
+    },
+    "held-067": {
+      "agree_runs": 5,
+      "partial": [
+        0.15,
+        0.18
+      ],
+      "conditional_max": 0.93,
+      "approximate_max": 0.03,
+      "negated_max": 0.17
+    },
+    "held-068": {
+      "agree_runs": 5,
+      "partial": [
+        0.13,
+        0.15
+      ],
+      "conditional_max": 0.93,
+      "approximate_max": 0.05,
+      "negated_max": 0.1
+    },
+    "held-069": {
+      "agree_runs": 5,
+      "partial": [
+        0.11,
+        0.12
+      ],
+      "conditional_max": 0.94,
+      "approximate_max": 0.18,
+      "negated_max": 0.05
+    },
+    "held-070": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.33,
+      "approximate_max": 0.04,
+      "negated_max": 0.09
+    },
+    "held-071": {
+      "agree_runs": 5,
+      "partial": [
+        0.88,
+        0.91
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.08
+    },
+    "held-072": {
+      "agree_runs": 5,
+      "partial": [
+        0.9,
+        0.91
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.09
+    },
+    "held-073": {
+      "agree_runs": 5,
+      "partial": [
+        0.89,
+        0.9
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.15
+    },
+    "held-074": {
+      "agree_runs": 5,
+      "partial": [
+        0.92,
+        0.92
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.02,
+      "negated_max": 0.13
+    },
+    "held-075": {
+      "agree_runs": 5,
+      "partial": [
+        0.86,
+        0.88
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.04,
+      "negated_max": 0.09
+    },
+    "held-076": {
+      "agree_runs": 3,
+      "partial": [
+        0.49,
+        0.52
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.04,
+      "negated_max": 0.08
+    },
+    "held-077": {
+      "agree_runs": 5,
+      "partial": [
+        0.85,
+        0.87
+      ],
+      "conditional_max": 0.14,
+      "approximate_max": 0.04,
+      "negated_max": 0.1
+    },
+    "held-078": {
+      "agree_runs": 5,
+      "partial": [
+        0.5,
+        0.54
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.24
+    },
+    "held-079": {
+      "agree_runs": 5,
+      "partial": [
+        0.61,
+        0.68
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "held-080": {
+      "agree_runs": 5,
+      "partial": [
+        0.71,
+        0.74
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.15
+    },
+    "held-081": {
+      "agree_runs": 5,
+      "partial": [
+        0.78,
+        0.82
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.1
+    },
+    "held-082": {
+      "agree_runs": 5,
+      "partial": [
+        0.84,
+        0.85
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "held-083": {
+      "agree_runs": 5,
+      "partial": [
+        0.52,
+        0.59
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "held-084": {
+      "agree_runs": 5,
+      "partial": [
+        0.42,
+        0.57
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.06
+    },
+    "held-085": {
+      "agree_runs": 5,
+      "partial": [
+        0.33,
+        0.42
+      ],
+      "conditional_max": 0.15,
+      "approximate_max": 0.04,
+      "negated_max": 0.14
+    },
+    "held-086": {
+      "agree_runs": 5,
+      "partial": [
+        0.89,
+        0.9
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.05
+    },
+    "held-087": {
+      "agree_runs": 5,
+      "partial": [
+        0.56,
+        0.61
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.02,
+      "negated_max": 0.06
+    },
+    "held-088": {
+      "agree_runs": 5,
+      "partial": [
+        0.23,
+        0.25
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.91,
+      "negated_max": 0.12
+    },
+    "held-089": {
+      "agree_runs": 5,
+      "partial": [
+        0.24,
+        0.28
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.94,
+      "negated_max": 0.11
+    },
+    "held-090": {
+      "agree_runs": 5,
+      "partial": [
+        0.21,
+        0.23
+      ],
+      "conditional_max": 0.16,
+      "approximate_max": 0.97,
+      "negated_max": 0.09
+    },
+    "held-091": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.28
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.05
+    },
+    "held-092": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.19
+      ],
+      "conditional_max": 0.08,
+      "approximate_max": 0.03,
+      "negated_max": 0.14
+    },
+    "held-093": {
+      "agree_runs": 5,
+      "partial": [
+        0.17,
+        0.17
+      ],
+      "conditional_max": 0.13,
+      "approximate_max": 0.04,
+      "negated_max": 0.15
+    },
+    "held-094": {
+      "agree_runs": 5,
+      "partial": [
+        0.18,
+        0.2
+      ],
+      "conditional_max": 0.12,
+      "approximate_max": 0.05,
+      "negated_max": 0.06
+    },
+    "held-095": {
+      "agree_runs": 5,
+      "partial": [
+        0.27,
+        0.29
+      ],
+      "conditional_max": 0.09,
+      "approximate_max": 0.04,
+      "negated_max": 0.05
+    },
+    "held-096": {
+      "agree_runs": 5,
+      "partial": [
+        0.27,
+        0.29
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.05,
+      "negated_max": 0.13
+    },
+    "held-097": {
+      "agree_runs": 5,
+      "partial": [
+        0.27,
+        0.28
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.06,
+      "negated_max": 0.11
+    },
+    "held-098": {
+      "agree_runs": 5,
+      "partial": [
+        0.12,
+        0.14
+      ],
+      "conditional_max": 0.17,
+      "approximate_max": 0.05,
+      "negated_max": 0.07
+    },
+    "held-099": {
+      "agree_runs": 5,
+      "partial": [
+        0.25,
+        0.27
+      ],
+      "conditional_max": 0.11,
+      "approximate_max": 0.03,
+      "negated_max": 0.07
+    },
+    "held-100": {
+      "agree_runs": 5,
+      "partial": [
+        0.19,
+        0.21
+      ],
+      "conditional_max": 0.1,
+      "approximate_max": 0.04,
+      "negated_max": 0.09
+    }
+  }
+}

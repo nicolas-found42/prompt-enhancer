@@ -99,3 +99,30 @@ never flagged.
 The measurement results and interpretation are recorded in [issue #116](https://github.com/nicolas-found42/prompt-enhancer/issues/116).
 Real recordings stay in the git-ignored `.local/criterion-reading/` directory; do not
 commit them or the whole directory. Only the synthetic recordings above are committed.
+
+## Label audit and recommended cutoffs (2026-09-30)
+
+All 150 labels are `audited`, not human-reviewed: the maintainer asked for Jev to do the
+review, so each label was compared with five blind Jev readings (`typesafe/jev-1.13-20260917`,
+`questions_digest` in the record) and re-read once by the model that wrote the held-out
+labels. **No label was changed.** 141 agree in every run; 15 were contested and each was
+adjudicated with a stated reason in
+[`criterion_label_audit_2026-09-30.json`](../tests/fixtures/evaluation/criterion_label_audit_2026-09-30.json).
+The record also holds per-case probability ranges, the stability figures, and the negative
+result of using Jev as a label verifier (it cannot tell whether "the slogan" is the whole
+output, which is the scope question under audit).
+
+One convention inconsistency was found: short-form named artifacts count as the whole
+output for some nouns (tagline, slogan, blurb, bio, welcome message, email body) and as a
+part for others (headline, title, subject line, greeting, code comment). Both are context
+dependent, so consumers should abstain when scope is ambiguous.
+
+**Recommended cutoffs:** `partial=0.40`, `conditional=0.50`, `approximate=0.50`, JSON
+negation band `(0.35, 0.65)`. Per run over the 150 criteria this gave 86.6 correct checks, 55.0
+correct abstentions, 8.4 missed and 0 confidently wrong, against the regex's 29, 33, 62 and 26.
+The default `partial=0.5` sits inside Jev's own uncertainty: one null-labelled criterion
+(`held-076`) became a confident wrong check in two of five runs from a ±0.02 wobble.
+`conditional` and `approximate` separate cleanly (null-labelled >= 0.89, checkable <= 0.26
+and <= 0.08); only `partial` overlaps. The cutoff was chosen after seeing the held-out split,
+so those numbers are optimistic, and zero wrong in 150 bounds the wrong rate at about 2.0%
+(one-sided 95%). Tightening that needs more labels.
