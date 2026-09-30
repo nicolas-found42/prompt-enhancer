@@ -877,11 +877,8 @@ class SuccessTestCompiler:
                 )
             else:
                 polarity = expected.casefold()
-                if polarity in {"no", "false"}:
-                    expected = "no"
-                    reason = ""
-                elif polarity in {"yes", "true"}:
-                    expected = "yes"
+                if polarity in {"yes", "no"}:
+                    expected = polarity
                     reason = ""
                 else:
                     reason = "Noul expected must be yes or no"

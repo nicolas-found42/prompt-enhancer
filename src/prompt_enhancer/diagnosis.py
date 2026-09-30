@@ -455,23 +455,31 @@ def split_sentences(
     if protocol_version < SENTENCE_DIAGNOSIS_PROTOCOL_VERSION:
         return _split_sentences_legacy(prompt)
     boundaries: set[int] = set()
+    quoted = _quoted_spans(prompt)
+    opened = 0
+    latest_close = -1
     scanned = 0
-    quotes = 0
     line_start = 0
+    numbered_line = -1
     for match in _SENTENCE_TERMINAL.finditer(prompt):
         start = match.start()
-        quotes += prompt.count('"', scanned, start)
         newline = prompt.rfind("\n", scanned, start)
         if newline >= 0:
             line_start = newline + 1
         scanned = start
-        if _NUMBER_ONLY.fullmatch(prompt, line_start, start):
-            continue
+        # Only a line's first terminal can follow a bare list number.
+        if line_start != numbered_line:
+            numbered_line = line_start
+            if _NUMBER_ONLY.fullmatch(prompt, line_start, start):
+                continue
         if _ABBREVIATION.search(
             prompt, max(0, start + 1 - _LONGEST_ABBREVIATION), start + 1
         ):
             continue
-        if (quotes + match.group(0).count('"')) % 2:
+        while opened < len(quoted) and quoted[opened][0] < match.end():
+            latest_close = max(latest_close, quoted[opened][1])
+            opened += 1
+        if latest_close >= match.end():
             continue
         if _CONTINUATION.match(prompt, match.end()):
             continue
@@ -493,6 +501,24 @@ def split_sentences(
         position = end
     _append_sentence(sentences, prompt[position:], position, len(prompt))
     return tuple(sentences)
+
+
+def _quoted_spans(prompt: str) -> list[tuple[int, int]]:
+    """Return matched quotation spans ordered by their opening mark.
+
+    ASCII quotes pair in order and typographic quotes nest; an unmatched mark
+    opens no span, so it cannot hide later sentence boundaries.
+    """
+
+    straight = [match.start() for match in re.finditer('"', prompt)]
+    spans = list(zip(straight[0::2], straight[1::2], strict=False))
+    opening: list[int] = []
+    for match in re.finditer("[“”]", prompt):
+        if match.group() == "“":
+            opening.append(match.start())
+        elif opening:
+            spans.append((opening.pop(), match.start()))
+    return sorted(spans)
 
 
 def _split_sentences_legacy(prompt: str) -> tuple[Sentence, ...]:

@@ -9,6 +9,7 @@ and a durable run identifier.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
@@ -971,7 +972,12 @@ class PromptOptimizer:
         final_prompt = str(result.get("final_prompt") or record.get("prompt") or "")
         usage_before = self._usage_cost()
         updated_prompt = _apply_assumption(
-            final_prompt, key, old_value, value, previous.get("source")
+            final_prompt,
+            key,
+            old_value,
+            value,
+            previous.get("source"),
+            sentence_protocol_version=self.sentence_diagnosis_version,
         )
         if updated_prompt is None:
             raise ValueError(
@@ -1196,7 +1202,13 @@ def _clarification_label(key: str, source: object = None) -> str:
 
 
 def _apply_assumption(
-    prompt: str, key: str, old_value: str, value: str, source: object = None
+    prompt: str,
+    key: str,
+    old_value: str,
+    value: str,
+    source: object = None,
+    *,
+    sentence_protocol_version: int = SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
 ) -> str | None:
     label = _clarification_label(key, source)
     line = f"{label}: {value}"
@@ -1207,29 +1219,18 @@ def _apply_assumption(
             return "\n".join(lines)
     if not old_value:
         return None
-    matches: list[tuple[int, int]] = []
-    folded_prompt = prompt.casefold()
-    folded_old = old_value.casefold()
-    start = 0
-    while (index := folded_prompt.find(folded_old, start)) >= 0:
-        end = index + len(folded_old)
-        before = prompt[index - 1] if index else ""
-        after = prompt[end] if end < len(prompt) else ""
-        if (not before or not before.isalnum()) and (not after or not after.isalnum()):
-            matches.append((index, end))
-        start = end
+    # Match on the original string so offsets stay valid when case folding would
+    # change its length (for example "ß"); underscores count as word characters.
+    matches = list(
+        re.finditer(rf"(?<!\w){re.escape(old_value)}(?!\w)", prompt, re.IGNORECASE)
+    )
     if len(matches) != 1:
         return None
-    start, end = matches[0]
-    sentence = next(
-        (
-            item
-            for item in split_sentences(prompt)
-            if item.start <= start and end <= item.end
-        ),
-        None,
-    )
-    if sentence is None:
+    start, end = matches[0].span()
+    if not any(
+        item.start <= start and end <= item.end
+        for item in split_sentences(prompt, protocol_version=sentence_protocol_version)
+    ):
         return None
     return prompt[:start] + value + prompt[end:]
 

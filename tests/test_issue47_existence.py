@@ -558,6 +558,33 @@ def test_split_sentences_preserves_natural_units_and_offsets(
     ]
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected"),
+    [
+        (
+            "Translate to French: “Hello. How are you?” Keep the tone friendly.",
+            ["Translate to French: “Hello. How are you?”", "Keep the tone friendly."],
+        ),
+        (
+            "“Yes.” or “No.” answers are not acceptable.",
+            ["“Yes.” or “No.” answers are not acceptable."],
+        ),
+        (
+            "She said “stop. Now leave. Then go.",
+            ["She said “stop.", "Now leave.", "Then go."],
+        ),
+        (
+            'He said "stop. Now leave. Then go.',
+            ['He said "stop.', "Now leave.", "Then go."],
+        ),
+    ],
+)
+def test_split_sentences_handles_typographic_and_unmatched_quotes(
+    prompt: str, expected: list[str]
+) -> None:
+    assert [sentence.text for sentence in split_sentences(prompt)] == expected
+
+
 def test_sentence_protocol_version_tracks_splitter_change() -> None:
     assert SENTENCE_DIAGNOSIS_PROTOCOL_VERSION == 3
 

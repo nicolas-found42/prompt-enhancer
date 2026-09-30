@@ -994,6 +994,47 @@ def test_assumption_edit_does_not_replace_substrings_or_ambiguous_occurrences() 
     )
 
 
+def test_assumption_edit_treats_underscores_as_part_of_the_word() -> None:
+    assert _apply_assumption("Use the foo_bar option.", "Option", "foo", "baz") is None
+
+
+def test_assumption_edit_keeps_offsets_when_case_folding_changes_length() -> None:
+    assert (
+        _apply_assumption("Context: Straße. Now answer.", "Address", "STRASSE", "Weg")
+        is None
+    )
+    assert (
+        _apply_assumption("Context: Straße. Now answer.", "Address", "Straße", "Weg")
+        == "Context: Weg. Now answer."
+    )
+
+
+def test_assumption_edit_rejects_a_match_that_spans_a_sentence_boundary() -> None:
+    assert (
+        _apply_assumption(
+            "Summarize it. Keep it short.", "Style", "it. Keep", "them. Keep"
+        )
+        is None
+    )
+
+
+def test_assumption_edit_uses_the_runs_sentence_protocol() -> None:
+    prompt = "Use e.g. Python. Keep it short."
+
+    assert (
+        _apply_assumption(
+            prompt, "Style", "e.g. Python", "Rust", sentence_protocol_version=3
+        )
+        == "Use Rust. Keep it short."
+    )
+    assert (
+        _apply_assumption(
+            prompt, "Style", "e.g. Python", "Rust", sentence_protocol_version=2
+        )
+        is None
+    )
+
+
 def test_assumption_edit_replaces_a_unique_whole_word_occurrence() -> None:
     assert (
         _apply_assumption("Return the result as JSON.", "Format", "json", "YAML")
