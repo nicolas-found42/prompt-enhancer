@@ -437,6 +437,33 @@ def chat_schema(candidates: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def response_finish_reason(response: Mapping[str, Any]) -> str | None:
+    """Return the provider's stop reason, normalizing truncation to ``length``.
+
+    Chat-completions routes report ``finish_reason``; the gateway passes through
+    ``/messages`` responses (``stop_reason == "max_tokens"``) and ``/responses``
+    payloads (``incomplete_details.reason == "max_output_tokens"``) unchanged.
+    """
+    finish_reason = response.get("finish_reason")
+    choices = response.get("choices")
+    if finish_reason is None and isinstance(choices, list) and choices:
+        choice = choices[0]
+        if isinstance(choice, Mapping):
+            finish_reason = choice.get("finish_reason")
+    if finish_reason is None:
+        stop_reason = response.get("stop_reason")
+        if stop_reason is not None:
+            finish_reason = "length" if stop_reason == "max_tokens" else stop_reason
+    if finish_reason is None:
+        details = response.get("incomplete_details")
+        if (
+            isinstance(details, Mapping)
+            and details.get("reason") == "max_output_tokens"
+        ):
+            finish_reason = "length"
+    return finish_reason
+
+
 def record(
     reader: str,
     cases: Sequence[Mapping[str, Any]],
@@ -504,12 +531,7 @@ def record(
                 "answered_by": response.get("model"),
                 "usage": response.get("usage", {}),
             }
-            finish_reason = response.get("finish_reason")
-            choices = response.get("choices")
-            if finish_reason is None and isinstance(choices, list) and choices:
-                choice = choices[0]
-                if isinstance(choice, Mapping):
-                    finish_reason = choice.get("finish_reason")
+            finish_reason = response_finish_reason(response)
             if finish_reason is not None:
                 row["finish_reason"] = finish_reason
         saved["rows"].append(row)

@@ -43,9 +43,13 @@ uv run python scripts/measure_criterion_reading.py report \
   --cutoff partial=0.5,conditional=0.5,approximate=0.5
 ```
 
-The report prints observed judgment distributions and flags truncation when the
-provider's `finish_reason` is `length`. Older rows without a finish reason use the
-completion-token count reaching the recorded cap as a truncation-suspect heuristic.
+The report prints observed judgment distributions. For chat-reader (`--reader cheap`)
+recordings it also flags truncation when the provider's finish reason is `length`
+(`finish_reason`, `stop_reason == "max_tokens"`, or
+`incomplete_details.reason == "max_output_tokens"`). Older rows without a finish
+reason use the completion-token count reaching the recorded cap as a
+truncation-suspect heuristic. Jev recordings carry no finish-reason evidence and are
+never flagged.
 The measurement results and interpretation are recorded in [issue #116](https://github.com/nicolas-found42/prompt-enhancer/issues/116).
 Recordings stay in the git-ignored `.local/criterion-reading/` directory; do not
 commit them.

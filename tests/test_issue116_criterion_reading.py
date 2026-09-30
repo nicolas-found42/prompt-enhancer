@@ -709,7 +709,13 @@ class _RecordingGateway:
         config: measurement.GatewayConfig,
         fail_on_second_chat: bool = False,
         shared_calls: list[tuple[str, str]] | None = None,
+        top_level_fields: dict[str, object] | None = None,
+        choice_fields: dict[str, object] | None = None,
     ) -> None:
+        self.top_level_fields = (
+            {"finish_reason": "stop"} if top_level_fields is None else top_level_fields
+        )
+        self.choice_fields = choice_fields or {}
         self.jev_model = config.jev_model
         self.decision_log: list[dict[str, object]] = []
         self.calls = shared_calls if shared_calls is not None else []
@@ -754,9 +760,10 @@ class _RecordingGateway:
         return {
             "model": model,
             "usage": {"completion_tokens": 12},
-            "finish_reason": "stop",
+            **self.top_level_fields,
             "choices": [
                 {
+                    **self.choice_fields,
                     "message": {
                         "content": json.dumps(
                             {
@@ -771,7 +778,7 @@ class _RecordingGateway:
                                 "approximate": False,
                             }
                         )
-                    }
+                    },
                 }
             ],
         }
@@ -900,6 +907,42 @@ def test_report_uses_finish_reason_before_legacy_token_cap_heuristic(
     assert "| development | unresolved if p >= 0.5 | 0 | 1 | 0 | 0 |" in output
 
 
+@pytest.mark.parametrize(
+    ("top_level_fields", "choice_fields", "expected"),
+    [
+        ({}, {"finish_reason": "length"}, "length"),
+        ({}, {"finish_reason": "stop"}, "stop"),
+        ({"stop_reason": "max_tokens"}, {}, "length"),
+        ({"stop_reason": "end_turn"}, {}, "end_turn"),
+        ({"incomplete_details": {"reason": "max_output_tokens"}}, {}, "length"),
+        ({"incomplete_details": None}, {}, None),
+    ],
+)
+def test_record_persists_finish_reason_from_every_provider_shape(
+    top_level_fields: dict[str, object],
+    choice_fields: dict[str, object],
+    expected: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "recording.json"
+    cases = _recording_cases()[:1]
+
+    def make_gateway(*, config: measurement.GatewayConfig) -> _RecordingGateway:
+        return _RecordingGateway(
+            config=config,
+            top_level_fields=top_level_fields,
+            choice_fields=choice_fields,
+        )
+
+    monkeypatch.setattr(measurement, "HttpGateway", make_gateway)
+    measurement.record("cheap", cases, output, max_tokens=50)
+
+    row = json.loads(output.read_text(encoding="utf-8"))["rows"][0]
+    assert row.get("finish_reason") == expected
+    assert ("finish_reason" in row) is (expected is not None)
+
+
 @pytest.mark.parametrize("reader", ["jev", "cheap"])
 def test_model_override_is_used_recorded_and_protected_by_resume_guard(
     reader: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -922,6 +965,10 @@ def test_model_override_is_used_recorded_and_protected_by_resume_guard(
 
 def test_model_override_has_a_bounded_length() -> None:
     assert measurement.parse_model("  custom/model  ") == "custom/model"
+    assert (
+        measurement.parse_model("m" * measurement.MAX_MODEL_LENGTH)
+        == "m" * measurement.MAX_MODEL_LENGTH
+    )
     with pytest.raises(argparse.ArgumentTypeError, match="at most"):
         measurement.parse_model("m" * (measurement.MAX_MODEL_LENGTH + 1))
 
