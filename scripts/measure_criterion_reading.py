@@ -23,7 +23,7 @@ import re
 import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +38,7 @@ FIXTURE = (
     / "tests/fixtures/evaluation/criterion_reading_cases.json"
 )
 CHEAP_MODEL = "mistralai/mistral-nemo"
+MAX_COMPLETION_TOKENS = 4096
 NONE = "none"
 BANDS = ((0.5, 0.5), (0.3, 0.7), (0.2, 0.8), (0.1, 0.9), (0.05, 0.95))
 NOUL_KEYS = ("partial", "conditional", "negated", "approximate")
@@ -107,6 +108,20 @@ def _value(span: str) -> int:
         elif word != "and":
             current += _WORD_VALUES[word]
     return total + current
+
+
+MAX_MODEL_LENGTH = 200
+
+
+def parse_model(value: str) -> str:
+    model = value.strip()
+    if not model:
+        raise argparse.ArgumentTypeError("--model must not be empty")
+    if len(model) > MAX_MODEL_LENGTH:
+        raise argparse.ArgumentTypeError(
+            f"--model must be at most {MAX_MODEL_LENGTH} characters"
+        )
+    return model
 
 
 def reading_questions(candidates: Sequence[str]) -> dict[str, dict[str, Any]]:
@@ -422,15 +437,46 @@ def chat_schema(candidates: Sequence[str]) -> dict[str, Any]:
     }
 
 
+def response_finish_reason(response: Mapping[str, Any]) -> str | None:
+    """Return the provider's stop reason, normalizing truncation to ``length``.
+
+    Chat-completions routes report ``finish_reason``; the gateway passes through
+    ``/messages`` responses (``stop_reason == "max_tokens"``) and ``/responses``
+    payloads (``incomplete_details.reason == "max_output_tokens"``) unchanged.
+    """
+    finish_reason = response.get("finish_reason")
+    choices = response.get("choices")
+    if finish_reason is None and isinstance(choices, list) and choices:
+        choice = choices[0]
+        if isinstance(choice, Mapping):
+            finish_reason = choice.get("finish_reason")
+    if finish_reason is None:
+        stop_reason = response.get("stop_reason")
+        if stop_reason is not None:
+            finish_reason = "length" if stop_reason == "max_tokens" else stop_reason
+    if finish_reason is None:
+        details = response.get("incomplete_details")
+        if (
+            isinstance(details, Mapping)
+            and details.get("reason") == "max_output_tokens"
+        ):
+            finish_reason = "length"
+    return finish_reason
+
+
 def record(
     reader: str,
     cases: Sequence[Mapping[str, Any]],
     output: Path,
     *,
     max_tokens: int = 300,
+    model: str | None = None,
 ) -> None:
-    gateway = HttpGateway(config=GatewayConfig.from_env())
-    model = CHEAP_MODEL if reader == "cheap" else gateway.jev_model
+    config = GatewayConfig.from_env()
+    if reader == "jev" and model is not None:
+        config = replace(config, jev_model=model)
+    gateway = HttpGateway(config=config)
+    model = model or (CHEAP_MODEL if reader == "cheap" else gateway.jev_model)
     new_recording: dict[str, Any] = {
         "schema_version": 1,
         "reader": reader,
@@ -473,7 +519,7 @@ def record(
             }
         else:
             response = gateway.chat(
-                CHEAP_MODEL,
+                model,
                 chat_messages(case["criterion"], list(candidates)),
                 role="writer",
                 temperature=0,
@@ -485,6 +531,9 @@ def record(
                 "answered_by": response.get("model"),
                 "usage": response.get("usage", {}),
             }
+            finish_reason = response_finish_reason(response)
+            if finish_reason is not None:
+                row["finish_reason"] = finish_reason
         saved["rows"].append(row)
         save_json(output, saved)
         print(f"{case['id']} {len(saved['rows'])}/{len(cases)}", flush=True)
@@ -556,16 +605,22 @@ def report(
     if isinstance(max_tokens, int):
         truncation_suspects: list[str] = []
         for case in cases:
-            row_usage = rows[case["id"]].get("usage") or {}
-            completion_tokens = row_usage.get(
-                "completion_tokens", row_usage.get("output_tokens")
-            )
-            if completion_tokens == max_tokens:
+            row = rows[case["id"]]
+            if "finish_reason" in row:
+                truncated = row["finish_reason"] == "length"
+            else:
+                row_usage = row.get("usage") or {}
+                completion_tokens = row_usage.get(
+                    "completion_tokens", row_usage.get("output_tokens")
+                )
+                truncated = completion_tokens == max_tokens
+            if truncated:
                 truncation_suspects.append(case["id"])
         if truncation_suspects:
             print(
                 f"truncation-suspect: {', '.join(truncation_suspects)} "
-                f"(completion/output tokens == max_tokens={max_tokens})\n"
+                f"(finish_reason == 'length' or completion/output tokens == "
+                f"max_tokens={max_tokens})\n"
             )
     _print_distribution(cases, readings)
     print("| split | policy | correct check | correct abstain | missed | wrong |")
@@ -709,6 +764,9 @@ def main() -> None:
         default=None,
         help="completion token limit for the cheap reader (default: 300)",
     )
+    run.add_argument(
+        "--model", type=parse_model, help="model override (max 200 characters)"
+    )
     run.add_argument("--output", type=Path, required=True)
     rep = commands.add_parser("report", help="score a recording offline")
     rep.add_argument("--recording", type=Path, required=True)
@@ -722,6 +780,8 @@ def main() -> None:
     if args.command == "run":
         if args.max_tokens is not None and args.max_tokens <= 0:
             parser.error("--max-tokens must be a positive integer")
+        if args.max_tokens is not None and args.max_tokens > MAX_COMPLETION_TOKENS:
+            parser.error(f"--max-tokens must be at most {MAX_COMPLETION_TOKENS}")
         if args.reader == "jev" and args.max_tokens is not None:
             parser.error(
                 "--max-tokens applies only to the cheap chat reader (--reader cheap)"
@@ -731,6 +791,7 @@ def main() -> None:
             load_cases(args.split),
             args.output,
             max_tokens=300 if args.max_tokens is None else args.max_tokens,
+            model=args.model,
         )
     else:
         report(args.recording, show_errors=args.errors, cutoffs=args.cutoff)

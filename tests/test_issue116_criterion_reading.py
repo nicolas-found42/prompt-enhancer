@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from collections import Counter
@@ -687,3 +688,392 @@ def test_report_flags_legacy_cheap_recording_at_default_token_cap(
     measurement.report(recording, show_errors=False)
 
     assert "truncation-suspect: dev-001" in capsys.readouterr().out
+
+
+def _recording_cases() -> list[dict[str, object]]:
+    return [
+        {
+            "id": f"case-{index}",
+            "split": "development",
+            "criterion": f"The answer is under {100 + index} words",
+            "expected": None,
+        }
+        for index in range(2)
+    ]
+
+
+class _RecordingGateway:
+    def __init__(
+        self,
+        *,
+        config: measurement.GatewayConfig,
+        fail_on_second_chat: bool = False,
+        shared_calls: list[tuple[str, str]] | None = None,
+        top_level_fields: dict[str, object] | None = None,
+        choice_fields: dict[str, object] | None = None,
+    ) -> None:
+        self.top_level_fields = (
+            {"finish_reason": "stop"} if top_level_fields is None else top_level_fields
+        )
+        self.choice_fields = choice_fields or {}
+        self.jev_model = config.jev_model
+        self.decision_log: list[dict[str, object]] = []
+        self.calls = shared_calls if shared_calls is not None else []
+        self.chat_calls = 0
+        self.fail_on_second_chat = fail_on_second_chat
+
+    def decide_batch(
+        self, requests: list[dict[str, object]]
+    ) -> list[dict[str, object]]:
+        self.calls.append(("jev", self.jev_model))
+        self.decision_log.append(
+            {"answered_by": self.jev_model, "usage": {"input_tokens": 7}}
+        )
+        answers: list[dict[str, object]] = []
+        for request in requests:
+            key = request["key"]
+            selected = (
+                "word_count"
+                if key == "kind"
+                else "under"
+                if key == "op"
+                else "100"
+                if key == "bound"
+                else "none"
+            )
+            answers.append(
+                {
+                    "type": "choice",
+                    "selected": selected,
+                    "options": [{"value": selected, "probability": 1}],
+                }
+                if key in ("kind", "op", "bound", "low", "high")
+                else {"type": "noul", "probability_true": 0}
+            )
+        return answers
+
+    def chat(self, model: str, *_args: object, **_kwargs: object) -> dict[str, object]:
+        self.calls.append(("cheap", model))
+        self.chat_calls += 1
+        if self.fail_on_second_chat and self.chat_calls == 2:
+            raise RuntimeError("synthetic provider failure")
+        return {
+            "model": model,
+            "usage": {"completion_tokens": 12},
+            **self.top_level_fields,
+            "choices": [
+                {
+                    **self.choice_fields,
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "kind": "word_count",
+                                "op": "under",
+                                "bound": "100",
+                                "low": "none",
+                                "high": "none",
+                                "partial": False,
+                                "conditional": False,
+                                "negated": False,
+                                "approximate": False,
+                            }
+                        )
+                    },
+                }
+            ],
+        }
+
+
+@pytest.mark.parametrize("reader", ["jev", "cheap"])
+def test_record_saves_raw_answers_and_resumes_without_repeating_cases(
+    reader: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "recording.json"
+    cases = _recording_cases()
+    calls: list[tuple[str, str]] = []
+
+    def make_gateway(*, config: measurement.GatewayConfig) -> _RecordingGateway:
+        return _RecordingGateway(config=config, shared_calls=calls)
+
+    monkeypatch.setattr(measurement, "HttpGateway", make_gateway)
+    measurement.record(reader, cases, output)
+    recorded = json.loads(output.read_text(encoding="utf-8"))
+    assert len(recorded["rows"]) == 2
+    assert all(
+        row["case_id"] == case["id"]
+        for row, case in zip(recorded["rows"], cases, strict=True)
+    )
+    if reader == "jev":
+        assert all("answers" in row and "usage" in row for row in recorded["rows"])
+        assert recorded["rows"][0]["answers"]["kind"]["selected"] == "word_count"
+    else:
+        assert all("reply" in row and "usage" in row for row in recorded["rows"])
+        assert json.loads(recorded["rows"][0]["reply"])["kind"] == "word_count"
+        assert all(row["finish_reason"] == "stop" for row in recorded["rows"])
+
+    calls_before_resume = len(calls)
+    measurement.record(reader, cases, output)
+    assert len(calls) == calls_before_resume
+
+
+def test_provider_failure_keeps_completed_rows_and_resume_finishes_remaining(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "recording.json"
+    cases = _recording_cases()
+    instances: list[_RecordingGateway] = []
+
+    def make_gateway(*, config: measurement.GatewayConfig) -> _RecordingGateway:
+        gateway = _RecordingGateway(config=config, fail_on_second_chat=not instances)
+        instances.append(gateway)
+        return gateway
+
+    monkeypatch.setattr(measurement, "HttpGateway", make_gateway)
+    with pytest.raises(RuntimeError, match="synthetic provider failure"):
+        measurement.record("cheap", cases, output)
+    interrupted = json.loads(output.read_text(encoding="utf-8"))
+    assert [row["case_id"] for row in interrupted["rows"]] == ["case-0"]
+    assert interrupted["rows"][0]["reply"]
+
+    measurement.record("cheap", cases, output)
+    resumed = json.loads(output.read_text(encoding="utf-8"))
+    assert [row["case_id"] for row in resumed["rows"]] == ["case-0", "case-1"]
+    assert len(instances[-1].calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("finish_reason", "usage", "expected"),
+    [
+        ("length", {"completion_tokens": 12}, True),
+        ("stop", {"completion_tokens": 50}, False),
+        (None, {"completion_tokens": 50}, True),
+    ],
+)
+def test_report_uses_finish_reason_before_legacy_token_cap_heuristic(
+    finish_reason: str | None,
+    usage: dict[str, int],
+    expected: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "id": "dev-001",
+                        "split": "development",
+                        "criterion": "Write a friendly answer",
+                        "expected": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "max_tokens": 50,
+                "rows": [
+                    {
+                        "case_id": "dev-001",
+                        "reply": "{}",
+                        "usage": usage,
+                        **(
+                            {"finish_reason": finish_reason}
+                            if finish_reason is not None
+                            else {}
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    measurement.report(recording, show_errors=False)
+
+    output = capsys.readouterr().out
+    assert ("truncation-suspect: dev-001" in output) is expected
+    assert "unusable answers: dev-001" in output
+    assert "| development | unresolved if p >= 0.5 | 0 | 1 | 0 | 0 |" in output
+
+
+@pytest.mark.parametrize(
+    ("top_level_fields", "choice_fields", "expected"),
+    [
+        ({}, {"finish_reason": "length"}, "length"),
+        ({}, {"finish_reason": "stop"}, "stop"),
+        ({"stop_reason": "max_tokens"}, {}, "length"),
+        ({"stop_reason": "end_turn"}, {}, "end_turn"),
+        ({"incomplete_details": {"reason": "max_output_tokens"}}, {}, "length"),
+        ({"incomplete_details": None}, {}, None),
+    ],
+)
+def test_record_persists_finish_reason_from_every_provider_shape(
+    top_level_fields: dict[str, object],
+    choice_fields: dict[str, object],
+    expected: str | None,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "recording.json"
+    cases = _recording_cases()[:1]
+
+    def make_gateway(*, config: measurement.GatewayConfig) -> _RecordingGateway:
+        return _RecordingGateway(
+            config=config,
+            top_level_fields=top_level_fields,
+            choice_fields=choice_fields,
+        )
+
+    monkeypatch.setattr(measurement, "HttpGateway", make_gateway)
+    measurement.record("cheap", cases, output, max_tokens=50)
+
+    row = json.loads(output.read_text(encoding="utf-8"))["rows"][0]
+    assert row.get("finish_reason") == expected
+    assert ("finish_reason" in row) is (expected is not None)
+
+
+@pytest.mark.parametrize("reader", ["jev", "cheap"])
+def test_model_override_is_used_recorded_and_protected_by_resume_guard(
+    reader: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "recording.json"
+    calls: list[tuple[str, str]] = []
+
+    def make_gateway(*, config: measurement.GatewayConfig) -> _RecordingGateway:
+        return _RecordingGateway(config=config, shared_calls=calls)
+
+    monkeypatch.setattr(measurement, "HttpGateway", make_gateway)
+    measurement.record(reader, _recording_cases()[:1], output, model="custom/model")
+
+    recorded = json.loads(output.read_text(encoding="utf-8"))
+    assert recorded["model"] == "custom/model"
+    assert calls == [(reader, "custom/model")]
+    with pytest.raises(ValueError, match="different model"):
+        measurement.record(reader, _recording_cases(), output, model="other/model")
+
+
+def test_model_override_has_a_bounded_length() -> None:
+    assert measurement.parse_model("  custom/model  ") == "custom/model"
+    assert (
+        measurement.parse_model("m" * measurement.MAX_MODEL_LENGTH)
+        == "m" * measurement.MAX_MODEL_LENGTH
+    )
+    with pytest.raises(argparse.ArgumentTypeError, match="at most"):
+        measurement.parse_model("m" * (measurement.MAX_MODEL_LENGTH + 1))
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_cli_rejects_empty_model_override(
+    value: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "measure_criterion_reading.py",
+            "run",
+            "--reader",
+            "cheap",
+            "--model",
+            value,
+            "--output",
+            "recording.json",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        measurement.main()
+
+    assert error.value.code == 2
+    assert "--model must not be empty" in capsys.readouterr().err
+
+
+def test_cli_rejects_completion_token_cap_above_configured_bound(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "measure_criterion_reading.py",
+            "run",
+            "--reader",
+            "cheap",
+            "--max-tokens",
+            str(measurement.MAX_COMPLETION_TOKENS + 1),
+            "--output",
+            "recording.json",
+        ],
+    )
+
+    with pytest.raises(SystemExit) as error:
+        measurement.main()
+
+    assert error.value.code == 2
+    assert (
+        f"--max-tokens must be at most {measurement.MAX_COMPLETION_TOKENS}"
+        in capsys.readouterr().err
+    )
+
+
+def test_report_cli_scores_a_temporary_recording_offline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fixture = tmp_path / "fixture.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "id": "report-case",
+                        "split": "development",
+                        "criterion": "Write a friendly answer",
+                        "expected": None,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(measurement, "FIXTURE", fixture)
+    recording = tmp_path / "recording.json"
+    recording.write_text(
+        json.dumps(
+            {
+                "reader": "cheap",
+                "model": "test-model",
+                "questions_digest": measurement.questions_digest(),
+                "max_tokens": 300,
+                "rows": [
+                    {
+                        "case_id": "report-case",
+                        "reply": "{}",
+                        "usage": {"completion_tokens": 4},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["measure_criterion_reading.py", "report", "--recording", str(recording)],
+    )
+
+    measurement.main()
+
+    output = capsys.readouterr().out
+    assert "# cheap (test-model): 1 criteria" in output
+    assert "| development | unresolved if p >= 0.5 | 0 | 1 | 0 | 0 |" in output
