@@ -32,6 +32,7 @@ from .diagnosis import (
     DEFAULT_RUBRIC,
     HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+    PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     TASK_TAXONOMY_PROTOCOL_VERSION,
     ConfirmedGap,
@@ -39,6 +40,7 @@ from .diagnosis import (
     DiagnosisReport,
     DiagnosisRubric,
     GapImpact,
+    split_sentences,
 )
 from .failures import describe_failure
 from .gateway import (
@@ -47,8 +49,6 @@ from .gateway import (
     HttpGateway,
     HttpTransport,
     ScriptedGateway,
-    completion_text,
-    writer_messages,
 )
 from .history import RunHistory
 from .jev import NoulDecision, parse_decision
@@ -136,6 +136,7 @@ class PromptOptimizer:
             raise ValueError("faithfulness threshold must be a probability")
         if sentence_diagnosis_version not in {
             HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+            PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
             SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         }:
             raise ValueError("unsupported sentence diagnosis protocol version")
@@ -973,27 +974,9 @@ class PromptOptimizer:
             final_prompt, key, old_value, value, previous.get("source")
         )
         if updated_prompt is None:
-            try:
-                response = self.gateway.chat(
-                    self.config.writer_model,
-                    writer_messages(
-                        "Revise only the stated assumption in the final prompt. Preserve all other wording and return only the revised prompt.",
-                        {
-                            "original_prompt": record["prompt"],
-                            "final_prompt": final_prompt,
-                            "assumption": {
-                                "key": key,
-                                "previous": old_value,
-                                "corrected": value,
-                            },
-                        },
-                    ),
-                    role="writer",
-                    run_id=run_id,
-                )
-                updated_prompt = completion_text(response).strip()
-            except Exception as exc:
-                raise RuntimeError("assumption edit could not be applied") from exc
+            raise ValueError(
+                "assumption value is not stated unambiguously in the final prompt"
+            )
         if not updated_prompt or updated_prompt == final_prompt:
             raise ValueError("assumption edit did not update the final prompt")
         check = self._assumption_meaning_check(
@@ -1222,9 +1205,33 @@ def _apply_assumption(
         if existing.strip().casefold() == f"{label.casefold()}: {old_value.casefold()}":
             lines[index] = line
             return "\n".join(lines)
-    if old_value and prompt.count(old_value) == 1:
-        return prompt.replace(old_value, value, 1)
-    return None
+    if not old_value:
+        return None
+    matches: list[tuple[int, int]] = []
+    folded_prompt = prompt.casefold()
+    folded_old = old_value.casefold()
+    start = 0
+    while (index := folded_prompt.find(folded_old, start)) >= 0:
+        end = index + len(folded_old)
+        before = prompt[index - 1] if index else ""
+        after = prompt[end] if end < len(prompt) else ""
+        if (not before or not before.isalnum()) and (not after or not after.isalnum()):
+            matches.append((index, end))
+        start = end
+    if len(matches) != 1:
+        return None
+    start, end = matches[0]
+    sentence = next(
+        (
+            item
+            for item in split_sentences(prompt)
+            if item.start <= start and end <= item.end
+        ),
+        None,
+    )
+    if sentence is None:
+        return None
+    return prompt[:start] + value + prompt[end:]
 
 
 def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:

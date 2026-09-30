@@ -12,6 +12,7 @@ from prompt_enhancer.diagnosis import (
     TaskType,
 )
 from prompt_enhancer.gateway import ProviderError, ScriptedGateway
+from prompt_enhancer.optimizer import _apply_assumption
 
 # These regressions pin the pre-screening request protocol; current screening
 # and shared-state grading are exercised in test_issue44_screen_and_grade.py.
@@ -973,6 +974,52 @@ def test_update_assumption_requires_recorded_assumption_and_jev_answer() -> None
         assert "meaning check" in str(exc)
     else:
         raise AssertionError("unavailable Jev check should block the edit")
+
+
+def test_assumption_edit_does_not_replace_substrings_or_ambiguous_occurrences() -> None:
+    assert (
+        _apply_assumption(
+            "Do not mention skids or trucks.", "Audience", "kids", "teens"
+        )
+        is None
+    )
+    assert (
+        _apply_assumption(
+            "Return the result as JSON. Explain the json schema briefly.",
+            "Format",
+            "json",
+            "YAML",
+        )
+        is None
+    )
+
+
+def test_assumption_edit_replaces_a_unique_whole_word_occurrence() -> None:
+    assert (
+        _apply_assumption("Return the result as JSON.", "Format", "json", "YAML")
+        == "Return the result as YAML."
+    )
+
+
+def test_assumption_edit_rejects_repeated_or_reworded_values() -> None:
+    assert (
+        _apply_assumption(
+            "Summarize in 5 bullets. Address the 5 stakeholders by name.",
+            "Length",
+            "5",
+            "3",
+        )
+        is None
+    )
+    assert (
+        _apply_assumption(
+            "Aim this at a general readership. Keep it short.",
+            "Audience",
+            "general public",
+            "engineers",
+        )
+        is None
+    )
 
 
 def _clarification_gateway(

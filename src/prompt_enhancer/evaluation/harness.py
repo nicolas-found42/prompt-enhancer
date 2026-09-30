@@ -16,6 +16,7 @@ from ..diagnosis import (
     DEFAULT_RUBRIC,
     HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
+    PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     TASK_TAXONOMY_PROTOCOL_VERSION,
     GapImpact,
@@ -972,6 +973,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         sentence_diagnosis_version, bool
     ) or sentence_diagnosis_version not in {
         HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
+        PREVIOUS_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
         SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
     }:
         raise EvaluationError("replay sentence_diagnosis_version is not supported")

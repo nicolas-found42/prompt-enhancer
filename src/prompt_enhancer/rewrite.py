@@ -24,8 +24,9 @@ from .gateway import Gateway, completion_text, writer_messages
 # Version 8 keeps the writer text and adds failed-pair attribution.
 # Version 9 keeps the writer text and shares lossless role-assignment state.
 # Version 10 keeps the writer text and targets shared source units explicitly.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-CURRENT_WRITER_INSTRUCTION_VERSION = 10
+# Version 11 tells the success-test writer what `expected` may hold and validates it.
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+CURRENT_WRITER_INSTRUCTION_VERSION = 11
 
 
 class CandidateWriter:
@@ -96,6 +97,7 @@ class CandidateWriter:
             8: current_instructions,
             9: current_instructions,
             10: current_instructions,
+            11: current_instructions,
         }[self.instruction_version]
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"
