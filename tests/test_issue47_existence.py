@@ -581,6 +581,8 @@ def test_historical_sentence_protocols_keep_the_original_boundaries() -> None:
         "Hello there. " * 15_000,
         "- item\n" * 30_000,
         "a.\tb" * 50_000,
+        "a.\n" + "0" * 200_000 + "x\n" + "0" * 200_000 + "\n- y",
+        "a." + " " * 200_000 + "x\n" + " " * 200_000 + "b",
     ],
     ids=[
         "punctuation-run",
@@ -588,6 +590,8 @@ def test_historical_sentence_protocols_keep_the_original_boundaries() -> None:
         "one-line",
         "bullet-lines",
         "tab-gaps",
+        "digit-runs",
+        "space-runs",
     ],
 )
 def test_split_sentences_scales_linearly_on_adversarial_prompts(
