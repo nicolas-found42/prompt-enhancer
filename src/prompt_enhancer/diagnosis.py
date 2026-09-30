@@ -424,16 +424,16 @@ def default_gap_question(key: str) -> str:
     return cast(str, gap_question(item))
 
 
-# Possessive quantifiers and the lookbehind keep every scan linear: closing marks
-# and whitespace never overlap, so backtracking could not change a match.
+# Possessive quantifiers and the lookbehind keep every scan linear: adjacent
+# character classes here never overlap, so backtracking could not change a match.
 _LEGACY_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])[\"'”’\)\]]*+(?=\s|$)|\n{2,}")
 _SENTENCE_TERMINAL = re.compile(r"(?<![.!?])[.!?]++[\"'”’)\]]*+(?=\s|$)")
-_NUMBER_ONLY = re.compile(r"\s*\d+")
-_LIST_ITEM = re.compile(r"\s*(?:[-*+]\s+|\d+[.)]\s+)")
+_NUMBER_ONLY = re.compile(r"\s*+\d++")
+_LIST_ITEM = re.compile(r"\s*+(?:[-*+]\s++|\d++[.)]\s++)")
 _ABBREVIATION = re.compile(
     r"(?:\b(?:e\.g|i\.e|etc|vs|Dr|Mr|Mrs|Ms|Prof|Fig|Inc|U\.S)\.)$", re.IGNORECASE
 )
-_CONTINUATION = re.compile(r"\s*(?:or|and|answers?|responses?)\b", re.IGNORECASE)
+_CONTINUATION = re.compile(r"\s*+(?:or|and|answers?|responses?)\b", re.IGNORECASE)
 _LONGEST_ABBREVIATION = 6
 _PROBLEM_QUESTIONS = {
     ProblemKind(key): value for key, value in jev_questions.PROBLEM_QUESTIONS.items()
