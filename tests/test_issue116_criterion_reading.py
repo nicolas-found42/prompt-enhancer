@@ -43,7 +43,7 @@ def _reading(**overrides: object) -> Reading:
             "approximate": 0.1,
         },
     }
-    return Reading(**{**fields, **overrides})  # type: ignore[arg-type]
+    return Reading(**{**fields, **overrides})  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
 
 
 def test_fixture_has_50_development_and_100_heldout_unique_criteria() -> None:
