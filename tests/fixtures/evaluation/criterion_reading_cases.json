@@ -8,6 +8,18 @@
     "negated": "valid_json only: the criterion requires the output NOT to parse",
     "null": "no whole-output constraint code can verify"
   },
+  "label_provenance": {
+    "label_origin": {
+      "issue-116": "Label taken from the 50 criteria and labels in issue #116 (development split).",
+      "claude-2026-09-29": "Label written by Claude on 2026-09-29 (held-out split)."
+    },
+    "review_status": {
+      "unreviewed": "No person has reviewed the label. Must not carry reviewed_by, reviewed_on, audit_ref or previous_expected.",
+      "reviewed": "A person confirmed the label as written. Needs reviewed_by and reviewed_on (YYYY-MM-DD).",
+      "corrected": "A person changed the label. Also needs audit_ref (link to the review record) and previous_expected (the label it replaced)."
+    },
+    "note": "Every case starts unreviewed. Reviewing the held-out labels is tracked in issue #116; a generated label is never marked reviewed here without that record."
+  },
   "splits": {
     "development": "The 50 criteria and labels from issue #116, used to word the extraction questions.",
     "heldout": "100 criteria written after the questions were fixed and never used to word or tune them. Labelled by Claude on 2026-09-29; not yet reviewed by a maintainer."
@@ -22,7 +34,9 @@
         "operator": "under",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-002",
@@ -33,7 +47,9 @@
         "operator": "at most",
         "bound": 1000,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-003",
@@ -44,7 +60,9 @@
         "operator": "between",
         "bound": 3,
         "upper_bound": 5
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-004",
@@ -55,7 +73,9 @@
         "operator": "at most",
         "bound": 200,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-005",
@@ -66,7 +86,9 @@
         "operator": "at most",
         "bound": 50,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-006",
@@ -77,7 +99,9 @@
         "operator": "at most",
         "bound": 50,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-007",
@@ -88,7 +112,9 @@
         "operator": "at most",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-008",
@@ -99,7 +125,9 @@
         "operator": "at most",
         "bound": 80,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-009",
@@ -110,7 +138,9 @@
         "operator": "at most",
         "bound": 120,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-010",
@@ -121,7 +151,9 @@
         "operator": "at most",
         "bound": 90,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-011",
@@ -132,7 +164,9 @@
         "operator": "at most",
         "bound": 90,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-012",
@@ -143,7 +177,9 @@
         "operator": "at most",
         "bound": 40,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-013",
@@ -154,7 +190,9 @@
         "operator": "at most",
         "bound": 75,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-014",
@@ -165,7 +203,9 @@
         "operator": "at most",
         "bound": 25,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-015",
@@ -176,7 +216,9 @@
         "operator": "under",
         "bound": 30,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-016",
@@ -187,7 +229,9 @@
         "operator": "at least",
         "bound": 500,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-017",
@@ -198,7 +242,9 @@
         "operator": "at least",
         "bound": 500,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-018",
@@ -209,7 +255,9 @@
         "operator": "at least",
         "bound": 500,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-019",
@@ -220,7 +268,9 @@
         "operator": "more than",
         "bound": 50,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-020",
@@ -231,7 +281,9 @@
         "operator": "more than",
         "bound": 200,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-021",
@@ -242,7 +294,9 @@
         "operator": "between",
         "bound": 100,
         "upper_bound": 150
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-022",
@@ -253,7 +307,9 @@
         "operator": "between",
         "bound": 100,
         "upper_bound": 150
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-023",
@@ -264,7 +320,9 @@
         "operator": "under",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-024",
@@ -275,7 +333,9 @@
         "operator": "at least",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-025",
@@ -286,7 +346,9 @@
         "operator": "at most",
         "bound": 60,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-026",
@@ -297,7 +359,9 @@
         "operator": "under",
         "bound": 500,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-027",
@@ -308,7 +372,9 @@
         "operator": "under",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-028",
@@ -317,7 +383,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-029",
@@ -326,7 +394,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-030",
@@ -335,7 +405,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-031",
@@ -344,7 +416,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": true
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-032",
@@ -355,7 +429,9 @@
         "operator": "exactly",
         "bound": 2,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-033",
@@ -366,109 +442,145 @@
         "operator": "at most",
         "bound": 3,
         "upper_bound": null
-      }
+      },
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-034",
       "split": "development",
       "criterion": "Under 100 words, or a table if longer",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-035",
       "split": "development",
       "criterion": "Under 50 words if the user asks for a summary",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-036",
       "split": "development",
       "criterion": "If the assistant refuses, the reply is at least 100 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-037",
       "split": "development",
       "criterion": "Each bullet is under 15 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-038",
       "split": "development",
       "criterion": "Each paragraph has at least 3 sentences",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-039",
       "split": "development",
       "criterion": "The intro paragraph is under 50 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-040",
       "split": "development",
       "criterion": "The title is at most 10 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-041",
       "split": "development",
       "criterion": "The response uses fewer than 20 words per sentence",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-042",
       "split": "development",
       "criterion": "The reply contains valid JSON followed by a short explanation",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-043",
       "split": "development",
       "criterion": "The JSON has a 'name' field holding the customer's name",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-044",
       "split": "development",
       "criterion": "The answer cites at least 2 sources",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-045",
       "split": "development",
       "criterion": "Uses no more than 2 exclamation marks",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-046",
       "split": "development",
       "criterion": "Response is between 2 and 3 paragraphs",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-047",
       "split": "development",
       "criterion": "Roughly 100 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-048",
       "split": "development",
       "criterion": "Acknowledges the student's urgency or deadline without being condescending",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-049",
       "split": "development",
       "criterion": "Summarizes the execution plan clearly",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "dev-050",
       "split": "development",
       "criterion": "Explains the reasoning in a friendly tone",
-      "expected": null
+      "expected": null,
+      "label_origin": "issue-116",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-001",
@@ -479,7 +591,9 @@
         "operator": "at most",
         "bound": 150,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-002",
@@ -490,7 +604,9 @@
         "operator": "at most",
         "bound": 60,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-003",
@@ -501,7 +617,9 @@
         "operator": "at most",
         "bound": 300,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-004",
@@ -512,7 +630,9 @@
         "operator": "at most",
         "bound": 120,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-005",
@@ -523,7 +643,9 @@
         "operator": "at most",
         "bound": 250,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-006",
@@ -534,7 +656,9 @@
         "operator": "at most",
         "bound": 35,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-007",
@@ -545,7 +669,9 @@
         "operator": "at most",
         "bound": 45,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-008",
@@ -556,7 +682,9 @@
         "operator": "at most",
         "bound": 80,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-009",
@@ -567,7 +695,9 @@
         "operator": "at most",
         "bound": 20,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-010",
@@ -578,7 +708,9 @@
         "operator": "at most",
         "bound": 140,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-011",
@@ -589,7 +721,9 @@
         "operator": "at most",
         "bound": 70,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-012",
@@ -600,7 +734,9 @@
         "operator": "at most",
         "bound": 180,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-013",
@@ -611,7 +747,9 @@
         "operator": "at most",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-014",
@@ -622,7 +760,9 @@
         "operator": "at most",
         "bound": 2000,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-015",
@@ -633,7 +773,9 @@
         "operator": "at most",
         "bound": 55,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-016",
@@ -644,7 +786,9 @@
         "operator": "at most",
         "bound": 65,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-017",
@@ -655,7 +799,9 @@
         "operator": "at most",
         "bound": 300,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-018",
@@ -666,7 +812,9 @@
         "operator": "under",
         "bound": 90,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-019",
@@ -677,7 +825,9 @@
         "operator": "under",
         "bound": 400,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-020",
@@ -688,7 +838,9 @@
         "operator": "under",
         "bound": 75,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-021",
@@ -699,7 +851,9 @@
         "operator": "under",
         "bound": 120,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-022",
@@ -710,7 +864,9 @@
         "operator": "under",
         "bound": 1500,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-023",
@@ -721,7 +877,9 @@
         "operator": "under",
         "bound": 15,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-024",
@@ -732,7 +890,9 @@
         "operator": "at least",
         "bound": 800,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-025",
@@ -743,7 +903,9 @@
         "operator": "at least",
         "bound": 600,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-026",
@@ -754,7 +916,9 @@
         "operator": "at least",
         "bound": 250,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-027",
@@ -765,7 +929,9 @@
         "operator": "at least",
         "bound": 120,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-028",
@@ -776,7 +942,9 @@
         "operator": "at least",
         "bound": 300,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-029",
@@ -787,7 +955,9 @@
         "operator": "at least",
         "bound": 150,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-030",
@@ -798,7 +968,9 @@
         "operator": "at least",
         "bound": 50,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-031",
@@ -809,7 +981,9 @@
         "operator": "at least",
         "bound": 200,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-032",
@@ -820,7 +994,9 @@
         "operator": "at least",
         "bound": 40,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-033",
@@ -831,7 +1007,9 @@
         "operator": "at least",
         "bound": 90,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-034",
@@ -842,7 +1020,9 @@
         "operator": "more than",
         "bound": 400,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-035",
@@ -853,7 +1033,9 @@
         "operator": "more than",
         "bound": 1000,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-036",
@@ -864,7 +1046,9 @@
         "operator": "more than",
         "bound": 30,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-037",
@@ -875,7 +1059,9 @@
         "operator": "exactly",
         "bound": 6,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-038",
@@ -886,7 +1072,9 @@
         "operator": "exactly",
         "bound": 4,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-039",
@@ -897,7 +1085,9 @@
         "operator": "exactly",
         "bound": 50,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-040",
@@ -908,7 +1098,9 @@
         "operator": "exactly",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-041",
@@ -919,7 +1111,9 @@
         "operator": "between",
         "bound": 50,
         "upper_bound": 80
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-042",
@@ -930,7 +1124,9 @@
         "operator": "between",
         "bound": 30,
         "upper_bound": 45
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-043",
@@ -941,7 +1137,9 @@
         "operator": "between",
         "bound": 200,
         "upper_bound": 300
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-044",
@@ -952,7 +1150,9 @@
         "operator": "between",
         "bound": 60,
         "upper_bound": 90
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-045",
@@ -963,7 +1163,9 @@
         "operator": "between",
         "bound": 200,
         "upper_bound": 300
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-046",
@@ -974,7 +1176,9 @@
         "operator": "under",
         "bound": 150,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-047",
@@ -985,7 +1189,9 @@
         "operator": "at least",
         "bound": 500,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-048",
@@ -996,7 +1202,9 @@
         "operator": "at most",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-049",
@@ -1007,7 +1215,9 @@
         "operator": "at most",
         "bound": 200,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-050",
@@ -1018,7 +1228,9 @@
         "operator": "under",
         "bound": 100,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-051",
@@ -1027,7 +1239,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-052",
@@ -1036,7 +1250,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-053",
@@ -1045,7 +1261,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-054",
@@ -1054,7 +1272,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": false
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-055",
@@ -1063,7 +1283,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": true
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-056",
@@ -1072,7 +1294,9 @@
       "expected": {
         "kind": "valid_json",
         "negated": true
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-057",
@@ -1083,7 +1307,9 @@
         "operator": "exactly",
         "bound": 3,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-058",
@@ -1094,7 +1320,9 @@
         "operator": "at most",
         "bound": 4,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-059",
@@ -1105,7 +1333,9 @@
         "operator": "at least",
         "bound": 2,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-060",
@@ -1116,7 +1346,9 @@
         "operator": "under",
         "bound": 5,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-061",
@@ -1127,7 +1359,9 @@
         "operator": "exactly",
         "bound": 2,
         "upper_bound": null
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-062",
@@ -1138,235 +1372,313 @@
         "operator": "between",
         "bound": 3,
         "upper_bound": 6
-      }
+      },
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-063",
       "split": "heldout",
       "criterion": "Under 200 words unless the user asks for more detail",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-064",
       "split": "heldout",
       "criterion": "Either under 80 words or organised as a bulleted list",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-065",
       "split": "heldout",
       "criterion": "If the request is urgent, the reply is at most 50 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-066",
       "split": "heldout",
       "criterion": "At least 300 words when the topic is complex",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-067",
       "split": "heldout",
       "criterion": "Is the reply under 100 words, or does it link to a longer document?",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-068",
       "split": "heldout",
       "criterion": "The answer is at most 150 words, or longer only if the code sample needs it",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-069",
       "split": "heldout",
       "criterion": "When the user gives a word limit, the reply is within 10% of it",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-070",
       "split": "heldout",
       "criterion": "Fewer than 60 words for a beginner; at least 200 for an expert",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-071",
       "split": "heldout",
       "criterion": "The subject line is at most 8 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-072",
       "split": "heldout",
       "criterion": "Each section is under 100 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-073",
       "split": "heldout",
       "criterion": "The first paragraph is no more than 40 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-074",
       "split": "heldout",
       "criterion": "Every bullet has fewer than 12 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-075",
       "split": "heldout",
       "criterion": "The summary at the top is at most 60 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-076",
       "split": "heldout",
       "criterion": "The code comment is under 25 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-077",
       "split": "heldout",
       "criterion": "The explanation after the code block is under 120 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-078",
       "split": "heldout",
       "criterion": "Is the greeting no longer than 5 words?",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-079",
       "split": "heldout",
       "criterion": "The email body is at least 50 words, excluding the signature",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-080",
       "split": "heldout",
       "criterion": "Each answer stays under 30 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-081",
       "split": "heldout",
       "criterion": "Each sentence has at most 25 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-082",
       "split": "heldout",
       "criterion": "The headline has between 4 and 9 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-083",
       "split": "heldout",
       "criterion": "The JSON has an 'id' field",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-084",
       "split": "heldout",
       "criterion": "The reply is valid JSON followed by a one-line explanation",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-085",
       "split": "heldout",
       "criterion": "The JSON output is wrapped in a markdown code fence",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-086",
       "split": "heldout",
       "criterion": "The 'summary' field in the JSON is under 40 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-087",
       "split": "heldout",
       "criterion": "Every JSON key is in snake_case",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-088",
       "split": "heldout",
       "criterion": "About 150 words",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-089",
       "split": "heldout",
       "criterion": "Approximately three sentences",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-090",
       "split": "heldout",
       "criterion": "Around 50 words, give or take",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-091",
       "split": "heldout",
       "criterion": "Has at least 3 bullet points",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-092",
       "split": "heldout",
       "criterion": "Includes no more than 2 emojis",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-093",
       "split": "heldout",
       "criterion": "Is the reply under 300 characters?",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-094",
       "split": "heldout",
       "criterion": "Has three to five paragraphs",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-095",
       "split": "heldout",
       "criterion": "The tone is warm and professional",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-096",
       "split": "heldout",
       "criterion": "Does the letter mention the warranty?",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-097",
       "split": "heldout",
       "criterion": "Keeps it short",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-098",
       "split": "heldout",
       "criterion": "Fits on one page",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-099",
       "split": "heldout",
       "criterion": "Lists exactly 5 tips",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     },
     {
       "id": "held-100",
       "split": "heldout",
       "criterion": "Uses at most 4 hashtags",
-      "expected": null
+      "expected": null,
+      "label_origin": "claude-2026-09-29",
+      "review_status": "unreviewed"
     }
   ]
 }

@@ -7,6 +7,52 @@ offline against `tests/fixtures/evaluation/criterion_reading_cases.json`, which
 contains 50 development and 100 held-out cases. The held-out labels are not yet
 reviewed by a maintainer.
 
+## Label provenance and review status
+
+Every case carries `label_origin` (`issue-116` for the development split,
+`claude-2026-09-29` for the held-out split) and `review_status`. All 150 cases are
+`unreviewed`; the maintainer review of the held-out labels is tracked in
+[issue #116](https://github.com/nicolas-found42/prompt-enhancer/issues/116) and no
+label is marked reviewed here.
+`label_provenance_errors` in the script validates each case, and a test runs it over
+the whole fixture:
+
+- `unreviewed` may not carry `reviewed_by`, `reviewed_on`, `audit_ref` or
+  `previous_expected`, so a generated label cannot look approved.
+- `reviewed` needs `reviewed_by` and an ISO `reviewed_on` date.
+- `corrected` also needs `audit_ref`, the link to the review record, and
+  `previous_expected`, the label it replaced.
+
+`report` prints how many scored labels are unreviewed per split and says that its
+scores measure agreement with labels no maintainer has reviewed until none remain.
+
+## Offline replay data
+
+Real recordings stay local and git-ignored. Each is a single historical observation
+of one run and says nothing about run-to-run stability; a stability measurement needs
+repeated fresh runs. A report on a recording without provenance says so.
+
+Two small synthetic recordings are committed so a fresh clone can replay `report`
+without an API key or network:
+
+```sh
+uv run python scripts/measure_criterion_reading.py report \
+  --recording tests/fixtures/evaluation/criterion_reading_synthetic_jev.json
+uv run python scripts/measure_criterion_reading.py report \
+  --recording tests/fixtures/evaluation/criterion_reading_synthetic_cheap.json
+```
+
+They are hand-authored (`model: synthetic-fixture`), not model output, and their
+`provenance` block says so; the report prints a `SYNTHETIC RECORDING` banner.
+They do not measure how well Jev or a chat model reads criteria, so cite the
+real recordings and issue #116 for that. Their rows are chosen to land in every
+outcome, an unresolved band edge, JSON negation bands, an unusable answer and a
+truncated reply, and `tests/test_issue116_criterion_reading.py` pins the resulting
+report tables. They reference cases by id from the public fixture and include no
+prompts, keys, costs, token counts or provider identifiers. If the question
+wording changes, `questions_digest` no longer matches and those tests fail until
+the recordings are regenerated.
+
 Run a live recording and score it offline:
 
 ```sh
@@ -51,5 +97,5 @@ reason use the completion-token count reaching the recorded cap as a
 truncation-suspect heuristic. Jev recordings carry no finish-reason evidence and are
 never flagged.
 The measurement results and interpretation are recorded in [issue #116](https://github.com/nicolas-found42/prompt-enhancer/issues/116).
-Recordings stay in the git-ignored `.local/criterion-reading/` directory; do not
-commit them.
+Real recordings stay in the git-ignored `.local/criterion-reading/` directory; do not
+commit them or the whole directory. Only the synthetic recordings above are committed.
