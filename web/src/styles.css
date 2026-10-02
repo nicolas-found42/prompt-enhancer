@@ -192,6 +192,12 @@ button:focus-visible {
   margin: 10px 0 0;
 }
 
+.composer-hint {
+  color: #f5d08a;
+  font-size: 0.83rem;
+  margin: 10px 0 0;
+}
+
 .deep-offer {
   background: #18212d;
   border: 1px solid #30363d;

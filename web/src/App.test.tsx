@@ -390,3 +390,30 @@ it("keeps an unrelated failure visible after switching models", async () => {
     screen.getByRole("heading", { name: "The run stopped before finishing" })
   ).toBeVisible();
 });
+
+it("cues and describes the disabled Optimize prompt button until a prompt is entered", async () => {
+  const user = userEvent.setup();
+  render(<App />);
+
+  const optimize = await screen.findByRole("button", {
+    name: "Optimize prompt",
+  });
+  expect(optimize).toBeDisabled();
+  expect(optimize).toHaveAttribute("aria-describedby", "optimize-hint");
+  expect(optimize).toHaveAccessibleDescription(
+    "Enter a prompt to enable Optimize prompt."
+  );
+  const hint = document.getElementById("optimize-hint");
+  expect(hint).not.toBeNull();
+  expect(hint).toBeVisible();
+  expect(hint).toHaveTextContent("Enter a prompt to enable Optimize prompt.");
+
+  await user.type(
+    screen.getByLabelText("Your prompt"),
+    "Write a note to my neighbour."
+  );
+
+  await waitFor(() => expect(optimize).toBeEnabled());
+  expect(optimize).not.toHaveAttribute("aria-describedby");
+  expect(document.getElementById("optimize-hint")).toBeNull();
+});

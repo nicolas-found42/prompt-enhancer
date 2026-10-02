@@ -889,10 +889,16 @@ export default function App() {
             className="primary"
             type="submit"
             disabled={busy || !prompt.trim()}
+            aria-describedby={!prompt.trim() ? "optimize-hint" : undefined}
           >
             {job ? "Optimizing…" : "Optimize prompt"}
           </button>
         </div>
+        {!prompt.trim() && (
+          <p className="composer-hint" id="optimize-hint">
+            Enter a prompt to enable Optimize prompt.
+          </p>
+        )}
         <p className="effort-estimate">
           {tierDescriptions[tier]} {estimate}
         </p>
