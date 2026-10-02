@@ -193,6 +193,7 @@ def grade_panel_with_jev(
     cascade_observation: dict[str, Any] | None = None,
     cascade_strong_model: str = "",
     pair_outcomes_out: list[dict[str, Any]] | None = None,
+    read_criteria: bool = False,
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
     """Grade panel outputs using a compatible persisted order-bias policy.
 
@@ -684,6 +685,7 @@ def grade_panel_with_jev(
                 decision_policy=decision_policy,
                 ineligible_pairs=ineligible_pairs,
                 uncertainty_bands=uncertainty_bands,
+                read_criteria=read_criteria,
             )
         )
         for output_index, run in enumerate(panel):

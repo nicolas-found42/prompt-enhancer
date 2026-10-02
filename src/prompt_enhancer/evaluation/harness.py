@@ -412,6 +412,7 @@ class _ReplayBundle:
     decision_policy_version: str | None = None
     grading_policy_artifact: Mapping[str, Any] | None = None
     cascade_settings: Mapping[str, Any] = field(default_factory=dict)
+    criterion_reading_policy: Mapping[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -766,6 +767,8 @@ def default_engine_factory(
             bundle.diagnosis_retry_reservation_multiplier
             or bundle.cascade_settings.get("retry_reservation_multiplier")
         )
+        if bundle.criterion_reading_policy is not None:
+            replay_gateway.criterion_reading = dict(bundle.criterion_reading_policy)
     except ValueError as exc:
         raise EvaluationError(str(exc)) from exc
     replay_settings = replace(
@@ -840,6 +843,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_policy_version = raw.get("decision_policy_version")
         raw_grading_policy = raw.get("grading_policy_artifact")
         raw_cascade_settings = raw.get("cascade_settings", {})
+        raw_criterion_reading = raw.get("criterion_reading")
     else:
         recordings = replay_path
         provenance = {}
@@ -862,6 +866,7 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
         raw_policy_version = None
         raw_grading_policy = None
         raw_cascade_settings = {}
+        raw_criterion_reading = None
     if not isinstance(raw_cascade_settings, Mapping) or set(raw_cascade_settings) - {
         "grading_cascade_pair_cap",
         "grading_cascade_dollar_cap",
@@ -1092,6 +1097,11 @@ def _load_replay(path: str | Path) -> _ReplayBundle:
             dict(raw_grading_policy) if raw_grading_policy is not None else None
         ),
         cascade_settings=dict(raw_cascade_settings),
+        criterion_reading_policy=(
+            dict(raw_criterion_reading)
+            if isinstance(raw_criterion_reading, Mapping)
+            else None
+        ),
     )
 
 

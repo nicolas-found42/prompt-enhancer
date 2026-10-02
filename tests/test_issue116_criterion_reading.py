@@ -27,6 +27,7 @@ from measure_criterion_reading import (
 )
 from measure_criterion_reading import _reading as parse_recorded_reading
 
+from prompt_enhancer import criterion_reading
 from prompt_enhancer.jev import NoulDecision
 
 
@@ -225,8 +226,10 @@ def test_chat_replies_with_out_of_schema_choices_are_unusable_rows(
 def test_read_jev_rejects_an_unexpected_decision_kind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # ``read_jev`` moved into the shared production module (which the script
+    # imports), so the patch has to reach it there for the reader under test.
     monkeypatch.setattr(
-        measurement,
+        criterion_reading,
         "parse_decision",
         lambda _payload: NoulDecision(probability=0.25, confidence=0.75),
     )
@@ -611,6 +614,69 @@ def test_report_includes_negation_distribution_only_for_valid_json_readings(
 def test_unknown_split_is_rejected() -> None:
     with pytest.raises(ValueError, match="unknown split"):
         load_cases("not-in-fixture")
+
+
+def test_measurement_shares_one_reading_module_with_production() -> None:
+    """Measurement and production read criteria through the same module."""
+    measurement.assert_no_drift()
+
+    for name in (
+        "reading_questions",
+        "number_candidates",
+        "read_jev",
+        "resolve",
+        "questions_digest",
+        "Reading",
+    ):
+        assert getattr(measurement, name) is getattr(criterion_reading, name)
+    assert measurement.questions_digest() == criterion_reading.questions_digest()
+
+
+def test_questions_digest_is_stable_and_comparable() -> None:
+    # A digest change would orphan every recording, so it is pinned.
+    assert criterion_reading.questions_digest() == "b11d101b67e6619b"
+    assert (
+        measurement.questions_digest()
+        == measurement.questions_digest()
+        == criterion_reading.questions_digest()
+    )
+
+
+def test_production_policy_matches_the_audited_cutoffs_in_the_issue() -> None:
+    policy = criterion_reading.CURRENT_READING_POLICY
+
+    assert policy.cutoffs() == {
+        "partial": 0.40,
+        "conditional": 0.50,
+        "approximate": 0.50,
+    }
+    assert policy.band() == (0.35, 0.65)
+    assert policy.version == "issue-116-v1"
+
+
+def test_reading_policy_resolves_the_same_as_the_report_cutoffs() -> None:
+    """The policy the cascade uses agrees with the report's `--cutoff` path."""
+    reading = Reading(
+        kind="word_count",
+        op="under",
+        bound="100",
+        low="none",
+        high="none",
+        noul={"partial": 0.39, "conditional": 0.0, "negated": 0.0, "approximate": 0.0},
+    )
+
+    assert criterion_reading.resolve_with_policy(reading, {"100": 100}) is not None
+    assert (
+        resolve(
+            reading,
+            {"100": 100},
+            measurement.BANDS[0],
+            cutoffs=measurement.parse_cutoffs(
+                "partial=0.4,conditional=0.5,approximate=0.5"
+            ),
+        )
+        is not None
+    )
 
 
 def test_per_judgment_cutoffs_parse_and_change_resolution() -> None:

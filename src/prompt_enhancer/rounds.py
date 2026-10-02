@@ -18,6 +18,7 @@ from typing import Any
 
 from . import jev_questions
 from .config import Settings
+from .criterion_reading import CRITERION_READING_MIN_VERSION
 from .diagnosis import model_diagnosis
 from .evaluation.calibration import DecisionPolicy
 from .evaluation.order_bias import OrderBiasPolicy
@@ -640,6 +641,7 @@ def run_round(
         measurements=grading_observation
         if plan.writer_instruction_version >= 5
         else None,
+        read_criteria=plan.writer_instruction_version >= CRITERION_READING_MIN_VERSION,
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")

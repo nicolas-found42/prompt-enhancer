@@ -29,6 +29,10 @@ from .clarification import (
 )
 from .clarifier import Clarifier
 from .config import Settings
+from .criterion_reading import (
+    CRITERION_READING_MIN_VERSION,
+    recording_metadata,
+)
 from .diagnosis import (
     DEFAULT_RUBRIC,
     HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
@@ -258,6 +262,8 @@ class PromptOptimizer:
             recording.decision_policy_version = self.decision_policy.policy_version
         if self.grading_policy is not None:
             recording.grading_policy_artifact = dict(self.grading_policy.artifact)
+        if self.writer_instruction_version >= CRITERION_READING_MIN_VERSION:
+            recording.criterion_reading = recording_metadata()
         if self.writer_instruction_version >= 7:
             recording.cascade_settings = {
                 "retry_reservation_multiplier": _retry_multiplier(recording),

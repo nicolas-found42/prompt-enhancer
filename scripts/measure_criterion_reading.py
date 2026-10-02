@@ -16,14 +16,14 @@ policy change never needs another request.
 from __future__ import annotations
 
 import argparse
-import hashlib
+import importlib.util
 import json
 import math
 import re
 import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -31,8 +31,19 @@ from typing import Any
 from evaluation_review_common import save_json
 
 from prompt_enhancer.criterion_checks import check_criterion
+from prompt_enhancer.criterion_reading import (
+    JUDGMENTS,
+    NOUL_KEYS,
+    Reading,
+    number_candidates,
+    questions_digest,
+    read_jev,
+    reading_questions,
+    resolve,
+)
+from prompt_enhancer.criterion_reading import NONE as NONE
+from prompt_enhancer.criterion_reading import OPERATORS as OPERATORS
 from prompt_enhancer.gateway import GatewayConfig, HttpGateway, completion_text
-from prompt_enhancer.jev import ChoiceDecision, NoulDecision, parse_decision
 
 FIXTURE = (
     Path(__file__).resolve().parents[1]
@@ -40,12 +51,7 @@ FIXTURE = (
 )
 CHEAP_MODEL = "mistralai/mistral-nemo"
 MAX_COMPLETION_TOKENS = 4096
-NONE = "none"
 BANDS = ((0.5, 0.5), (0.3, 0.7), (0.2, 0.8), (0.1, 0.9), (0.05, 0.95))
-NOUL_KEYS = ("partial", "conditional", "negated", "approximate")
-OPERATORS = ("at most", "under", "at least", "more than", "exactly", "between")
-
-JUDGMENTS = ("partial", "conditional", "approximate")
 
 
 def parse_cutoffs(value: str) -> dict[str, float]:
@@ -80,35 +86,29 @@ _WORD_VALUES: dict[str, int] = {
     **{word: value for value, word in enumerate(_UNITS)},
     **{word: 20 + 10 * value for value, word in enumerate(_TENS)},
 }
-_SMALL = rf"(?:(?:{'|'.join(_TENS)})(?:[- ](?:{'|'.join(_UNITS[1:10])}))?|{'|'.join(_UNITS)})"
-_NUMBER_CANDIDATE = re.compile(
-    r"\d{1,3}(?:,\d{3})+|\d+"
-    rf"|\b{_SMALL}(?:\s+(?:hundred|thousand)"
-    rf"(?:\s+(?:and\s+)?{_SMALL}(?!\s+(?:hundred|thousand)))?)?\b"
-)
+del _UNITS, _TENS, _WORD_VALUES
+
+# The question set, the candidate-number step and the resolution policy live in
+# the production module (``prompt_enhancer.criterion_reading``) so measurement
+# and production cannot drift. The names above are re-exported from there;
+# ``assert_no_drift`` proves the production module is the one this script uses.
+_PRODUCTION_MODULE = "prompt_enhancer.criterion_reading"
 
 
-def number_candidates(criterion: str) -> dict[str, int]:
-    """Numbers in the criterion, by the span as written, valued in code."""
-    found: dict[str, int] = {}
-    for match in _NUMBER_CANDIDATE.finditer(criterion.casefold()):
-        span = match.group()
-        found.setdefault(span, _value(span))
-    return found
-
-
-def _value(span: str) -> int:
-    if span[0].isdigit():
-        return int(span.replace(",", ""))
-    total = current = 0
-    for word in re.split(r"[-\s]+", span):
-        if word == "hundred":
-            current = max(current, 1) * 100
-        elif word == "thousand":
-            total, current = total + max(current, 1) * 1000, 0
-        elif word != "and":
-            current += _WORD_VALUES[word]
-    return total + current
+def assert_no_drift() -> None:
+    """Fail if the shared reading logic did not come from the production module."""
+    module = importlib.util.find_spec(_PRODUCTION_MODULE)
+    if module is None or module.origin is None:
+        raise RuntimeError(f"{_PRODUCTION_MODULE} is not importable")
+    origin = Path(module.origin).resolve()
+    expected = (
+        Path(__file__).resolve().parents[1] / "src/prompt_enhancer/criterion_reading.py"
+    ).resolve()
+    if origin != expected:
+        raise RuntimeError(
+            f"{_PRODUCTION_MODULE} resolved to {origin}, not the production module "
+            f"{expected}: measurement and production reading logic have drifted"
+        )
 
 
 MAX_MODEL_LENGTH = 200
@@ -123,151 +123,6 @@ def parse_model(value: str) -> str:
             f"--model must be at most {MAX_MODEL_LENGTH} characters"
         )
     return model
-
-
-def reading_questions(candidates: Sequence[str]) -> dict[str, dict[str, Any]]:
-    """The questions asked about one criterion, keyed by what code reads back."""
-    numbers: dict[str, Any] = {span: None for span in candidates} | {
-        NONE: "The criterion gives no such number."
-    }
-    return {
-        "kind": {
-            "type": "choice",
-            "instructions": (
-                "This is a success criterion that a piece of writing will be "
-                "graded against. Which countable property of the whole output "
-                "does it set a limit or target on?"
-            ),
-            "criteria": {
-                "word_count": "A limit or target on the number of words, such as "
-                "'under 100 words', '50 words or fewer', 'at least 500 words', "
-                "'between 100 and 150 words'.",
-                "sentence_count": "A limit or target on the number of sentences, "
-                "such as 'at most 3 sentences' or 'exactly two sentences'.",
-                "valid_json": "The output has to be JSON that parses, such as "
-                "'valid JSON' or 'parseable as JSON'.",
-                "other": "Anything else: tone, content, format, paragraphs, "
-                "bullets, characters, sources, punctuation, a field inside JSON, "
-                "or no countable property.",
-            },
-        },
-        "op": {
-            "type": "choice",
-            "instructions": (
-                "If the criterion sets a limit or target on a count of words or "
-                "sentences, which comparison must the count satisfy? Read "
-                "negations into the answer: 'not under 100' means at least 100 "
-                "and 'never more than 60' means at most 60."
-            ),
-            "criteria": {
-                "at most": "No more than the number, e.g. 'at most 50', '50 or "
-                "fewer', 'no longer than 50', 'within 50', 'a 50-word limit'.",
-                "under": "Strictly fewer than the number, e.g. 'under 50', "
-                "'fewer than 50', 'shorter than 50'.",
-                "at least": "No fewer than the number, e.g. 'at least 50', "
-                "'50 or more', 'a minimum of 50', or a plus sign after the "
-                "number as in '50+'.",
-                "more than": "Strictly more than the number, e.g. 'over 50', "
-                "'longer than 50', 'more than 50'.",
-                "exactly": "Equal to the number.",
-                "between": "Within a range of two numbers, e.g. 'between 3 and "
-                "5', '100 to 150', '100-150'.",
-                NONE: "No comparison on a count is set.",
-            },
-        },
-        "bound": {
-            "type": "choice",
-            "instructions": (
-                "Which of these numbers is the limit or target that the count of "
-                "words or sentences is compared against? Ignore numbers that "
-                "count something else, such as paragraphs, questions or ages."
-            ),
-            "criteria": numbers,
-        },
-        "low": {
-            "type": "choice",
-            "instructions": (
-                "If the criterion gives a range for the count of words or "
-                "sentences, such as 'between 3 and 5' or '100 to 150', which "
-                "number is the lower end of the range? Otherwise choose none."
-            ),
-            "criteria": numbers,
-        },
-        "high": {
-            "type": "choice",
-            "instructions": (
-                "If the criterion gives a range for the count of words or "
-                "sentences, such as 'between 3 and 5' or '100 to 150', which "
-                "number is the upper end of the range? Otherwise choose none."
-            ),
-            "criteria": numbers,
-        },
-        "partial": {
-            "type": "noul",
-            "instructions": (
-                "Is the requirement in the criterion about only part of the "
-                "output, such as a title, an intro, each section, each bullet, "
-                "every sentence, or the JSON in a reply that also contains other "
-                "text, rather than about the output as a whole?"
-            ),
-        },
-        "conditional": {
-            "type": "noul",
-            "instructions": (
-                "Does the criterion apply only under a condition, or offer an "
-                "alternative that would also satisfy it, such as 'unless', 'if', "
-                "'when' or 'or a table if longer'?"
-            ),
-        },
-        "negated": {
-            "type": "noul",
-            "instructions": (
-                "Does the criterion require the property it names to be absent "
-                "or to fail, such as 'is not valid JSON' or 'must not be JSON'?"
-            ),
-        },
-        "approximate": {
-            "type": "noul",
-            "instructions": (
-                "Does the criterion itself say its target is only approximate, "
-                "with a word such as 'roughly', 'about', 'around', "
-                "'approximately' or 'give or take'?"
-            ),
-        },
-    }
-
-
-def questions_digest() -> str:
-    blob = json.dumps(reading_questions(["100"]), sort_keys=True)
-    return hashlib.sha256(blob.encode()).hexdigest()[:16]
-
-
-@dataclass(frozen=True, slots=True)
-class Reading:
-    """The model's answers about one criterion, before any policy is applied."""
-
-    kind: str
-    op: str
-    bound: str
-    low: str
-    high: str
-    noul: Mapping[str, float]
-
-
-def read_jev(answers: Mapping[str, Any]) -> Reading:
-    choices: dict[str, str] = {}
-    for key in ("kind", "op", "bound", "low", "high"):
-        decision = parse_decision(answers[key])
-        if not isinstance(decision, ChoiceDecision):
-            raise TypeError(f"expected choice decision for {key}")
-        choices[key] = decision.selected
-    nouls: dict[str, float] = {}
-    for key in NOUL_KEYS:
-        decision = parse_decision(answers[key])
-        if not isinstance(decision, NoulDecision):
-            raise TypeError(f"expected Noul decision for {key}")
-        nouls[key] = decision.probability
-    return Reading(noul=nouls, **choices)
 
 
 def read_chat(reply: str, candidates: Sequence[str]) -> Reading:
@@ -294,57 +149,6 @@ def read_chat(reply: str, candidates: Sequence[str]) -> Reading:
             raise TypeError(f"{key} must be a boolean")
         nouls[key] = 1.0 if value else 0.0
     return Reading(noul=nouls, **choices)
-
-
-def resolve(
-    reading: Reading,
-    candidates: Mapping[str, int],
-    band: tuple[float, float],
-    *,
-    cutoffs: Mapping[str, float] | None = None,
-) -> dict[str, Any] | None:
-    """The check a reading supports, or None when the criterion stays unresolved.
-
-    A yes/no judgment at or above its cutoff that the criterion is partial,
-    conditional or approximate leaves it unresolved. Without per-judgment
-    cutoffs, all three use the band's lower edge. For JSON, a negation at or
-    above ``high`` becomes a negated check and one between the band edges is
-    uncertain.
-    """
-    low, high = band
-    thresholds = {
-        key: cutoffs.get(key, low) if cutoffs is not None else low for key in JUDGMENTS
-    }
-    if reading.kind not in {"word_count", "sentence_count", "valid_json"}:
-        return None
-    if any(reading.noul[key] >= thresholds[key] for key in JUDGMENTS):
-        return None
-    if reading.kind == "valid_json":
-        negation = reading.noul["negated"]
-        if low < negation < high:
-            return None
-        return {"kind": "valid_json", "negated": negation >= high}
-    if reading.op == "between":
-        ends = {
-            candidates[end] for end in (reading.low, reading.high) if end in candidates
-        }
-        if len(ends) != 2:
-            return None
-        bound, upper = sorted(ends)
-        return {
-            "kind": reading.kind,
-            "operator": "between",
-            "bound": bound,
-            "upper_bound": upper,
-        }
-    if reading.op not in OPERATORS or reading.bound not in candidates:
-        return None
-    return {
-        "kind": reading.kind,
-        "operator": reading.op,
-        "bound": candidates[reading.bound],
-        "upper_bound": None,
-    }
 
 
 def regex_check(criterion: str) -> dict[str, Any] | None:
