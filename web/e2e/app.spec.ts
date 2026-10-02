@@ -956,7 +956,7 @@ test("opening a history run shows its details next to the row", async ({
   await page.goto("/");
   await expect(
     page.getByText(
-      /Standard: up to 2 rounds of rewrites, tried on 3 test models\. Usually under a minute, up to 7 min/
+      /Standard: up to 2 rounds of rewrites, tried on 3 test models\. Usually under a minute, up to 7 min\. About \$0\.001–\$0\.012, billed to your own OpenCode Go and OpenRouter accounts — from your last 4 standard runs\./
     )
   ).toBeVisible();
 
