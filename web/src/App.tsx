@@ -900,7 +900,8 @@ export default function App() {
           </p>
         )}
         <p className="effort-estimate">
-          {tierDescriptions[tier]} {estimate}
+          <span>{tierDescriptions[tier]}</span> <span>{estimate.time}</span>{" "}
+          <span>{estimate.cost}</span>
         </p>
         {selection && (
           <ModelPicker
@@ -934,7 +935,7 @@ export default function App() {
       {job && (
         <RunProgress
           job={job}
-          estimate={progressEstimate}
+          estimate={progressEstimate.time}
           onCancel={() => void cancel()}
         />
       )}

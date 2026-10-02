@@ -147,10 +147,20 @@ export function outcomeOf(result: OptimizeResult): Outcome {
 // Runs are bimodal: under a minute when nothing needs fixing, several minutes
 // when rewrites are written and tested.
 export const fallbackEstimates: Record<Tier, string> = {
-  fast: "Under a minute if nothing needs fixing, up to 4 min with rewrites · ~$0.001–$0.01",
+  fast: "Under a minute if nothing needs fixing, up to 4 min with rewrites.",
   standard:
-    "Under a minute if nothing needs fixing, up to 10 min with rewrites · ~$0.005–$0.03",
-  deep: "Under a minute if nothing needs fixing, up to 30 min with rewrites · ~$0.03–$0.15",
+    "Under a minute if nothing needs fixing, up to 10 min with rewrites.",
+  deep: "Under a minute if nothing needs fixing, up to 30 min with rewrites.",
+};
+
+// Every run is billed to the user's own provider keys (README: the private
+// .env holds OPENCODE_GO_KEY and OPENROUTER_API_KEY), so the cost line names
+// that account rather than leaving the dollars unattributed.
+const fallbackCosts: Record<Tier, string> = {
+  fast: "About $0.001–$0.01, billed to your own OpenCode Go and OpenRouter accounts.",
+  standard:
+    "About $0.005–$0.03, billed to your own OpenCode Go and OpenRouter accounts.",
+  deep: "About $0.03–$0.15, billed to your own OpenCode Go and OpenRouter accounts.",
 };
 
 export const tierDescriptions: Record<Tier, string> = {
@@ -161,20 +171,37 @@ export const tierDescriptions: Record<Tier, string> = {
 
 function durationRange(low: number, high: number): string {
   const top = Math.max(high, low);
-  if (top < 1) return "Usually under a minute";
-  if (low < 1) return `Usually under a minute, up to ${Math.round(top)} min`;
+  if (top < 1) return "Usually under a minute.";
+  if (low < 1) return `Usually under a minute, up to ${Math.round(top)} min.`;
   const [lowText, highText] = [Math.round(low), Math.round(top)];
   return lowText === highText
-    ? `About ${lowText} min`
-    : `Usually ${lowText}–${highText} min`;
+    ? `About ${lowText} min.`
+    : `Usually ${lowText}–${highText} min.`;
 }
 
-export function estimateText(tier: Tier, estimate?: TierEstimate): string {
+/**
+ * The two cost/time statements under the Effort control. Time and cost are
+ * always separate sentences, and `cost` always names whose account is billed.
+ */
+export type EffortEstimate = { time: string; cost: string };
+
+const BILLED_ACCOUNT = "billed to your own OpenCode Go and OpenRouter accounts";
+
+export function estimateText(
+  tier: Tier,
+  estimate?: TierEstimate
+): EffortEstimate {
   if (!estimate || estimate.runs < 3)
-    return `${fallbackEstimates[tier]} (rough estimate)`;
+    return {
+      time: fallbackEstimates[tier],
+      cost: `${fallbackCosts[tier]} (Rough estimate.)`,
+    };
   const [low, high] = estimate.minutes;
   const [lowCost, highCost] = estimate.cost;
-  return `${durationRange(low, high)} · ~$${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)} (from your last ${estimate.runs} ${tier} runs)`;
+  return {
+    time: durationRange(low, high),
+    cost: `About $${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)}, ${BILLED_ACCOUNT} — from your last ${estimate.runs} ${tier} runs.`,
+  };
 }
 
 export function elapsedText(ms: number): string {
