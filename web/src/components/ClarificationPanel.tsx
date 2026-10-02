@@ -131,8 +131,9 @@ export function ClarificationPanel({
     >
       <h2 id="clarification-heading">A few details will improve the result</h2>
       <p>
-        Choose the closest answer. You can skip these and continue with
-        assumptions.
+        Choose the closest answer. (recommended) marks the option we suggest.
+        Choose Skip to carry on with assumptions &mdash; sensible defaults the
+        app fills in for the details you have not given.
       </p>
       <form onSubmit={submit}>
         {questions.map((question) => {
@@ -223,7 +224,7 @@ export function ClarificationPanel({
         })}
         {error && <p role="alert">{error}</p>}
         <button className="primary" type="submit" disabled={busy}>
-          {busy ? "Continuing…" : "Continue"}
+          {busy ? "Using answers…" : "Use my answers"}
         </button>
         <button
           className="secondary"
@@ -231,7 +232,7 @@ export function ClarificationPanel({
           onClick={skip}
           disabled={busy}
         >
-          Skip and continue
+          Skip
         </button>
       </form>
     </section>

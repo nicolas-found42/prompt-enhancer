@@ -32,6 +32,62 @@ test("the prompt workbench has no automated accessibility violations", async ({
   expect(clarification.violations).toEqual([]);
 });
 
+test("the clarification actions use distinct verbs and explain the terms", async ({
+  page,
+}) => {
+  await mockRun(page, {
+    ...completedBase,
+    status: "needs_input",
+    run_id: "clarification-copy-run",
+    report: {},
+    questions: [
+      {
+        id: "goal",
+        prompt: "What should the assistant do?",
+        options: [
+          { value: "summarize", label: "Summarize", preselected: true },
+        ],
+      },
+    ],
+  });
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill("Help me with this.");
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+
+  await expect(
+    page.getByRole("button", { name: "Use my answers" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Skip", exact: true })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Skip and continue" })
+  ).toHaveCount(0);
+  await expect(page.getByText(/Choose the closest answer\./)).toHaveText(
+    "Choose the closest answer. (recommended) marks the option we suggest. Choose Skip to carry on with assumptions — sensible defaults the app fills in for the details you have not given."
+  );
+});
+
+test("an empty prompt shows a cue that describes the disabled Optimize button", async ({
+  page,
+}) => {
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.goto("/");
+
+  const optimize = page.getByRole("button", { name: "Optimize prompt" });
+  await expect(optimize).toBeDisabled();
+  await expect(optimize).toHaveAttribute("aria-describedby", "optimize-hint");
+  await expect(page.locator("#optimize-hint")).toBeVisible();
+  await expect(page.locator("#optimize-hint")).toHaveText(
+    "Enter a prompt to enable Optimize prompt."
+  );
+
+  await page.getByLabel("Your prompt").fill("Help me with this.");
+  await expect(optimize).toBeEnabled();
+  await expect(optimize).not.toHaveAttribute("aria-describedby");
+  await expect(page.locator("#optimize-hint")).toHaveCount(0);
+});
+
 function job(
   runId: string,
   state: "running" | "done",
@@ -241,7 +297,7 @@ test("clarification can recover from local and server-side Other answer errors",
   const audience = page.getByRole("textbox", {
     name: "Other answer for Who is the report for?",
   });
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
 
   await expect(other).toHaveAttribute("aria-invalid", "true");
   await expect(other).toBeFocused();
@@ -253,7 +309,7 @@ test("clarification can recover from local and server-side Other answer errors",
 
   await other.fill("A short summary");
   await audience.fill("Team leads");
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
   await expect(other).toHaveAttribute("aria-invalid", "true");
   await expect(other).toHaveValue("A short summary");
   await expect(audience).toHaveValue("Team leads");
@@ -264,7 +320,7 @@ test("clarification can recover from local and server-side Other answer errors",
   expect(resumeRequests).toHaveLength(1);
 
   await other.fill("Summarize the supplier delivery date");
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
   await expect(page.locator(".final-prompt")).toContainText(
     "Write a concise report about the supplier delivery date."
   );
@@ -365,7 +421,7 @@ test("opening another paused run resets its answers and error", async ({
       name: "Other answer for What should the assistant do?",
     })
     .fill("An answer for the first run");
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
   await expect(
     page.getByText("First run needs a different goal.")
   ).toBeVisible();
@@ -397,7 +453,7 @@ test("opening another paused run resets its answers and error", async ({
     })
   ).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
   await expect
     .poll(() => submittedAnswers)
     .toEqual({
@@ -463,7 +519,7 @@ test("skip and continue still resumes the same paused run", async ({
       name: "A few details will improve the result",
     })
   ).toBeVisible();
-  await page.getByRole("button", { name: "Skip and continue" }).click();
+  await page.getByRole("button", { name: "Skip", exact: true }).click();
 
   await expect(page.locator(".final-prompt")).toContainText(
     "Write a concise report."
@@ -645,7 +701,7 @@ test("clarification, assumption editing, history, and feedback use the local API
     page.getByRole("heading", { name: "A few details will improve the result" })
   ).toBeVisible();
   await expect(page.getByText("What should the assistant do?")).toBeVisible();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
   // No success test was established, so the confirmed answer is not an improvement.
   await expect(
     page.getByRole("heading", { name: "We couldn't test this prompt" })

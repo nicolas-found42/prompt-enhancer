@@ -136,7 +136,7 @@ test("History distinguishes no matches and keeps its applied search through run 
     (value) => value === "supplier"
   ).length;
   await page.getByRole("radio", { name: "Summarize" }).check();
-  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  await page.getByRole("button", { name: "Use my answers" }).click();
   await expect(
     page.getByRole("heading", { name: "Optimized prompt" })
   ).toBeVisible();

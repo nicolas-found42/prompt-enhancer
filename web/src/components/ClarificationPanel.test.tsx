@@ -27,7 +27,7 @@ it("submits the user's custom answer for a missing goal", async () => {
     }),
     "Compare the two drafts"
   );
-  await user.click(screen.getByRole("button", { name: "Continue" }));
+  await user.click(screen.getByRole("button", { name: "Use my answers" }));
 
   expect(onSubmit).toHaveBeenCalledWith({
     goal: { value: "other", text: "Compare the two drafts" },
@@ -58,7 +58,7 @@ it.each(["", "   \t\n"])(
       name: "Other answer for What should the assistant do?",
     });
     if (text) await user.type(other, text);
-    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("button", { name: "Use my answers" }));
 
     expect(onSubmit).not.toHaveBeenCalled();
     expect(other).toHaveFocus();
@@ -111,4 +111,60 @@ it("keeps a server error until its own question changes", async () => {
     "Compare drafts"
   );
   expect(onValidationErrorDismiss).toHaveBeenCalled();
+});
+
+it("uses distinct verbs for submitting answers versus skipping", async () => {
+  const onSubmit = vi.fn();
+  const onSkip = vi.fn();
+  const user = userEvent.setup();
+  render(
+    <ClarificationPanel
+      questions={[
+        {
+          id: "goal",
+          prompt: "What should the assistant do?",
+          options: [{ value: "summarize", label: "Summarize" }],
+        },
+      ]}
+      onSubmit={onSubmit}
+      onSkip={onSkip}
+    />
+  );
+
+  const useAnswers = screen.getByRole("button", { name: "Use my answers" });
+  const skip = screen.getByRole("button", { name: "Skip" });
+  expect(useAnswers).toHaveAttribute("type", "submit");
+  expect(skip).toHaveAttribute("type", "button");
+
+  await user.click(useAnswers);
+  expect(onSubmit).toHaveBeenCalledWith({ goal: "summarize" });
+  expect(onSkip).not.toHaveBeenCalled();
+
+  await user.click(skip);
+  expect(onSkip).toHaveBeenCalledTimes(1);
+  expect(onSubmit).toHaveBeenCalledTimes(1);
+});
+
+it("explains what assumptions and (recommended) mean", () => {
+  render(
+    <ClarificationPanel
+      questions={[
+        {
+          id: "goal",
+          prompt: "What should the assistant do?",
+          options: [
+            { value: "summarize", label: "Summarize", preselected: true },
+          ],
+        },
+      ]}
+      onSubmit={vi.fn()}
+      onSkip={vi.fn()}
+    />
+  );
+
+  const intro = screen.getByText(/Choose the closest answer\./);
+  expect(intro).toHaveTextContent("(recommended) marks the option we suggest.");
+  expect(intro).toHaveTextContent(
+    "Choose Skip to carry on with assumptions — sensible defaults the app fills in for the details you have not given."
+  );
 });
