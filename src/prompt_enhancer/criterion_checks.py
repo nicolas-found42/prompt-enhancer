@@ -57,6 +57,26 @@ def _number(text: str) -> int:
     return int(text.replace(",", ""))
 
 
+def count_words(output: str) -> int:
+    r"""`\b\w+\b` matches, the counting rule both the regex and the reader use."""
+    return len(re.findall(r"\b\w+\b", output))
+
+
+def parses_as_json(output: str) -> bool:
+    """Whether ``output`` is JSON that parses, without saying what that means."""
+    try:
+        json.loads(output)
+    except json.JSONDecodeError:
+        return False
+    return True
+
+
+def valid_json_check(output: str, *, negated: bool = False) -> dict[str, Any]:
+    """A ``valid_json`` check dict, optionally requiring the opposite."""
+    valid = parses_as_json(output)
+    return {"kind": "valid_json", "passed": (not valid) if negated else valid}
+
+
 def _word_check(
     operator: str, bound: int, count: int, *, upper: int | None = None
 ) -> dict[str, Any]:
@@ -83,16 +103,10 @@ def _word_check(
 def check_criterion(criterion: str, output: str) -> CriterionCheck:
     """Evaluate every supported constraint in ``criterion`` against ``output``."""
     lowered = criterion.casefold()
-    word_count = len(re.findall(r"\b\w+\b", output))
+    word_count = count_words(output)
     checks: list[dict[str, Any]] = []
     if "valid json" in lowered:
-        try:
-            json.loads(output)
-        except json.JSONDecodeError:
-            passed = False
-        else:
-            passed = True
-        checks.append({"kind": "valid_json", "passed": passed})
+        checks.append(valid_json_check(output))
 
     # A bound that is negated or applies to part of the output would be graded
     # against the whole output, so it is reported instead of checked.

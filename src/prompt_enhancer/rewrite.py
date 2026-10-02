@@ -25,8 +25,10 @@ from .gateway import Gateway, completion_text, writer_messages
 # Version 9 keeps the writer text and shares lossless role-assignment state.
 # Version 10 keeps the writer text and targets shared source units explicitly.
 # Version 11 tells the success-test writer what `expected` may hold and validates it.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
-CURRENT_WRITER_INSTRUCTION_VERSION = 11
+# Version 12 reads success criteria with a batched Jev request in the grading
+# cascade (`criterion_reading.CRITERION_READING_MIN_VERSION`) instead of regexes.
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+CURRENT_WRITER_INSTRUCTION_VERSION = 12
 
 
 class CandidateWriter:
@@ -98,6 +100,7 @@ class CandidateWriter:
             9: current_instructions,
             10: current_instructions,
             11: current_instructions,
+            12: current_instructions,
         }[self.instruction_version]
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"

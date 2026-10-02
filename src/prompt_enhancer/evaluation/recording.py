@@ -40,6 +40,7 @@ class RecordingGateway:
         self.grading_policy_artifact: dict[str, Any] | None = None
         self.pricing_models: list[dict[str, Any]] = []
         self.cascade_settings: dict[str, Any] | None = None
+        self.criterion_reading: dict[str, Any] | None = None
         # Bundles written by this code carry the checklist their recordings saw.
         self.checklist_keys: list[str] | None = list(checklist_keys(DEFAULT_RUBRIC))
         self.checklist_impacts: dict[str, str] | None = checklist_impacts(
@@ -100,6 +101,8 @@ class RecordingGateway:
             bundle["pricing_models"] = self.pricing_models
         if self.cascade_settings is not None:
             bundle["cascade_settings"] = self.cascade_settings
+        if self.criterion_reading is not None:
+            bundle["criterion_reading"] = self.criterion_reading
         if self.checklist_keys is not None:
             bundle["checklist_keys"] = self.checklist_keys
         if self.checklist_impacts is not None:

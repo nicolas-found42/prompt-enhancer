@@ -14,6 +14,12 @@ from typing import Any
 
 from . import jev_questions
 from .criterion_checks import check_criterion
+from .criterion_reading import (
+    CriterionReader,
+    CriterionReading,
+    policy_for_gateway,
+    questions_digest,
+)
 from .diagnosis import split_sentences
 from .evaluation.calibration import DecisionPolicy, runtime_question_identity
 from .gateway import Gateway, ProviderError, completion_text, writer_messages
@@ -220,8 +226,11 @@ def _confirmation_policy(
 
 
 def _strong_evidence(
-    raw: Any, run: PanelResult, criterion: str
-) -> tuple[dict[str, str] | None, str]:
+    raw: Any,
+    run: PanelResult,
+    criterion: str,
+    reader: CriterionReader | None = None,
+) -> tuple[dict[str, Any] | None, str]:
     try:
         value = json.loads(completion_text(raw))
     except (ValueError, TypeError):
@@ -244,7 +253,13 @@ def _strong_evidence(
         return None, "invalid_evidence_schema"
     if prompt_quote not in run.prompt or output_quote not in run.output:
         return None, "invalid_evidence_quote"
-    criterion_check = check_criterion(criterion, run.output)
+    if reader is not None:
+        reading = reader.check(criterion, run.output)
+        criterion_check = reading.as_check(regex=check_criterion(criterion, run.output))
+    else:
+        reading = None
+        # Pre-version-12 recordings keep the regex path byte-for-byte.
+        criterion_check = check_criterion(criterion, run.output)
     if (
         criterion_check.exact is not None
         and (verdict == "pass") is not criterion_check.exact["passed"]
@@ -320,6 +335,10 @@ def _verification_policy(
     return cutoffs, evidence
 
 
+def _reading_evidence(reading: CriterionReading | None) -> dict[str, Any] | None:
+    return reading.to_evidence() if reading is not None else None
+
+
 def resolve_uncertain_grades(
     panel: Sequence[PanelResult],
     tests: Sequence[Mapping[str, Any]],
@@ -334,10 +353,17 @@ def resolve_uncertain_grades(
     decision_policy: DecisionPolicy | None = None,
     ineligible_pairs: Mapping[tuple[int, int], Mapping[str, Any]] | None = None,
     uncertainty_bands: Mapping[tuple[int, int], tuple[float, float]] | None = None,
+    read_criteria: bool = False,
 ) -> tuple[
     dict[tuple[int, int], float], set[int], list[dict[str, Any]], dict[str, Any]
 ]:
-    """Confirm only borderline pairs, ranked by distance to the pass boundary."""
+    """Confirm only borderline pairs, ranked by distance to the pass boundary.
+
+    With ``read_criteria`` (writer instruction version >= 12) every distinct
+    criterion is read with one batched Jev request, cached for the run, and the
+    reading's counted check replaces the regex result; a failed or unresolved
+    reading leaves the criterion unresolved without failing the run.
+    """
     eligible = sorted(
         (
             (output_index, test_index)
@@ -382,6 +408,17 @@ def resolve_uncertain_grades(
     spent_reserved = 0.0
     measured_costs: dict[str, float] = {}
     retry_multiplier = _retry_multiplier(gateway)
+    reader = (
+        CriterionReader(
+            gateway,
+            model=judge_model,
+            policy=policy_for_gateway(gateway),
+            role="judge_confirmation",
+            run_id=run_id,
+        )
+        if read_criteria
+        else None
+    )
     confirmations = 0
     escalations = 0
     verifications = 0
@@ -401,7 +438,13 @@ def resolve_uncertain_grades(
             "status": "unresolved",
             "reason": "confirmation_unavailable",
         }
-        criterion_check = check_criterion(str(test.get("question", "")), run.output)
+        criterion_text = str(test.get("question", ""))
+        reading = reader.check(criterion_text, run.output) if reader else None
+        if reading is not None:
+            criterion_check = reading.as_check()
+        else:
+            # Pre-version-12 recordings keep the regex path byte-for-byte.
+            criterion_check = check_criterion(criterion_text, run.output)
         state = {
             "prompt": run.prompt,
             "output": run.output,
@@ -410,6 +453,8 @@ def resolve_uncertain_grades(
             "output_spans": _source_spans(run.output),
             "exact_check": criterion_check.exact,
         }
+        if reading is not None:
+            record["criterion_reading"] = reading.to_evidence()
         judge_rates = (
             _catalog_rates(gateway, judge_model)
             if confirmations < budget.pair_cap
@@ -568,7 +613,10 @@ def resolve_uncertain_grades(
                         else:
                             record["strong_answer"] = raw_strong
                             proposed, reason = _strong_evidence(
-                                raw_strong, run, str(test.get("question", ""))
+                                raw_strong,
+                                run,
+                                str(test.get("question", "")),
+                                reader,
                             )
                             record["reason"] = reason
                             if proposed is not None:
@@ -731,4 +779,28 @@ def resolve_uncertain_grades(
         "dollar_cap": budget.dollar_cap,
         "pairs": evidence,
     }
+    if reader is not None:
+        readings = [
+            item["criterion_reading"]
+            for item in evidence
+            if "criterion_reading" in item
+        ]
+        report["criterion_reading"] = {
+            "policy_version": reader.policy.version,
+            "questions_digest": questions_digest(),
+            "cutoffs": reader.policy.cutoffs(),
+            "json_negation_band": list(reader.policy.band()),
+            "distinct_criteria": len(reader.read_cache),
+            "request_count": reader.request_count,
+            "resolved_count": sum(item["resolved"] is not None for item in readings),
+            "unresolved_count": sum(
+                item["resolved"] is None and item["reading"] is not None
+                for item in readings
+            ),
+            "failed_count": sum(item["reading"] is None for item in readings),
+            "failure_reasons": sorted(
+                {str(item["reason"]) for item in readings if item["reading"] is None}
+            ),
+            "reads": readings,
+        }
     return overrides, unresolved_outputs, evidence, report
