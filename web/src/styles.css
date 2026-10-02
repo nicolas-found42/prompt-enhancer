@@ -884,6 +884,63 @@ input:focus {
   font-weight: 600;
 }
 
+/* Issue #146: each status pill explains itself, without a global legend. */
+.history-browser li {
+  position: relative;
+}
+
+.run-details-heading {
+  position: relative;
+}
+
+.history-failure-reason {
+  color: #ffa198;
+  font-size: 0.83rem;
+  grid-column: 1 / -1;
+}
+
+.history-failure-reason .history-failure-label {
+  font-weight: 700;
+}
+
+/* The worded meaning of a pill: clipped rather than display:none so screen
+   readers still announce it, and revealed on hover or keyboard focus. */
+.status-explanation {
+  background: #1c2128;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(1, 4, 9, 0.6);
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  color: #c9d1d9;
+  font-size: 0.8rem;
+  font-weight: 400;
+  height: 1px;
+  left: 12px;
+  line-height: 1.45;
+  margin-top: 4px;
+  max-width: 340px;
+  overflow: hidden;
+  padding: 8px 10px;
+  position: absolute;
+  top: 100%;
+  white-space: nowrap;
+  width: 1px;
+  z-index: 5;
+}
+
+.history-row:hover + .status-explanation,
+.history-row:focus + .status-explanation,
+.run-details-heading .badge:hover + .status-explanation,
+.run-details-heading .badge:focus + .status-explanation {
+  clip: auto;
+  clip-path: none;
+  height: auto;
+  overflow: visible;
+  white-space: normal;
+  width: auto;
+}
+
 .history-text {
   background: #0d1117;
   border: 1px solid #30363d;

@@ -1,12 +1,24 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import History, { type RunDetail, type RunSummary } from "./History";
+import type { OptimizeResult } from "./api";
+import History, {
+  BADGE_EXPLANATIONS,
+  badgeFor,
+  type BadgeLabel,
+  type RunDetail,
+  type RunSummary,
+} from "./History";
 
 const savedRun: RunSummary = {
   run_id: "saved-run",
   prompt: "Write a supplier reply.",
 };
+
+/** `getByRole` takes a string or regex; escape prompts used as patterns. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 function jsonResponse(body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -428,4 +440,278 @@ it("shows cancelled runs with neutral status in the list and opened details", as
   for (const badge of cancelledBadges)
     expect(badge).toHaveClass("badge-neutral");
   expect(screen.getByRole("heading", { name: "Run cancelled" })).toBeVisible();
+});
+
+/**
+ * The six labels `badgeFor` can produce, and a run that produces each one.
+ * Kept as a literal table so a seventh label added to `badgeFor` without an
+ * explanation fails the completeness test below.
+ */
+const labelCases: { label: BadgeLabel; run: RunSummary }[] = [
+  {
+    label: "Cancelled",
+    run: { run_id: "c", prompt: "Case cancelled.", outcome: "cancelled" },
+  },
+  {
+    label: "Failed",
+    run: { run_id: "f", prompt: "Case failed.", status: "failed" },
+  },
+  {
+    label: "Waiting for answers",
+    run: { run_id: "w", prompt: "Case waiting.", status: "needs_input" },
+  },
+  {
+    label: "Not tested",
+    run: {
+      run_id: "n",
+      prompt: "Case not tested.",
+      outcome: "unverified",
+      original_kept: false,
+    },
+  },
+  {
+    label: "Improved",
+    run: { run_id: "i", prompt: "Case improved.", original_kept: false },
+  },
+  {
+    label: "Unchanged",
+    run: { run_id: "u", prompt: "Case unchanged.", original_kept: true },
+  },
+];
+
+it("explains all six badgeFor labels in words, not by colour", () => {
+  expect(Object.keys(BADGE_EXPLANATIONS).sort()).toEqual(
+    labelCases.map((entry) => entry.label).sort()
+  );
+
+  for (const { label, run } of labelCases) {
+    // The table is keyed by the label `badgeFor` actually returns.
+    expect(badgeFor(run).label).toBe(label);
+
+    const explanation = BADGE_EXPLANATIONS[label];
+    // A sentence, so the meaning is readable without seeing the pill colour.
+    expect(explanation).toMatch(/^[A-Z].*[.]$/);
+    expect(explanation.split(" ").length).toBeGreaterThan(6);
+  }
+});
+
+it("gives every list pill a title for the pointer and a description for the keyboard", async () => {
+  const cancelled: RunSummary = {
+    run_id: "c",
+    prompt: "Case cancelled.",
+    outcome: "cancelled",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return url.includes("/api/runs/")
+        ? jsonResponse(cancelled)
+        : jsonResponse(labelCases.map((entry) => entry.run));
+    })
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History />);
+
+  for (const { label, run } of labelCases) {
+    const badge = await screen.findByText(label, { selector: ".badge" });
+    // Pointer: the native tooltip carries the explanation.
+    expect(badge).toHaveAttribute("title", BADGE_EXPLANATIONS[label]);
+
+    // Keyboard / assistive tech: the focused row button describes itself.
+    const row = screen.getByRole("button", {
+      name: new RegExp(escapeRegExp(run.prompt)),
+    });
+    expect(row).toHaveAccessibleDescription(BADGE_EXPLANATIONS[label]);
+
+    const describedBy = row.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)).toHaveTextContent(
+      BADGE_EXPLANATIONS[label]
+    );
+  }
+});
+
+it("explains the pill in the opened run details to keyboard and pointer", async () => {
+  const failure = {
+    kind: "provider",
+    headline: "The model refused the request",
+    hint: "Try a different model.",
+    message: "provider error",
+  };
+  const failedRun: RunDetail = {
+    ...savedRun,
+    run_id: "failed-details",
+    status: "failed",
+    report: { status: "failed", failure },
+    result: {
+      status: "failed",
+      run_id: "failed-details",
+      original_prompt: savedRun.prompt,
+      report: { status: "failed", failure },
+      cost: { total: 0 },
+      timing: { total_ms: 10 },
+    } as OptimizeResult,
+  };
+  await openRunDetails(failedRun);
+
+  const details = screen.getByRole("heading", { name: "Run details" })
+    .parentElement as HTMLElement;
+  const pill = details.querySelector(".badge") as HTMLElement;
+
+  expect(pill).toHaveTextContent("Failed");
+  expect(pill).toHaveAttribute("title", BADGE_EXPLANATIONS.Failed);
+  expect(pill).toHaveAccessibleDescription(BADGE_EXPLANATIONS.Failed);
+  // Reachable from the keyboard (it is in the tab order), not only by pointer.
+  expect(pill).toHaveAttribute("tabindex", "0");
+  pill.focus();
+  expect(document.activeElement).toBe(pill);
+  // The details body still renders the failure card it rendered before.
+  expect(screen.getByRole("heading", { name: "Run details" })).toBeVisible();
+  expect(pill.closest("article")).not.toBeNull();
+});
+
+it("shows a Failed row's stored reason without opening the row", async () => {
+  const failedRun: RunSummary = {
+    run_id: "failed-with-result",
+    prompt: "Write a useful reply.",
+    status: "failed",
+    result: {
+      status: "failed",
+      run_id: "failed-with-result",
+      report: {
+        status: "failed",
+        failure: {
+          kind: "provider",
+          headline: "The model refused the request",
+          hint: "Try a different model.",
+          message: "provider error",
+        },
+      },
+      cost: { total: 0 },
+      timing: { total_ms: 10 },
+    },
+  } as RunSummary;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => jsonResponse([failedRun]))
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History />);
+
+  const row = await screen.findByRole("button", {
+    name: /Write a useful reply/,
+  });
+  // Visible in the row, with no click and no opened details.
+  expect(row).toHaveTextContent("Why it failed:");
+  expect(row).toHaveTextContent("The model refused the request");
+  expect(
+    screen.queryByRole("heading", { name: "Run details" })
+  ).not.toBeInTheDocument();
+});
+
+it("points a Failed row with no stored reason at where the reason appears", async () => {
+  const failedRun: RunSummary = {
+    run_id: "failed-without-result",
+    prompt: "Write a useful reply.",
+    status: "failed",
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => jsonResponse([failedRun]))
+  );
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  render(<History />);
+
+  const row = await screen.findByRole("button", {
+    name: /Write a useful reply/,
+  });
+  expect(row).toHaveTextContent("Why it failed:");
+  expect(row).toHaveTextContent("Open this row to see why it failed.");
+  expect(
+    screen.queryByRole("heading", { name: "Run details" })
+  ).not.toBeInTheDocument();
+});
+
+it("keeps row content, ordering, and the Open action unchanged", async () => {
+  const firstRun: RunSummary = {
+    run_id: "first",
+    prompt: "First prompt.",
+    status: "failed",
+  };
+  const secondRun: RunSummary = {
+    run_id: "second",
+    prompt: "Second prompt.",
+    original_kept: false,
+  };
+  const thirdRun: RunSummary = {
+    run_id: "third",
+    prompt: "Third prompt.",
+    outcome: "cancelled",
+  };
+  const runs: RunSummary[] = [firstRun, secondRun, thirdRun];
+  const resumed: RunSummary & { result: OptimizeResult } = {
+    ...thirdRun,
+    status: "needs_input",
+    result: {
+      status: "needs_input",
+      run_id: "third",
+      original_prompt: "Third prompt.",
+      report: {},
+      questions: [],
+      cost: { total: 0 },
+      timing: { total_ms: 1 },
+    },
+  } as RunSummary & { result: OptimizeResult };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return url.endsWith("/api/runs/third")
+        ? jsonResponse(resumed)
+        : jsonResponse(runs);
+    })
+  );
+  const user = userEvent.setup();
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    value: vi.fn(),
+    configurable: true,
+  });
+
+  const onOpen = vi.fn();
+  render(<History onOpen={onOpen} />);
+
+  await screen.findByText("First prompt.");
+  const listRows = Array.from(
+    document.querySelectorAll("button.history-row")
+  ) as HTMLElement[];
+  expect(listRows).toHaveLength(3);
+  // Server order is preserved, and each row still leads with its pill.
+  expect(listRows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("First prompt."),
+    expect.stringContaining("Second prompt."),
+    expect.stringContaining("Third prompt."),
+  ]);
+  for (const row of listRows)
+    expect(row.querySelector(".badge")).not.toBeNull();
+
+  await user.click(screen.getByRole("button", { name: /Third prompt/ }));
+  const answer = await screen.findByRole("button", {
+    name: "Answer the questions",
+  });
+  expect(answer).toBeVisible();
+  await user.click(answer);
+  expect(onOpen).toHaveBeenCalledWith(resumed.result);
 });
