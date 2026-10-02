@@ -39,9 +39,40 @@ type HistoryProps = {
   refreshKey?: string;
 };
 
-type Badge = { label: string; tone: "good" | "neutral" | "warn" | "bad" };
+/** The six status labels `badgeFor` can return. */
+export type BadgeLabel =
+  | "Cancelled"
+  | "Failed"
+  | "Waiting for answers"
+  | "Not tested"
+  | "Improved"
+  | "Unchanged";
 
-function badgeFor(run: RunSummary | RunDetail): Badge {
+type Badge = {
+  label: BadgeLabel;
+  tone: "good" | "neutral" | "warn" | "bad";
+};
+
+/**
+ * Plain-language meaning of every pill, keyed by the exact labels
+ * `badgeFor` returns.  Typing this as a total record of `BadgeLabel` means a
+ * new label cannot ship without an explanation.  Each entry is a worded
+ * sentence, so the status never reads from colour alone.
+ */
+export const BADGE_EXPLANATIONS: Record<BadgeLabel, string> = {
+  Cancelled: "You cancelled this run, so your prompt was left unchanged.",
+  Failed:
+    "The run stopped before finishing. The reason is shown on this row; open it for the full failure card.",
+  "Waiting for answers":
+    "This run is paused until you answer its questions in the clarification panel above History.",
+  "Not tested":
+    "Your prompt changed, but no reliable test confirmed the change is better, so treat it as unproven.",
+  Improved:
+    "A rewrite passed its checks and scored better than your original prompt.",
+  Unchanged: "Your prompt was kept as it was; no rewrite changed it.",
+};
+
+export function badgeFor(run: RunSummary | RunDetail): Badge {
   const detail = run as RunDetail;
   const reportStatus = String(
     record(detail.report).status ??
@@ -64,6 +95,77 @@ function badgeFor(run: RunSummary | RunDetail): Badge {
 }
 
 const feedbackText = { accept: "helpful", reject: "not helpful" } as const;
+
+/**
+ * The short reason shown on a Failed row without opening it, or a pointer to
+ * where the reason appears.  List summaries carry no `report`/`result` in the
+ * real API, so a row with no stored failure data falls back to a pointer.
+ */
+export function failedRowReason(run: RunSummary | RunDetail): string {
+  const detail = run as RunDetail;
+  const report = record(detail.report ?? record(detail.result).report);
+  const failure = record(report.failure);
+  const headline =
+    typeof failure.headline === "string" ? failure.headline.trim() : "";
+  if (headline) return headline;
+  const message =
+    typeof failure.message === "string" ? failure.message.trim() : "";
+  if (message) return message;
+  const error = typeof report.error === "string" ? report.error.trim() : "";
+  if (error) return error;
+  return "Open this row to see why it failed.";
+}
+
+const detailsExplanationId = "selected-run-status-explanation";
+
+function rowExplanationId(runId: string): string {
+  return `history-status-explanation-${runId.replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+}
+
+/**
+ * A status pill with its explanation attached twice: `title` for the pointer
+ * (a native tooltip) and `aria-describedby` for keyboard and assistive
+ * technology.  The description is always worded text, so the status never
+ * depends on the pill's colour.  The visible label is untouched.
+ */
+function StatusBadge({
+  run,
+  describedBy,
+  focusable = false,
+}: {
+  run: RunSummary | RunDetail;
+  describedBy?: string;
+  focusable?: boolean;
+}) {
+  const badge = badgeFor(run);
+  const title = BADGE_EXPLANATIONS[badge.label];
+  return (
+    <span
+      className={`badge badge-${badge.tone}`}
+      title={title}
+      aria-describedby={describedBy}
+      tabIndex={focusable ? 0 : undefined}
+    >
+      {badge.label}
+    </span>
+  );
+}
+
+/** The explanation text a pill points at; hidden until hover or focus. */
+function StatusExplanation({
+  id,
+  run,
+}: {
+  id: string;
+  run: RunSummary | RunDetail;
+}) {
+  const badge = badgeFor(run);
+  return (
+    <span id={id} className="status-explanation">
+      {BADGE_EXPLANATIONS[badge.label]}
+    </span>
+  );
+}
 
 /** "standard" or, after a Deep pass, "standard, then deep". */
 function tierText(run: RunSummary): string {
@@ -268,9 +370,8 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
       >
         <div className="run-details-heading">
           <h3 id="selected-run-heading">Run details</h3>
-          <span className={`badge badge-${badgeFor(run).tone}`}>
-            {badgeFor(run).label}
-          </span>
+          <StatusBadge run={run} describedBy={detailsExplanationId} focusable />
+          <StatusExplanation id={detailsExplanationId} run={run} />
         </div>
         <p className="history-meta">
           {[when(run.created_at), tierText(run), duration(run), money(run.cost)]
@@ -438,6 +539,8 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
         <ul aria-label="Saved optimization runs">
           {runs.map((run) => {
             const open = selected?.run_id === run.run_id;
+            const explanationId = rowExplanationId(run.run_id);
+            const failed = badgeFor(run).label === "Failed";
             return (
               <li key={run.run_id}>
                 <button
@@ -446,10 +549,9 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                   onClick={() => void openRun(run.run_id)}
                   aria-expanded={open}
                   aria-controls={open ? "selected-run" : undefined}
+                  aria-describedby={explanationId}
                 >
-                  <span className={`badge badge-${badgeFor(run).tone}`}>
-                    {badgeFor(run).label}
-                  </span>
+                  <StatusBadge run={run} />
                   <span className="history-prompt">{run.prompt}</span>
                   <span className="history-meta">
                     {[
@@ -462,7 +564,16 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                       .filter(Boolean)
                       .join(" · ")}
                   </span>
+                  {failed ? (
+                    <span className="history-failure-reason">
+                      <span className="history-failure-label">
+                        Why it failed:
+                      </span>{" "}
+                      {failedRowReason(run)}
+                    </span>
+                  ) : null}
                 </button>
+                <StatusExplanation id={explanationId} run={run} />
                 {open && selected ? renderDetails(selected) : null}
               </li>
             );

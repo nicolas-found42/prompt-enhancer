@@ -145,3 +145,112 @@ test("History distinguishes no matches and keeps its applied search through run 
     .toBeGreaterThan(searchesBeforeResume);
   await expect(search).toHaveValue("supplier");
 });
+
+test("History explains every status pill and names a Failed row's reason", async ({
+  page,
+}) => {
+  const failure = {
+    kind: "provider",
+    headline: "The model refused the request",
+    hint: "Try a different model.",
+    message: "provider error",
+  };
+  const runs = [
+    {
+      run_id: "failed-run",
+      created_at: "2026-09-24T04:00:00Z",
+      status: "failed",
+      prompt: "Write a useful reply.",
+      tier: "standard",
+      report: { status: "failed", failure },
+      result: {
+        status: "failed",
+        run_id: "failed-run",
+        original_prompt: "Write a useful reply.",
+        report: { status: "failed", failure },
+        cost: { total: 0 },
+        timing: { total_ms: 10 },
+      },
+    },
+    { ...savedRun, run_id: "improved-run" },
+  ];
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [] }));
+  await page.route("**/api/runs?*", (route) => route.fulfill({ json: runs }));
+  await page.route("**/api/runs/failed-run", (route) =>
+    route.fulfill({ json: runs[0] })
+  );
+
+  await page.goto("/");
+
+  const history = page.getByRole("list", { name: "Saved optimization runs" });
+  const failedRow = history.getByRole("button", {
+    name: /Write a useful reply/,
+  });
+  const unchangedRow = history.getByRole("button", { name: /supplier/ });
+
+  // The Failed row carries its short reason without being opened.
+  await expect(failedRow.getByText("Why it failed:")).toBeVisible();
+  await expect(failedRow).toContainText("The model refused the request");
+  await expect(page.getByRole("heading", { name: "Run details" })).toHaveCount(
+    0
+  );
+
+  // Pointer: the pill exposes a native tooltip with the worded explanation.
+  await expect(failedRow.locator(".badge")).toHaveAttribute(
+    "title",
+    "The run stopped before finishing. The reason is shown on this row; open it for the full failure card."
+  );
+  await expect(unchangedRow.locator(".badge")).toHaveAttribute(
+    "title",
+    "Your prompt was kept as it was; no rewrite changed it."
+  );
+  // Keyboard: focusing the row describes the pill in words.
+  await failedRow.focus();
+  await expect(failedRow).toHaveAttribute(
+    "aria-describedby",
+    "history-status-explanation-failed-run"
+  );
+  await expect(unchangedRow.locator(".badge")).toHaveText("Unchanged");
+
+  // The explanation surfaces visibly on focus, and never relies on colour alone.
+  const shownExplanation = failedRow.locator(
+    "xpath=following-sibling::span[@class='status-explanation']"
+  );
+  await expect(shownExplanation).toHaveText(
+    "The run stopped before finishing. The reason is shown on this row; open it for the full failure card."
+  );
+  // `toBeVisible` ignores clip-path, so assert the clipping is really lifted:
+  // a clipped element is 1px wide, the revealed tooltip is much wider.
+  const revealed = await shownExplanation.boundingBox();
+  expect(revealed?.width ?? 0).toBeGreaterThan(200);
+  const revealedStyle = await shownExplanation.evaluate((node) => {
+    const style = getComputedStyle(node);
+    return { clipPath: style.clipPath, color: style.color };
+  });
+  expect(revealedStyle.clipPath).toBe("none");
+
+  // Both pills still say which status they are in words.
+  await expect(failedRow.locator(".badge")).toHaveText("Failed");
+
+  // Screenshot of the list with the explanations visible, for the visual issue.
+  await page
+    .getByRole("list", { name: "Saved optimization runs" })
+    .screenshot({ path: "test-results/history-status-explanations.png" });
+
+  // Opening the row still works and is unchanged.
+  await failedRow.click();
+  const details = page.getByRole("article", { name: "Run details" });
+  await expect(details).toBeVisible();
+  await expect(details.locator(".badge")).toHaveText("Failed");
+  await expect(details.locator(".badge")).toHaveAttribute(
+    "title",
+    /stopped before finishing/
+  );
+  await expect(details.locator(".badge")).toHaveAttribute(
+    "aria-describedby",
+    "selected-run-status-explanation"
+  );
+  await expect(
+    details.getByRole("heading", { name: "The model refused the request" })
+  ).toBeVisible();
+});
