@@ -520,7 +520,10 @@ def main(
         else:
             print(rendered, file=out)
         failed_cases = [
-            case.case_id for case in report.cases if case.status in {"failed", "error"}
+            case.case_id
+            for case in report.cases
+            if case.status in {"failed", "error"}
+            and "improvement_not_verified" not in str(case.error or "")
         ]
         if failed_cases:
             print(

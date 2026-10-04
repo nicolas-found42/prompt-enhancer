@@ -837,7 +837,7 @@ test("a retained original with weak evidence says it could not be improved", asy
   ).toBeVisible();
 });
 
-test("a prompt with no gaps and strong results says it already works", async ({
+test("a kept original after verified rounds reports no verified improvement", async ({
   page,
 }) => {
   await mockRun(page, {
@@ -846,7 +846,8 @@ test("a prompt with no gaps and strong results says it already works", async ({
     original_prompt: "Write two sentences.",
     final_prompt: "Write two sentences.",
     report: {
-      status: "no_change",
+      status: "improvement_not_verified",
+      failure: { kind: "improvement_not_verified" },
       diagnosis: { confirmed_gaps: [], problem_sentences: [] },
       tests: [],
       selection_evidence: {
@@ -859,14 +860,14 @@ test("a prompt with no gaps and strong results says it already works", async ({
   await page.getByRole("button", { name: "Optimize prompt" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Your prompt already works well" })
+    page.getByRole("heading", { name: "No verified improvement this time" })
   ).toBeVisible();
   await expect(
-    page.getByText(/passed at least 90% of checks on every test model/)
+    page.getByText(/retrying gives the models another chance/i)
   ).toBeVisible();
 });
 
-test("an untested prompt is not called good, near misses are hinted, and Deep is not offered", async ({
+test("an untested prompt with hints is not called good, and Deep is not offered", async ({
   page,
 }) => {
   const prompt =
@@ -877,7 +878,7 @@ test("an untested prompt is not called good, near misses are hinted, and Deep is
     original_prompt: prompt,
     final_prompt: prompt,
     report: {
-      status: "no_change",
+      status: "unverified",
       diagnosis: {
         confirmed_gaps: [],
         problem_sentences: [],
@@ -900,12 +901,7 @@ test("an untested prompt is not called good, near misses are hinted, and Deep is
   await page.getByRole("button", { name: "Optimize prompt" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "We didn't find anything to fix" })
-  ).toBeVisible();
-  await expect(
-    page.getByText("Your prompt wasn't tested on other models.", {
-      exact: false,
-    })
+    page.getByRole("heading", { name: "We couldn't test this prompt" })
   ).toBeVisible();
   await expect(page.getByText("Your prompt already works well")).toHaveCount(0);
   await expect(

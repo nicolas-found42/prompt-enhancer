@@ -19,10 +19,15 @@ function result(report: Record<string, unknown>): OptimizeResult {
 }
 
 describe("outcomeOf", () => {
-  it("does not call an untested prompt good", () => {
-    const outcome = outcomeOf(result({ diagnosis: { confirmed_gaps: [] } }));
-    expect(outcome.headline).toBe("We didn't find anything to fix");
-    expect(outcome.reason).toContain("wasn't tested");
+  it("reports an unverified improvement when nothing changed", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "improvement_not_verified",
+        diagnosis: { confirmed_gaps: [] },
+      })
+    );
+    expect(outcome.headline).toBe("No verified improvement this time");
+    expect(outcome.reason).toContain("retrying");
   });
 
   it("does not call an untested prompt with confirmed details optimized", () => {
@@ -45,17 +50,17 @@ describe("outcomeOf", () => {
     ).toBe("Updated prompt");
   });
 
-  it("uses the weakest model when describing evidence", () => {
+  it("explains why a high-scoring original still lost its tie", () => {
     const outcome = outcomeOf(
       result({
+        status: "improvement_not_verified",
         diagnosis: { confirmed_gaps: [] },
         selection_evidence: {
           original_score: { per_model: { first: 0.95, second: 0.82 } },
         },
       })
     );
-    expect(outcome.headline).toBe("Your prompt already works well");
-    expect(outcome.reason).toContain("82% of checks on every test model");
+    expect(outcome.headline).toBe("No verified improvement this time");
   });
 });
 

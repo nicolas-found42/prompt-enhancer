@@ -155,10 +155,34 @@ def test_selector_does_not_claim_an_unrun_strong_check_failed():
     assert result.ranked[0].to_dict()["metadata"]["fidelity"] == {"passed": False}
 
 
-def test_selector_keeps_original_when_no_candidate_beats_it():
+def test_selector_selects_an_equally_good_changed_candidate():
     result = rank_candidates(
         _original("original", _grade(0.8, 0.8)),
         [_candidate("candidate", "a longer candidate", _grade(0.8, 0.8))],
+    )
+
+    assert not result.original_kept
+    assert result.selected_candidate_id == "candidate"
+    assert result.final_prompt == "a longer candidate"
+    assert result.rejection_reasons == {}
+
+
+def test_selector_rejects_a_candidate_that_never_changed_the_prompt():
+    result = rank_candidates(
+        _original("same", _grade(0.8, 0.8)),
+        [_candidate("mirror", "Same.", _grade(1.0, 1.0, 0.0))],
+    )
+
+    assert result.original_kept
+    assert result.selected_candidate_id is None
+    assert result.final_prompt == "same"
+    assert "always-improve policy" in result.rejection_reasons["mirror"][0]
+
+
+def test_selector_keeps_original_when_every_candidate_is_strictly_worse():
+    result = rank_candidates(
+        _original("original", _grade(0.9, 0.9)),
+        [_candidate("candidate", "a candidate", _grade(0.5, 0.5))],
     )
 
     assert result.original_kept

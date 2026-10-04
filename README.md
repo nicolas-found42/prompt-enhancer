@@ -1,9 +1,9 @@
 # Prompt Enhancer
 
 A local prompt workbench that diagnoses a request with Jev, checks proposed
-success tests, tries bounded rewrites when a material gap is confirmed, and
-shows the original or selected prompt with its evidence. Runs and feedback
-are stored in a local SQLite database.
+success tests, tries bounded rewrites on every request, and shows the verified
+improved prompt — or reports that no verified improvement was found this time.
+Runs and feedback are stored in a local SQLite database.
 
 ## Open the app
 

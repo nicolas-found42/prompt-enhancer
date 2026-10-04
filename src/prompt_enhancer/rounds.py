@@ -27,6 +27,13 @@ from .fidelity import check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
 from .grading_cascade import CascadeBudget
+from .improve import (
+    failure_no_confirmed_improvement,
+    failure_unverified,
+    improvement_unverified_summary,
+    no_confirmed_improvement_reason,
+    prompts_differ_meaningfully,
+)
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import Tier, utc_now
@@ -236,6 +243,8 @@ class RoundOutcome:
     output_screen: tuple[dict[str, Any], ...] | None = None
     grading_cascade: Mapping[str, Any] | None = None
     failure_attribution: Mapping[str, Any] | None = None
+    reported_failure: Mapping[str, str] | None = None
+    """Set when always-improve kept the input; the reason the change failed."""
 
     @property
     def continue_rounds(self) -> bool:
@@ -293,6 +302,8 @@ class RoundOutcome:
                 report["grading_cascade"] = dict(self.grading_cascade)
             if self.failure_attribution is not None:
                 report["failure_attribution"] = dict(self.failure_attribution)
+            if self.reported_failure is not None:
+                report["failure"] = dict(self.reported_failure)
             return report
         assert (
             self.panel is not None
@@ -345,6 +356,11 @@ class RoundOutcome:
             **(
                 {"lossless_restructuring": dict(self.lossless_restructuring)}
                 if self.lossless_restructuring is not None
+                else {}
+            ),
+            **(
+                {"failure": dict(self.reported_failure)}
+                if self.reported_failure is not None
                 else {}
             ),
             "offer_deep": plan.tier != "deep" and self.original_kept,
@@ -452,15 +468,19 @@ def run_round(
         screening_evidence = compiled.as_dict()
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
-    if not tests or no_gaps:
+    if not tests:
         summary = (
-            "No confirmed gaps were found; the original request was returned unchanged."
-            if no_gaps and tests
-            else "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
-            if no_gaps
-            else "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
+            "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
+            if not no_gaps
+            else "No faithful success tests were established and no confirmed gaps were found; the original request was returned unchanged."
         )
-        return ended("no_change" if no_gaps and tests else "unverified", summary, tests)
+        return ended("unverified", summary, tests)
+    # Always-improve policy: a prompt with no confirmed gaps is still rewritten.
+    # Writers get whole-prompt latitude here because edit confinement would
+    # otherwise authorize no edits at all (no diagnosed spans, no gap slots).
+    # Meaning preservation, sentence support, grading, screens, and the strong
+    # check still gate every candidate; only rewrites that pass all of them
+    # and change the prompt can be returned.
 
     stage("choosing_strategy")
     strategy_library = (
@@ -468,19 +488,39 @@ def run_round(
         if plan.writer_instruction_version >= 4
         else STRATEGY_LIBRARY
     )
+    always_improve_view = dict(model_view)
+    if no_gaps:
+        # With no confirmed gaps the strategy search has no diagnosed weakness
+        # to match; give the choice a whole-prompt optimization framing
+        # instead of leaving it empty, and drop the "none" option: the
+        # always-improve policy requires rewrites to be written and tested.
+        always_improve_view["note"] = (
+            "No weakness was confirmed; select the strategy that most improves "
+            "the prompt's clarity, precision, structure, or usefulness while "
+            "preserving its meaning."
+        )
     strategy_choice = gateway.decide(
         {
             "model": settings.judge_model,
             "key": "strategy_choice",
             "type": "choice",
-            "query": jev_questions.STRATEGY_CHOICE_QUESTION,
+            "query": (
+                "Which rewrite strategy best addresses the diagnosed weakness?"
+                if not no_gaps
+                else (
+                    "Which rewrite strategy would most improve this already-clear "
+                    "prompt?"
+                )
+            ),
             "criteria": {
                 **{item.name: item.description for item in strategy_library},
-                "none": jev_questions.STRATEGY_NONE_DESCRIPTION,
+                **(
+                    {} if no_gaps else {"none": jev_questions.STRATEGY_NONE_DESCRIPTION}
+                ),
             },
             "state": {
                 "prompt": working_prompt,
-                "diagnosis": model_view,
+                "diagnosis": always_improve_view,
                 "prior_failures": list(plan.prior_failures),
             },
         },
@@ -591,12 +631,17 @@ def run_round(
     candidates = list(search.candidates)
     if not candidates:
         return replace(
-            ended("no_change", "No candidate strategy was selected.", tests),
+            ended(
+                "improvement_not_verified",
+                improvement_unverified_summary(),
+                tests,
+            ),
             strategies=search,
             lossless_restructuring=lossless_build.evidence
             if lossless_build is not None
             else None,
             test_screening=screening_evidence,
+            reported_failure=failure_unverified(),
         )
 
     stage("running_weak_models")
@@ -672,7 +717,8 @@ def run_round(
             and panel_grades[candidate.candidate_id].unresolved_screen_outputs == 0
             and original_grade.unresolved_screen_outputs == 0
             and panel_grades[candidate.candidate_id].unresolved_grade_outputs == 0
-            and original_grade.unresolved_grade_outputs == 0,
+            and original_grade.unresolved_grade_outputs == 0
+            and panel_grades[candidate.candidate_id].detected_outputs == 0,
             rejection_reasons=(
                 (
                     ()
@@ -698,6 +744,11 @@ def run_round(
                     ("weak-panel grade confirmation was unresolved",)
                     if panel_grades[candidate.candidate_id].unresolved_grade_outputs
                     or original_grade.unresolved_grade_outputs
+                    else ()
+                )
+                + (
+                    ("weak-panel output screen detected steering",)
+                    if panel_grades[candidate.candidate_id].detected_outputs
                     else ()
                 )
             ),
@@ -757,15 +808,33 @@ def run_round(
             ),
             decision_policy=plan.decision_policy,
         )
+    # Always-improve policy: keeping the original after verified rounds is a
+    # reported failure, not a success outcome.
+    reported_failure: Mapping[str, str] | None = None
+    changed_attempts = False
+    if original_kept:
+        changed_attempts = any(
+            prompts_differ_meaningfully(working_prompt, item.candidate.text)
+            for item in ranking.ranked
+        )
+        reported_failure = (
+            failure_no_confirmed_improvement()
+            if changed_attempts
+            else failure_unverified()
+        )
     return RoundOutcome(
         plan=plan,
-        status="no_change"
+        status="improvement_not_verified"
         if original_kept
         else ("clarified" if ranking.original_kept else "improved"),
-        summary="No candidate beat the original."
+        summary=(
+            no_confirmed_improvement_reason()
+            if changed_attempts
+            else improvement_unverified_summary()
+        )
         if original_kept
         else (
-            "Clarifications were included; no candidate beat the clarified prompt."
+            "Clarifications were included; no verified changed prompt was produced."
             if ranking.original_kept
             else "Candidate selected after verification."
         ),
@@ -822,6 +891,7 @@ def run_round(
             for item in ranking.ranked
             if not item.selected
         ),
+        reported_failure=reported_failure,
         **_spent(gateway),
     )
 

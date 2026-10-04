@@ -37,8 +37,17 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     )
 
     report = json.loads(output.read_text())
-    assert [case["status"] for case in report["cases"]] == ["completed"] * 3
-    assert report["diagnosis"]["excluded_failed_cases"] == 0
+    # The recorded sessions ended with the original prompt kept. Under the
+    # always-improve policy that is a reported failure, so the replay reports
+    # the improvement as unverified rather than claiming completed cases.
+    assert [case["status"] for case in report["cases"]] == ["failed"] * 3
+    assert all(
+        "candidate" in str(case["error"]).casefold()
+        or "improvement" in str(case["error"]).casefold()
+        or "verified" in str(case["error"]).casefold()
+        for case in report["cases"]
+    )
+    assert report["diagnosis"]["excluded_failed_cases"] == 2
     assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
     assert report["diagnosis"]["problem_sentences"]["precision"] is None
 

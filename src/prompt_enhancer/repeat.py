@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
 
+from .improve import failure_unverified
 from .models import Tier
 from .rounds import CandidateFailure, RoundOutcome
 
@@ -234,6 +235,16 @@ class RepeatResult:
         payload["final_prompt"] = self.final_prompt
         payload["original_kept"] = self.original_kept
         payload["tier"] = self.tier.value
+        if self.original_kept:
+            # The always-improve run did not produce a changed prompt; label
+            # the run failed, not completed-with-original. The round report
+            # keeps its "unverified"/"improvement_not_verified" status so the
+            # history outcome mapping still reads it as untested.
+            payload["status"] = "failed"
+            if not _mapping_or_empty(
+                _mapping_or_empty(payload.get("report")).get("failure")
+            ):
+                payload.setdefault("failure", failure_unverified())
         report = dict(_mapping_or_empty(payload.get("report")))
         report["history"] = [
             round_evidence.to_dict() for round_evidence in self.history
@@ -291,7 +302,9 @@ class RepeatCoordinator:
         )
         original_kept = history[-1].original_kept
         # A round may decline the offer (``report.offer_deep`` false) when a
-        # Deep pass could not do anything the lower tier did not.
+        # Deep pass could not do anything the lower tier did not. Under the
+        # always-improve policy a kept original is a reported failure whose
+        # hint promises a retry; the Deep pass is that retry.
         deep_declined = outcome.report().get("offer_deep") is False
         offer = (
             _deep_offer(run_id, selected_tier, history)

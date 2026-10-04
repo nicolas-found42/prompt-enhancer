@@ -237,8 +237,19 @@ def _confinement(
     restructuring = strategy.get("restructures") is True
     failures: list[dict[str, Any]] = []
 
+    # Always-improve policy: when this strategy has no authorized edit channel
+    # (no diagnosed spans and no gap slots it may fill), edit confinement would
+    # authorize no change at all. Writers may then rewrite any sentence, but
+    # every changed sentence still needs Jev sentence support and the whole
+    # prompt must preserve its meaning; lossless restructuring works as before.
+    whole_prompt_latitude = (
+        not restructuring and not diagnosed_ids and not authorized_gap_keys
+    )
+
     for edit in edits:
         operation = str(edit.get("operation", ""))
+        if whole_prompt_latitude:
+            continue
         source_ids = {str(item) for item in edit.get("source_sentence_ids", ())}
         if operation in {"replace", "delete"} and not restructuring:
             if not source_ids or not source_ids.issubset(diagnosed_ids):
@@ -295,6 +306,7 @@ def _confinement(
         "confirmed_gap_keys": sorted(confirmed_gap_keys),
         "authorized_gap_keys": sorted(authorized_gap_keys),
         "restructuring_authorized": restructuring,
+        **({"whole_prompt_latitude": True} if whole_prompt_latitude else {}),
         "failures": failures,
     }
 

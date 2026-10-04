@@ -679,9 +679,18 @@ class EvaluationHarness:
                     observation.latency_ms = (perf_counter() - started) * 1000
             observation.status = _status(result)
             if observation.status == "failed":
-                observation.error = (
-                    _optional_string(report.get("error")) or "engine returned failed"
+                failure = result.get("failure") or report.get("failure")
+                failure = failure if isinstance(failure, Mapping) else {}
+                improvement_unverified = (
+                    failure.get("kind") == "improvement_not_verified"
                 )
+                observation.error = (
+                    _optional_string(report.get("error"))
+                    or _optional_string(failure.get("message"))
+                    or "engine returned failed"
+                )
+                if improvement_unverified:
+                    observation.error = f"improvement_not_verified: {observation.error}"
         except Exception as exc:
             if options.fail_fast:
                 raise
@@ -1255,7 +1264,15 @@ def _attribution_harness_summary(cases: Sequence[CaseEvaluation]) -> dict[str, A
 
 
 def _restructuring_summary(cases: Sequence[CaseEvaluation]) -> RestructuringSummary:
-    usable = [case for case in cases if case.status not in {"failed", "error"}]
+    # An improvement_not_verified failure still carries complete restructuring
+    # and strong-check evidence, so it remains a usable observation here; only
+    # crashes and provider errors drop out.
+    usable = [
+        case
+        for case in cases
+        if case.status not in {"failed", "error"}
+        or "improvement_not_verified" in str(case.error or "")
+    ]
     selected = sum(bool(case.lossless_restructuring) for case in usable)
     built = sum(
         case.lossless_restructuring.get("outcome") == "candidate_built"

@@ -144,7 +144,9 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
         "Ask for context before answering."
     )
 
-    assert result["report"]["status"] == "no_change"
+    # The round runs under always-improve; with the stub grading everything at
+    # 0.01 no changed candidate verifies, so the run reports that outcome.
+    assert result["report"]["status"] == "improvement_not_verified"
     assert len(result["report"]["tests"]) == 1
     assert result["report"]["tests"][0]["option_descriptions"] == {
         "asks": "Requests missing context before answering.",

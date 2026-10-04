@@ -202,7 +202,7 @@ test("History explains every status pill and names a Failed row's reason", async
   );
   await expect(unchangedRow.locator(".badge")).toHaveAttribute(
     "title",
-    "Your prompt was kept as it was; no rewrite changed it."
+    "No rewrite passed verification while changing your prompt, so the original was kept. Retrying may find an improvement."
   );
   // Keyboard: focusing the row describes the pill in words.
   await failedRow.focus();

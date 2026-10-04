@@ -326,7 +326,9 @@ def test_screened_out_or_unknown_tests_cannot_claim_an_improvement() -> None:
 def test_partial_or_oversized_grading_keeps_original_without_human_prompt() -> None:
     for options in ({"partial_grading": True}, {"oversized_output": True}):
         result, batches = _run_screened_round(**options)
-        assert result["status"] == "completed"
+        # Unverifiable grading means no verified changed prompt; under the
+        # always-improve policy the run reports a failure instead of success.
+        assert result["status"] == "failed"
         assert result["original_kept"] is True
         rejected = result["report"]["selection_evidence"]["rejected_candidates"]
         assert any(

@@ -37,11 +37,16 @@ def _gateway(
     unfaithful: Collection[str] = (),
     blocked_strategies: Collection[str] = (),
     tests: str = TESTS,
+    writer_echo: bool = False,
 ) -> ScriptedGateway:
     def chat(model, messages, *, role, **_kwargs):
         if role == "writer":
             state = json.loads(messages[1]["content"])
             if "strategies" in state:
+                if writer_echo:
+                    return json.dumps(
+                        {item["name"]: state["prompt"] for item in state["strategies"]}
+                    )
                 return json.dumps(
                     {
                         item["name"]: f"Rewrite {item['name']}"
@@ -130,17 +135,30 @@ def test_round_without_faithful_tests_is_unverified() -> None:
     assert outcome.report()["offer_deep"] is True
 
 
-def test_round_without_confirmed_gaps_keeps_the_prompt_and_declines_deep() -> None:
+def test_round_without_confirmed_gaps_still_rewrites_the_prompt() -> None:
     outcome = run_round(
         _gateway(), _plan(diagnosis={"confirmed_gaps": [], "problem_sentences": []})
     )
 
-    assert outcome.status == "no_change"
-    assert "No confirmed gaps" in outcome.summary
+    assert outcome.status == "improved"
+    assert outcome.original_kept is False
+    assert outcome.selected_candidate_id is not None
     assert outcome.report()["offer_deep"] is False
 
 
-def test_round_with_no_eligible_strategy_keeps_the_prompt() -> None:
+def test_round_rejects_a_whole_prompt_mirror_candidate_on_a_clear_input() -> None:
+    outcome = run_round(
+        _gateway(writer_echo=True),
+        _plan(diagnosis={"confirmed_gaps": [], "problem_sentences": []}),
+    )
+
+    assert outcome.status == "improvement_not_verified"
+    assert outcome.original_kept is True
+    assert outcome.report()["failure"]["kind"] == "improvement_not_verified"
+    assert outcome.continue_rounds is True
+
+
+def test_round_with_no_eligible_strategy_reports_an_unverified_improvement() -> None:
     all_strategies = {
         "add_missing_context",
         "specify_output_format",
@@ -153,9 +171,10 @@ def test_round_with_no_eligible_strategy_keeps_the_prompt() -> None:
     }
     outcome = run_round(_gateway(blocked_strategies=all_strategies), _plan())
 
-    assert outcome.status == "no_change"
-    assert outcome.summary == "No candidate strategy was selected."
+    assert outcome.status == "improvement_not_verified"
+    assert "could not produce a verified changed prompt" in outcome.summary
     assert outcome.failures == ()
+    assert outcome.report()["failure"]["kind"] == "improvement_not_verified"
 
 
 def test_round_picks_a_verified_winner_and_reports_the_losers() -> None:
@@ -192,7 +211,7 @@ def test_round_rejects_a_weak_panel_winner_that_regresses_on_the_strong_model() 
     )
 
     assert outcome.original_kept is True
-    assert outcome.status == "no_change"
+    assert outcome.status == "improvement_not_verified"
     assert all(
         any(
             reason.startswith("strong_check_regression")
@@ -222,16 +241,19 @@ def test_round_marks_and_blocks_a_crutch_strategy_that_regresses() -> None:
     assert outcome.final_prompt.removeprefix("Rewrite ") not in crutches
 
 
-def test_round_keeps_the_prompt_when_no_candidate_beats_it() -> None:
+def test_round_reports_failure_when_no_candidate_beats_the_original() -> None:
     outcome = run_round(
         _gateway(weak_passes=lambda _model, prompt: prompt == PROMPT), _plan()
     )
 
     assert outcome.original_kept is True
-    assert outcome.status == "no_change"
+    assert outcome.status == "improvement_not_verified"
     assert outcome.selected_strategy is None
     assert outcome.failures and outcome.continue_rounds is True
     assert all("weak pass rates" in failure.summary for failure in outcome.failures)
+    report = outcome.report()
+    assert report["failure"]["kind"] == "improvement_not_verified"
+    assert "robust ranking" in report["summary"]
 
 
 def test_round_grades_each_weak_model_separately() -> None:

@@ -69,7 +69,8 @@ export const BADGE_EXPLANATIONS: Record<BadgeLabel, string> = {
     "Your prompt changed, but no reliable test confirmed the change is better, so treat it as unproven.",
   Improved:
     "A rewrite passed its checks and scored better than your original prompt.",
-  Unchanged: "Your prompt was kept as it was; no rewrite changed it.",
+  Unchanged:
+    "No rewrite passed verification while changing your prompt, so the original was kept. Retrying may find an improvement.",
 };
 
 export function badgeFor(run: RunSummary | RunDetail): Badge {
@@ -414,7 +415,10 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
             ) : (
               <>
                 {originalKept === true ? (
-                  <p className="history-outcome">Your prompt was kept as-is.</p>
+                  <p className="history-outcome">
+                    No verified improvement was found; your prompt was kept
+                    as-is.
+                  </p>
                 ) : null}
                 <div className="history-copy-heading">
                   <h4>Your prompt</h4>

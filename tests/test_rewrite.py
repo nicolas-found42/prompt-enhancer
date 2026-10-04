@@ -298,8 +298,14 @@ def test_unconfined_edit_is_rejected_without_a_jev_request() -> None:
         gateway,
         "Write a summary. Keep it brief.",
         "Write a detailed summary. Keep it brief.",
-        {"confirmed_gaps": [], "problem_sentences": []},
-        {"name": "specify_output_format", "gap_fill_keys": [], "restructures": False},
+        # A confirmed gap matched by the strategy's gap_fill_keys keeps edit
+        # confinement active: the latitude only opens when no edit is authorized.
+        {"confirmed_gaps": [{"key": "output_format"}], "problem_sentences": []},
+        {
+            "name": "specify_output_format",
+            "gap_fill_keys": ["output_format"],
+            "restructures": False,
+        },
         run_id="run",
         judge_model="typesafe/jev-1.13",
     )
@@ -314,13 +320,27 @@ def test_unmatched_gap_cannot_authorize_an_arbitrary_insertion() -> None:
         decision=lambda *_args, **_kwargs: pytest.fail("fidelity must not call Jev")
     )
 
+    original = "Summarize the report. Keep it formal."
     result = check_candidate_fidelity(
         gateway,
-        "Summarize the report.",
-        "Summarize the report. Use only two words.",
+        original,
+        f"{original} Use only two words.",
+        # A diagnosed span exists (so whole-prompt latitude stays closed), but
+        # the insertion sits at the far boundary where no diagnosed sentence
+        # and no matching gap key can authorize it.
         {
             "confirmed_gaps": [{"key": "output_format"}],
-            "problem_sentences": [],
+            "problem_sentences": [
+                {
+                    "sentence_id": "s0001",
+                    "sentence": {
+                        "id": "s0001",
+                        "text": "Summarize the report.",
+                        "start": 0,
+                        "end": len("Summarize the report."),
+                    },
+                }
+            ],
         },
         {
             "name": "add_done_criteria",

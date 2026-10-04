@@ -235,7 +235,9 @@ it("states that an unchanged original was kept and shows it once", async () => {
     original_kept: true,
   });
 
-  expect(screen.getByText("Your prompt was kept as-is.")).toBeVisible();
+  expect(
+    screen.getByText(/No verified improvement was found; your prompt was kept/)
+  ).toBeVisible();
   expect(screen.getAllByRole("heading", { name: "Your prompt" })).toHaveLength(
     1
   );

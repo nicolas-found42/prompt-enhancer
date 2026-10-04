@@ -103,8 +103,15 @@ export function outcomeOf(result: OptimizeResult): Outcome {
     return {
       headline: "We couldn't test this prompt",
       reason: result.original_kept
-        ? "No reliable way to check the answers was found, so your prompt is returned as it was."
+        ? "No reliable way to check the answers was found, so your prompt is returned as it was. Retrying may find a verified improvement."
         : "No reliable way to check the answers was found, so nothing was tested. The only change is the details you confirmed.",
+    };
+  }
+  if (status === "improvement_not_verified") {
+    return {
+      headline: "No verified improvement this time",
+      reason:
+        "Every rewrite was tested, but none passed verification while changing your prompt. Your original prompt is unchanged — retrying gives the models another chance.",
     };
   }
   if (!result.original_kept)
@@ -112,21 +119,6 @@ export function outcomeOf(result: OptimizeResult): Outcome {
   const gaps = confirmedGaps(result);
   const rates = originalPassRates(result);
   const weakest = rates.length > 0 ? Math.min(...rates) : null;
-  // No pass rates means the prompt was never run on a test model, so there is
-  // no evidence that it works, only that nothing was clearly missing.
-  if (gaps.length === 0 && weakest === null) {
-    return {
-      headline: "We didn't find anything to fix",
-      reason:
-        "Nothing was clearly missing, so no rewrite was tried. Your prompt wasn't tested on other models.",
-    };
-  }
-  if (gaps.length === 0 && weakest !== null && weakest >= 0.8) {
-    return {
-      headline: "Your prompt already works well",
-      reason: `It passed at least ${Math.round(weakest * 100)}% of checks on every test model, so it is returned unchanged.`,
-    };
-  }
   const reasons: string[] = [];
   if (gaps.length > 0) {
     reasons.push(
