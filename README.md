@@ -55,7 +55,11 @@ anyway shows what went wrong and what to do next.
 The web app starts runs in the background (`POST /api/jobs/optimize`, then
 poll `GET /api/jobs/{run_id}`), so it shows each stage and elapsed time, can
 cancel a run, and reattaches after a reload. The synchronous
-`POST /api/optimize` endpoint remains for API clients.
+`POST /api/optimize` endpoint remains for API clients. It blocks until a result
+or budget pause and has no job cancellation handle; clients needing cancellation
+should use the job endpoints. Synchronous callers can set `time_limit_s` or
+`spend_limit_usd` explicitly to pause at a completed-round boundary. Limits are
+optional, and a healthy run has no automatic attempt or stagnation cap.
 
 ## Check the implementation
 

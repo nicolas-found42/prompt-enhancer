@@ -31,7 +31,7 @@ export default function FailureCard({
       <p className="eyebrow">{cancelled ? "CANCELLED" : "RUN FAILED"}</p>
       <h2 id="failure-heading">{failure.headline}</h2>
       <p>{failure.hint}</p>
-      {!cancelled && (
+      {!cancelled && result.original_kept === true && (
         <p className="failure-kept">Your prompt was not changed.</p>
       )}
       {keptRounds.length > 0 && (
