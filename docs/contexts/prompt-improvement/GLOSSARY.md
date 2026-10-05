@@ -61,3 +61,6 @@ evidence, so it must not be promoted to the final outcome prematurely.
 
 The score vector is round-local evidence. A first-round `gain` is `null` because
 there is no prior vector to compare; it is never described as a measured zero.
+
+**Success-test set**:
+The accepted checks used together to judge answers in a Round. Each check addresses an observable outcome of the user's request; two checks may still overlap or conflict when considered together.
