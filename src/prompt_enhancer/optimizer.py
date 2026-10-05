@@ -73,6 +73,7 @@ from .rounds import RoundOutcome, RoundPlan, prompt_diff, run_round
 from .rubric_revisions import SQLiteRubricStore
 from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
+from .styles import parse_improvement_style
 from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
     SuccessTestScreenCache,
@@ -362,10 +363,20 @@ class PromptOptimizer:
         selected_weak = overrides.get("weak", overrides.get("weak_models"))
         if selected_weak is None:
             selected_weak = self.config.weak_models
-            if tier == "deep":
-                selected_weak = tuple(
-                    dict.fromkeys((*selected_weak, *DEFAULT_DEEP_WEAK_PANEL))
+        if tier == "deep":
+            # Deep is the only workload and its panel needs five distinct
+            # models. Top up a short explicit panel from the configured
+            # defaults (the user's picks stay first) instead of refusing a
+            # run the user can no longer resize by choosing another tier.
+            selected_weak = tuple(
+                dict.fromkeys(
+                    (
+                        *selected_weak,
+                        *self.config.weak_models,
+                        *DEFAULT_DEEP_WEAK_PANEL,
+                    )
                 )
+            )
         if (
             not isinstance(writer, str)
             or not writer
@@ -403,7 +414,14 @@ class PromptOptimizer:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
         supplied_options = _safe_options(options or {})
-        tier = Tier.parse(supplied_options.pop("tier", "standard")).value
+        # The engine still honors an explicit tier for direct callers, but a
+        # missing tier means Deep: every product run goes through the API,
+        # which always requests Deep (legacy tier input is ignored there).
+        tier = Tier.parse(supplied_options.pop("tier", "deep")).value
+        style = parse_improvement_style(
+            supplied_options.get("improvement_style", "auto")
+        )
+        supplied_options["improvement_style"] = style
         run_settings = self._run_settings(supplied_options, tier)
         run_seed = _run_seed(prompt, supplied_options.get("seed"))
         return supplied_options, tier, run_settings, run_seed

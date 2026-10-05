@@ -209,12 +209,12 @@ function postJson<T>(url: string, body?: unknown): Promise<T> {
 
 export function startOptimize(
   prompt: string,
-  tier: Tier,
+  improvementStyle: string,
   modelOverrides?: ModelSelection
 ): Promise<Job> {
   return postJson<Job>("/api/jobs/optimize", {
     prompt,
-    tier,
+    improvement_style: improvementStyle,
     model_overrides: modelOverrides,
   });
 }

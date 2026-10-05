@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OptimizeResult } from "./api";
-import {
-  estimateText,
-  outcomeOf,
-  roughCost,
-  tierDescriptions,
-} from "./outcome";
+import { estimateText, loopDescription, outcomeOf, roughCost } from "./outcome";
 
 function result(report: Record<string, unknown>): OptimizeResult {
   return {
@@ -73,30 +68,26 @@ describe("estimateText", () => {
   const billedAccount =
     "billed to your own OpenCode Go and OpenRouter accounts";
 
+  it("describes the Deep-only loop with no tier phrasing", () => {
+    expect(loopDescription).toContain("Deep work on every run");
+    expect(loopDescription).toContain("until the prompt converges");
+    expect(loopDescription).not.toMatch(/Fast|Standard|Deep:/);
+    expect(loopDescription).not.toMatch(/1\/2\/3 rounds|\d rounds/);
+  });
+
   it("splits the fallback estimate into a time statement and a billed cost statement", () => {
-    const { time, cost } = estimateText("standard");
-    expect(time).toBe(
-      "Under a minute if nothing needs fixing, up to 10 min with rewrites."
-    );
+    const { time, cost } = estimateText();
+    expect(time).toContain("under a minute");
+    expect(time).toContain("30 min");
     // Time and cost are separate strings: neither contains a dollar amount.
     expect(time).not.toMatch(/\$/);
-    expect(cost).toContain("$0.005–$0.03");
+    expect(cost).toContain("$0.03–$0.15");
     expect(cost).toContain(billedAccount);
     expect(cost).toContain("Rough estimate.");
   });
 
-  it("keeps every fallback figure and the rounds/test-model description", () => {
-    const { time, cost } = estimateText("deep");
-    expect(time).toContain("Under a minute");
-    expect(time).toContain("30 min");
-    expect(cost).toContain("$0.03");
-    expect(cost).toContain("$0.15");
-    expect(tierDescriptions.deep).toContain("3 rounds");
-    expect(tierDescriptions.deep).toContain("5 test models");
-  });
-
   it("uses the fallback when fewer than 3 runs are recorded", () => {
-    const { cost } = estimateText("fast", {
+    const { cost } = estimateText({
       runs: 2,
       minutes: [0.5, 8],
       cost: [0.001, 0.02],
@@ -105,7 +96,7 @@ describe("estimateText", () => {
   });
 
   it("splits the recorded-range estimate and names the billed account", () => {
-    const { time, cost } = estimateText("standard", {
+    const { time, cost } = estimateText({
       runs: 4,
       minutes: [0.3, 6.6],
       cost: [0.001, 0.012],
@@ -113,17 +104,17 @@ describe("estimateText", () => {
     expect(time).toBe("Usually under a minute, up to 7 min.");
     expect(time).not.toMatch(/\$/);
     expect(cost).toBe(
-      `About $0.001–$0.012, ${billedAccount} — from your last 4 standard runs.`
+      `About $0.001–$0.012, ${billedAccount} — from your last 4 runs.`
     );
   });
 
   it("keeps the recorded-range provenance and both bounds", () => {
-    const { cost } = estimateText("deep", {
+    const { cost } = estimateText({
       runs: 12,
       minutes: [4, 12],
       cost: [0.002, 0.05],
     });
-    expect(cost).toContain("from your last 12 deep runs.");
+    expect(cost).toContain("from your last 12 runs.");
     expect(cost).toContain("$0.002");
     expect(cost).toContain("$0.050");
   });

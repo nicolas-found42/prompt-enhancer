@@ -944,7 +944,7 @@ test("opening a history run shows its details next to the row", async ({
   await page.route("**/api/estimates", (route) =>
     route.fulfill({
       json: {
-        standard: { runs: 4, minutes: [0.3, 6.6], cost: [0.001, 0.012] },
+        deep: { runs: 4, minutes: [0.3, 6.6], cost: [0.001, 0.012] },
       },
     })
   );
@@ -952,7 +952,7 @@ test("opening a history run shows its details next to the row", async ({
   await page.goto("/");
   await expect(
     page.getByText(
-      /Standard: up to 2 rounds of rewrites, tried on 3 test models\. Usually under a minute, up to 7 min\. About \$0\.001–\$0\.012, billed to your own OpenCode Go and OpenRouter accounts — from your last 4 standard runs\./
+      /Deep work on every run: rewrites are written, tried, and retried until the prompt converges\. Usually under a minute, up to 7 min\. About \$0\.001–\$0\.012, billed to your own OpenCode Go and OpenRouter accounts — from your last 4 runs\./
     )
   ).toBeVisible();
 

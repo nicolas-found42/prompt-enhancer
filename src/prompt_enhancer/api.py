@@ -27,7 +27,7 @@ from .store import RunStore
 
 class OptimizeRequest(BaseModel):
     prompt: str
-    tier: str = "standard"
+    improvement_style: str = "auto"
     options: dict[str, Any] = Field(default_factory=dict)
     model_overrides: dict[str, Any] = Field(default_factory=dict)
     clarification_allowed: bool | None = None
@@ -65,7 +65,9 @@ def _public_catalog(settings: Settings) -> dict[str, Any]:
 
 def _optimize_options(request: OptimizeRequest) -> dict[str, Any]:
     options = dict(request.options)
-    options["tier"] = request.tier
+    # Deep is the only workload: any tier smuggled in via options is ignored.
+    options["tier"] = "deep"
+    options["improvement_style"] = request.improvement_style
     if request.model_overrides:
         options["model_overrides"] = {
             **options.get("model_overrides", {}),

@@ -48,13 +48,19 @@ import {
   estimateText,
   humanize,
   failureOf,
+  loopDescription,
   outcomeOf,
   possibleGapHints,
   record,
   roughCost,
-  tierDescriptions,
 } from "./outcome";
 import RunReport from "./RunReport";
+import {
+  COMMON_STYLES,
+  MORE_STYLES,
+  STYLE_LABELS,
+  type ImprovementStyle,
+} from "./styles";
 
 const ACTIVE_RUN_KEY = "prompt-enhancer.active-run";
 const LAST_RESULT_KEY = "prompt-enhancer.last-result";
@@ -311,7 +317,7 @@ export default function App() {
   const lastAssessed = useRef<string | null>(null);
   const pausedDelay = useRef(HEALTH_RETRY_INITIAL_MS);
   const promptField = useRef<HTMLTextAreaElement | null>(null);
-  const [tier, setTier] = useState<Tier>("standard");
+  const [style, setStyle] = useState<ImprovementStyle>("auto");
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
   const [historyNavigation, setHistoryNavigation] = useState(0);
@@ -332,7 +338,10 @@ export default function App() {
   const [estimates, setEstimates] = useState<
     Partial<Record<Tier, TierEstimate>>
   >({});
-  const lastRequest = useRef<{ prompt: string; tier: Tier } | null>(null);
+  const lastRequest = useRef<{
+    prompt: string;
+    style: ImprovementStyle;
+  } | null>(null);
   const composer = useRef<HTMLFormElement | null>(null);
   const draftWasSet = useRef(initialDraft.present);
   const busy = job !== null || saving;
@@ -588,17 +597,17 @@ export default function App() {
 
   function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
-    lastRequest.current = { prompt, tier };
-    void begin(() => startOptimize(prompt, tier, selection ?? undefined));
+    lastRequest.current = { prompt, style };
+    void begin(() => startOptimize(prompt, style, selection ?? undefined));
   }
 
   function retry() {
     const previous = lastRequest.current;
     if (previous) {
       changeDraft(previous.prompt);
-      setTier(previous.tier);
+      setStyle(previous.style);
       void begin(() =>
-        startOptimize(previous.prompt, previous.tier, selection ?? undefined)
+        startOptimize(previous.prompt, previous.style, selection ?? undefined)
       );
     } else {
       submit();
@@ -768,9 +777,8 @@ export default function App() {
     () => (result ? reportAssumptions(result) : []),
     [result]
   );
-  const estimate = estimateText(tier, estimates[tier]);
-  const progressEstimate =
-    job?.kind === "deep" ? estimateText("deep", estimates.deep) : estimate;
+  const estimate = estimateText(estimates.deep);
+  const progressEstimate = estimateText(estimates.deep);
   const outcome = result?.status === "completed" ? outcomeOf(result) : null;
   const gaps =
     result?.status === "completed" && result.original_kept
@@ -792,8 +800,8 @@ export default function App() {
         <p className="eyebrow">LOCAL PROMPT WORKBENCH</p>
         <h1>Make your prompt clearer.</h1>
         <p className="lede">
-          Paste one prompt, choose how much effort to spend, and get a clean
-          result you can copy.
+          Paste one prompt, choose how to improve it, and get a clean result you
+          can copy.
         </p>
       </header>
 
@@ -873,16 +881,27 @@ export default function App() {
           }}
         />
         <div className="form-actions">
-          <label className="tier-label" htmlFor="tier">
-            Effort
+          <label className="style-label" htmlFor="improvement-style">
+            Improvement style
             <select
-              id="tier"
-              value={tier}
-              onChange={(event) => setTier(event.target.value as Tier)}
+              id="improvement-style"
+              value={style}
+              onChange={(event) =>
+                setStyle(event.target.value as ImprovementStyle)
+              }
             >
-              <option value="fast">Fast</option>
-              <option value="standard">Standard</option>
-              <option value="deep">Deep</option>
+              {COMMON_STYLES.map((value) => (
+                <option key={value} value={value}>
+                  {STYLE_LABELS[value]}
+                </option>
+              ))}
+              <optgroup label="More styles">
+                {MORE_STYLES.map((value) => (
+                  <option key={value} value={value}>
+                    {STYLE_LABELS[value]}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
           <button
@@ -899,8 +918,8 @@ export default function App() {
             Enter a prompt to enable Optimize prompt.
           </p>
         )}
-        <p className="effort-estimate">
-          <span>{tierDescriptions[tier]}</span> <span>{estimate.time}</span>{" "}
+        <p className="loop-estimate">
+          <span>{loopDescription}</span> <span>{estimate.time}</span>{" "}
           <span>{estimate.cost}</span>
         </p>
         {selection && (

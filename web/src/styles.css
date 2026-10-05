@@ -178,7 +178,7 @@ button:focus-visible {
   margin-top: 18px;
 }
 
-.tier-label {
+.style-label {
   color: #8b949e;
   display: grid;
   font-size: 0.8rem;
@@ -186,7 +186,7 @@ button:focus-visible {
   margin: 0 !important;
 }
 
-.effort-estimate {
+.loop-estimate {
   color: #c9d1d9;
   font-size: 0.9rem;
   margin: 10px 0 0;

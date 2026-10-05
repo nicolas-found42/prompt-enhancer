@@ -1307,7 +1307,6 @@ def test_engine_model_defaults_persist_and_apply_after_restart(tmp_path) -> None
     [
         ("fast", ["one"]),
         ("standard", ["one", "two"]),
-        ("deep", ["one", "two", "three", "four"]),
         ("fast", ["one", "one"]),
     ],
 )

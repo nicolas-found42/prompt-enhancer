@@ -1,4 +1,4 @@
-import type { Failure, OptimizeResult, Tier, TierEstimate } from "./api";
+import type { Failure, OptimizeResult, TierEstimate } from "./api";
 
 export function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -136,30 +136,21 @@ export function outcomeOf(result: OptimizeResult): Outcome {
   };
 }
 
-// Runs are bimodal: under a minute when nothing needs fixing, several minutes
-// when rewrites are written and tested.
-export const fallbackEstimates: Record<Tier, string> = {
-  fast: "Under a minute if nothing needs fixing, up to 4 min with rewrites.",
-  standard:
-    "Under a minute if nothing needs fixing, up to 10 min with rewrites.",
-  deep: "Under a minute if nothing needs fixing, up to 30 min with rewrites.",
-};
+// Every run uses the Deep workload in a loop until the prompt converges:
+// rewrites are written, tried, and retried with varied strategies while any
+// quality dimension is below its floor or the gains stay above epsilon.
+export const loopDescription =
+  "Deep work on every run: rewrites are written, tried, and retried until the prompt converges.";
+
+const fallbackEstimateTime =
+  "Usually under a minute for simple prompts, up to 30 min while the loop keeps improving.";
 
 // Every run is billed to the user's own provider keys (README: the private
 // .env holds OPENCODE_GO_KEY and OPENROUTER_API_KEY), so the cost line names
 // that account rather than leaving the dollars unattributed.
-const fallbackCosts: Record<Tier, string> = {
-  fast: "About $0.001–$0.01, billed to your own OpenCode Go and OpenRouter accounts.",
-  standard:
-    "About $0.005–$0.03, billed to your own OpenCode Go and OpenRouter accounts.",
-  deep: "About $0.03–$0.15, billed to your own OpenCode Go and OpenRouter accounts.",
-};
+const BILLED_ACCOUNT = "billed to your own OpenCode Go and OpenRouter accounts";
 
-export const tierDescriptions: Record<Tier, string> = {
-  fast: "Fast: one round of rewrites, tried on 2 test models.",
-  standard: "Standard: up to 2 rounds of rewrites, tried on 3 test models.",
-  deep: "Deep: up to 3 rounds with more rewrites, tried on 5 test models.",
-};
+const fallbackEstimateCost = `About $0.03–$0.15, ${BILLED_ACCOUNT}. (Rough estimate.)`;
 
 function durationRange(low: number, high: number): string {
   const top = Math.max(high, low);
@@ -172,27 +163,24 @@ function durationRange(low: number, high: number): string {
 }
 
 /**
- * The two cost/time statements under the Effort control. Time and cost are
- * always separate sentences, and `cost` always names whose account is billed.
+ * The two cost/time statements under the Improvement style control. Time and
+ * cost are always separate sentences, and `cost` always names whose account
+ * is billed. Cost accrues while the loop runs, until convergence, cancel, or
+ * a budget pause.
  */
-export type EffortEstimate = { time: string; cost: string };
+export type LoopEstimate = { time: string; cost: string };
 
-const BILLED_ACCOUNT = "billed to your own OpenCode Go and OpenRouter accounts";
-
-export function estimateText(
-  tier: Tier,
-  estimate?: TierEstimate
-): EffortEstimate {
+export function estimateText(estimate?: TierEstimate): LoopEstimate {
   if (!estimate || estimate.runs < 3)
     return {
-      time: fallbackEstimates[tier],
-      cost: `${fallbackCosts[tier]} (Rough estimate.)`,
+      time: fallbackEstimateTime,
+      cost: fallbackEstimateCost,
     };
   const [low, high] = estimate.minutes;
   const [lowCost, highCost] = estimate.cost;
   return {
     time: durationRange(low, high),
-    cost: `About $${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)}, ${BILLED_ACCOUNT} — from your last ${estimate.runs} ${tier} runs.`,
+    cost: `About $${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)}, ${BILLED_ACCOUNT} — from your last ${estimate.runs} runs.`,
   };
 }
 
