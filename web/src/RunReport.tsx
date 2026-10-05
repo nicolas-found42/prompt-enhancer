@@ -1,5 +1,6 @@
 import type { OptimizeResult } from "./api";
 import { humanize, items, plainReason, record } from "./outcome";
+import { STYLE_LABELS, type ImprovementStyle } from "./styles";
 
 function text(value: unknown): string {
   return typeof value === "string"
@@ -183,10 +184,23 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
     );
   const originalPrompt = result.original_prompt ?? "";
   const diff = text(report.diff);
+  const appliedStyle = text(report.applied_style);
+  const appliedLabel =
+    appliedStyle in STYLE_LABELS
+      ? STYLE_LABELS[appliedStyle as ImprovementStyle]
+      : appliedStyle;
 
   return (
     <div className="report-content">
       <p>{text(report.summary)}</p>
+      {appliedStyle && (
+        <p>
+          Applied style: {appliedLabel}
+          {report.improvement_style === "auto" &&
+            " (inferred — your style was Auto)"}
+          .
+        </p>
+      )}
       {originalPrompt && (
         <section>
           <h3>Original prompt</h3>

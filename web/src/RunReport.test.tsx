@@ -552,3 +552,21 @@ it("shows discarded criteria and measured grading request counts", () => {
   expect(grading).toHaveTextContent("4 requests for 4 outputs");
   expect(grading).toHaveTextContent("Estimated serialized input: 5410 bytes");
 });
+
+it("shows the applied style, marking Auto inference", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          improvement_style: "auto",
+          applied_style: "shorter",
+        },
+      }}
+    />
+  );
+
+  expect(document.body.textContent).toContain("Applied style: Shorter");
+  expect(document.body.textContent).toContain("your style was Auto");
+});

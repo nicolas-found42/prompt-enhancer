@@ -171,13 +171,39 @@ def failure_no_confirmed_improvement() -> dict[str, str]:
     }
 
 
+def impossible_summary(style: str, constraints: Sequence[str]) -> str:
+    """The report summary for a style/constraint pairing with no way through."""
+    literals = " and ".join(repr(item) for item in constraints)
+    return (
+        f"The {style} style cannot apply to this prompt: every strategy in "
+        f"its bundle would rewrite the exact literal {literals} the prompt "
+        "requires verbatim, so the original prompt is returned unchanged and "
+        "no violation was emitted. Try a compatible style such as Exact "
+        "format or Proofread only."
+    )
+
+
+def failure_impossible(style: str, constraints: Sequence[str]) -> dict[str, str]:
+    """The failure entry for a proven style/constraint impossibility."""
+    return {
+        "kind": "impossible",
+        "headline": "Style and requirements cannot both be satisfied",
+        "hint": (
+            "Resubmit with a compatible style, or relax the exact-output requirement."
+        ),
+        "message": impossible_summary(style, constraints),
+    }
+
+
 __all__ = [
     "ALWAYS_IMPROVE_POLICY_VERSION",
     "failure_no_candidate_written",
     "failure_no_confirmed_improvement",
     "failure_no_qualified_candidate",
+    "failure_impossible",
     "failure_unverified",
     "identical_candidates",
+    "impossible_summary",
     "improved_unverified_summary",
     "improvement_unverified_summary",
     "no_candidate_changed_reason",

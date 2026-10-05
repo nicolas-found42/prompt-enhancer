@@ -464,7 +464,11 @@ def test_current_cascade_recording_replays_initial_and_confirmation_evidence(
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "standard", "clarification_allowed": False},
+        {
+            "tier": "standard",
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert replayed["final_prompt"] == original["final_prompt"]
@@ -500,7 +504,11 @@ def test_calibrated_fallback_recording_replays_all_three_stages(tmp_path: Path) 
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "standard", "clarification_allowed": False},
+        {
+            "tier": "standard",
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert replayed["final_prompt"] == original["final_prompt"]
@@ -528,7 +536,11 @@ def test_recorded_cascade_budget_overrides_replay_without_extra_calls(
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "standard", "clarification_allowed": False},
+        {
+            "tier": "standard",
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert (
@@ -560,7 +572,11 @@ def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "standard", "clarification_allowed": False},
+        {
+            "tier": "standard",
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert (

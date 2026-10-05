@@ -38,8 +38,8 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
 
     report = json.loads(output.read_text())
     # The recorded sessions ended with the original prompt kept. Under the
-    # always-improve policy that is a reported failure, so the replay reports
-    # the improvement as unverified rather than claiming completed cases.
+    # always-attempt policy that is a reported failure, so the replay reports
+    # the unimproved runs as failed rather than claiming completed cases.
     assert [case["status"] for case in report["cases"]] == ["failed"] * 3
     assert all(
         "candidate" in str(case["error"]).casefold()
@@ -734,9 +734,38 @@ def test_failed_cases_are_excluded_from_diagnosis_accuracy() -> None:
 
 
 def _candidate_gateway() -> ScriptedGateway:
+    rewrites = {
+        "add_missing_context": "Context rewrite",
+        "specify_output_format": "Format rewrite",
+        "add_done_criteria": "Done rewrite",
+    }
+
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
-            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Context rewrite","specify_output_format":"Format rewrite","add_done_criteria":"Done rewrite"}'
+            # Echo every routed strategy so the bundle never hits an
+            # omitted-strategy error; unknown names get a benign rewrite.
+            names: list[str] = []
+            try:
+                body = messages[1]["content"] if len(messages) > 1 else ""
+                names = [
+                    str(item.get("name"))
+                    for item in json.loads(body).get("strategies", [])
+                    if isinstance(item, dict) and item.get("name")
+                ]
+            except (ValueError, AttributeError, TypeError):
+                names = []
+            payload: dict[str, object] = {
+                "tests": [
+                    {
+                        "question": "Does the output answer?",
+                        "kind": "noul",
+                        "expected": "yes",
+                    }
+                ]
+            }
+            for name in names or list(rewrites):
+                payload[name] = rewrites.get(name, f"{name} rewrite")
+            return json.dumps(payload)
         return {
             "choices": [
                 {

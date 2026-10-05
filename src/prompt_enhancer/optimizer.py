@@ -56,6 +56,7 @@ from .gateway import (
     ScriptedGateway,
 )
 from .history import RunHistory
+from .improve import failure_impossible
 from .jev import NoulDecision, parse_decision
 from .models import (
     CostBreakdown,
@@ -73,11 +74,13 @@ from .rounds import RoundOutcome, RoundPlan, prompt_diff, run_round
 from .rubric_revisions import SQLiteRubricStore
 from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
+from .strategies import RouteResult, run_route
 from .styles import parse_improvement_style
 from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
     SuccessTestScreenCache,
 )
+from .understand import UnderstandResult, run_understand
 
 if TYPE_CHECKING:
     from .evaluation.calibration import CalibrationArtifact, DecisionPolicy
@@ -113,6 +116,7 @@ class _RunContext:
     assumptions: Any
     settings: Settings
     seed: int
+    improvement_style: str = "auto"
 
 
 class PromptOptimizer:
@@ -591,12 +595,15 @@ class PromptOptimizer:
                 [item.as_dict() for item in plan.assumptions],
                 run_settings,
                 run_seed,
+                str(options.get("improvement_style", "auto")),
             ),
             tier,
             prior_failures=options.get("prior_round_failures", ()),
         )
 
-    def _round_executor(self, context: _RunContext) -> RoundRunner:
+    def _round_executor(
+        self, context: _RunContext, understand: UnderstandResult, route: RouteResult
+    ) -> RoundRunner:
         def execute(request: RoundRequest) -> RoundOutcome:
             self._round = {
                 "round": request.round_number,
@@ -619,10 +626,48 @@ class PromptOptimizer:
                 grading_policy=self.grading_policy,
                 screen_cache=self.success_test_screen_cache,
                 decision_policy=self.decision_policy,
+                applied_style=route.applied_style,
+                hard_constraints=tuple(understand.hard_constraints),
+                route_strategies=tuple(route.strategies),
             )
             return run_round(self.gateway, plan, on_stage=self._stage)
 
         return execute
+
+    def _understand_and_route(
+        self, context: _RunContext
+    ) -> tuple[UnderstandResult, RouteResult]:
+        """Run the Understand and Route stages for a round context."""
+        understand = run_understand(
+            self.gateway,
+            context.prompt,
+            requested_style=context.improvement_style,
+            diagnosis=context.diagnosis,
+            judge_model=context.settings.judge_model,
+            run_id=context.run_id,
+        )
+        route = run_route(
+            self.gateway,
+            context.prompt,
+            applied_style=understand.applied_style,
+            hard_constraints=understand.hard_constraints,
+            exact_output=understand.exact_output,
+            judge_model=context.settings.judge_model,
+            run_id=context.run_id,
+        )
+        return understand, route
+
+    @staticmethod
+    def _attach_understand_route(
+        payload: OptimizeResult, understand: UnderstandResult, route: RouteResult
+    ) -> None:
+        """Record the style stages on a completed run payload."""
+        report = dict(payload.get("report", {}))
+        report["improvement_style"] = understand.requested_style
+        report["applied_style"] = understand.applied_style
+        report["understand"] = understand.to_dict()
+        report["route"] = route.to_dict()
+        payload["report"] = report
 
     def _run_rounds(
         self,
@@ -631,14 +676,60 @@ class PromptOptimizer:
         *,
         prior_failures: Any = (),
     ) -> OptimizeResult:
+        understand, route = self._understand_and_route(context)
+        if route.impossible_reason is not None:
+            return self._impossible_result(context, tier, understand, route)
         repeated = self.repeat.run(
             run_id=context.run_id,
             prompt=context.prompt,
             tier=tier,
-            execute_round=self._round_executor(context),
+            execute_round=self._round_executor(context, understand, route),
             initial_failures=prior_failures,
         )
-        return cast(OptimizeResult, repeated.as_payload())
+        payload = cast(OptimizeResult, repeated.as_payload())
+        self._attach_understand_route(payload, understand, route)
+        return payload
+
+    def _impossible_result(
+        self,
+        context: _RunContext,
+        tier: str,
+        understand: UnderstandResult,
+        route: RouteResult,
+    ) -> OptimizeResult:
+        """The honest stop when no style bundle survives the hard gates."""
+        failure = failure_impossible(
+            understand.applied_style, understand.hard_constraints
+        )
+        return OptimizeResult(
+            status="failed",
+            run_id=context.run_id,
+            final_prompt=context.prompt,
+            original_kept=True,
+            report={
+                "status": "impossible",
+                "summary": failure["message"],
+                "failure": failure,
+                "improvement_style": understand.requested_style,
+                "applied_style": understand.applied_style,
+                "understand": understand.to_dict(),
+                "route": route.to_dict(),
+                "diagnosis": dict(context.diagnosis),
+                "assumptions": list(context.assumptions),
+                "selection_evidence": {
+                    "selected_candidate_id": None,
+                    "rejection_reasons": {},
+                },
+                "history": [],
+                "models": context.settings.model_roles(),
+            },
+            cost=self._usage_cost(),
+            timing={
+                "total_ms": 0,
+                "started_at": utc_now(),
+                "finished_at": utc_now(),
+            },
+        )
 
     def _diagnose(self, prompt: str) -> DiagnosisReport | None:
         rubric = None
@@ -879,6 +970,12 @@ class PromptOptimizer:
         tier = str((metadata or {}).get("tier", "standard"))
         run_settings = self._run_settings((metadata or {}).get("options", {}), tier)
         assumptions = state.get("assumptions", [])
+        stored_options = (metadata or {}).get("options", {})
+        style = str(
+            stored_options.get("improvement_style", "auto")
+            if isinstance(stored_options, Mapping)
+            else "auto"
+        )
         context = _RunContext(
             prompt,
             run_id,
@@ -888,6 +985,7 @@ class PromptOptimizer:
             assumptions,
             run_settings,
             _run_seed(prompt, (metadata or {}).get("options", {}).get("seed")),
+            style,
         )
         return self._run_rounds(context, tier)
 
@@ -1083,22 +1181,37 @@ class PromptOptimizer:
         deep_options["tier"] = "deep"
         run_settings = self._run_settings(deep_options, "deep")
         prior_report = dict((record.get("result") or {}).get("report") or {})
+        deep_style = str(deep_options.get("improvement_style", "auto"))
+        deep_context = _RunContext(
+            str(record["prompt"]),
+            run_id,
+            prior_report.get("diagnosis", {}),
+            prior_report.get("assumptions", []),
+            run_settings,
+            _run_seed(str(record["prompt"]), (record.get("options") or {}).get("seed")),
+            deep_style,
+        )
+        understand, route = self._understand_and_route(deep_context)
+        if route.impossible_reason is not None:
+            impossible = self._impossible_result(
+                deep_context, "deep", understand, route
+            )
+            self.store.save_run(
+                {
+                    **record,
+                    "result": impossible,
+                    "tier": "deep",
+                    "options": deep_options,
+                    "cost": impossible["cost"],
+                }
+            )
+            return impossible
         repeated = self.repeat.deep_pass(
             detail,
-            self._round_executor(
-                _RunContext(
-                    str(record["prompt"]),
-                    run_id,
-                    prior_report.get("diagnosis", {}),
-                    prior_report.get("assumptions", []),
-                    run_settings,
-                    _run_seed(
-                        str(record["prompt"]), (record.get("options") or {}).get("seed")
-                    ),
-                )
-            ),
+            self._round_executor(deep_context, understand, route),
         )
         result = cast(OptimizeResult, repeated.as_payload())
+        self._attach_understand_route(result, understand, route)
         result["cost"] = cast(
             CostBreakdown,
             _add_usage_delta(prior_cost, {"total": 0.0}, self._usage_cost()),

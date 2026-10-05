@@ -180,7 +180,11 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
     )
     optimizer = PromptOptimizer(store=store, gateway=gateway, diagnosis_rubric=rubric)
 
-    result = optimizer.optimize(prompt, {"tier": "fast"})
+    # more_specific's bundle (add_missing_context, add_done_criteria,
+    # specify_output_format) is the routed set the recheck stub admits.
+    result = optimizer.optimize(
+        prompt, {"tier": "fast", "improvement_style": "more_specific"}
+    )
 
     rejected = result["report"]["selection_evidence"]["rejected_candidates"]
     assert result["final_prompt"] == prompt
@@ -827,12 +831,8 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
             if "state.strategies" in messages[0]["content"]:
                 return json.dumps(
                     {
-                        strategy: "Answer clearly"
-                        for strategy in (
-                            "add_missing_context",
-                            "specify_output_format",
-                            "add_done_criteria",
-                        )
+                        item["name"]: "Answer clearly"
+                        for item in json.loads(messages[1]["content"])["strategies"]
                     }
                 )
             return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Answer clearly"}'
@@ -906,12 +906,8 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
             if "state.strategies" in messages[0]["content"]:
                 return json.dumps(
                     {
-                        strategy: "Answer my question clearly."
-                        for strategy in (
-                            "add_missing_context",
-                            "specify_output_format",
-                            "add_done_criteria",
-                        )
+                        item["name"]: "Answer my question clearly."
+                        for item in json.loads(messages[1]["content"])["strategies"]
                     }
                 )
             return json.dumps(
@@ -1344,6 +1340,7 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it(
                     "add_missing_context": rejected_prompt,
                     "specify_output_format": "Safe rewrite",
                     "add_done_criteria": "Other rewrite",
+                    "remove_contradictions": rejected_prompt,
                 }
             )
         prompt = messages[0]["content"]

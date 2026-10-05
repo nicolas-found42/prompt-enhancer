@@ -265,7 +265,16 @@ def _run_screened_round(
         config=settings or Settings(),
         writer_instruction_version=writer_instruction_version,
         decision_policy=decision_policy,
-    ).optimize(prompt, {"tier": tier, "clarification_allowed": False})
+    ).optimize(
+        prompt,
+        {
+            "tier": tier,
+            "clarification_allowed": False,
+            # The recheck stub admits only restructure_lossless, which lives
+            # in the faithful_transform bundle.
+            "improvement_style": "faithful_transform",
+        },
+    )
     return result, batches
 
 
@@ -447,7 +456,11 @@ def test_current_screening_and_grading_protocol_strictly_replays(
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "fast", "clarification_allowed": False},
+        {
+            "tier": "fast",
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert replayed["status"] == "completed"

@@ -285,6 +285,9 @@ def _run_lossless_round(
         {
             "tier": "standard" if mixed_strategies else "fast",
             "clarification_allowed": False,
+            # The recheck stub admits restructure_lossless, which lives in
+            # the faithful_transform bundle.
+            "improvement_style": "faithful_transform",
         },
     )
 

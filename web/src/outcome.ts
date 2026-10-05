@@ -137,6 +137,13 @@ export function outcomeOf(result: OptimizeResult): Outcome {
         "Every rewrite was tested, but none passed verification while changing your prompt. Your original prompt is unchanged — retrying gives the models another chance.",
     };
   }
+  if (status === "impossible") {
+    return {
+      headline: "Style and requirements cannot both be satisfied",
+      reason:
+        "The chosen improvement style would have to rewrite an exact literal your prompt requires verbatim, so nothing was changed and no violation was emitted. Resubmit with a compatible style, or relax the exact-output requirement.",
+    };
+  }
   if (!result.original_kept)
     return { headline: "Optimized prompt", reason: null };
   const gaps = confirmedGaps(result);
