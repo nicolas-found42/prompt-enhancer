@@ -7,12 +7,12 @@ cannot steer the request or leak into the wrong field.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from typing import Any
 
 from .catalog import DEFAULT_GO_WRITER
 from .gateway import Gateway, completion_text, writer_messages
+from .reply_json import parse_reply_json
 from .styles import validated_style_authorization
 
 # Version 1 is the historical request without diagnosis; version 2 adds it;
@@ -120,7 +120,13 @@ class CandidateWriter:
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"
         )
-        payload = json.loads(completion_text(response))
+        payload = parse_reply_json(
+            completion_text(response),
+            accept=lambda value: (
+                isinstance(value, Mapping)
+                and all(strategy.name in value for strategy in request.strategies)
+            ),
+        )
         if not isinstance(payload, Mapping):
             raise TypeError("candidate writer must return a JSON object")
         if any(

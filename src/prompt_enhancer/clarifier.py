@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -11,6 +10,7 @@ from .clarification import ClarificationPlan, GapAssessment, build_plan
 from .diagnosis import ConfirmedGap
 from .gateway import Gateway, completion_text, writer_messages
 from .jev import ChoiceDecision, JevResponseError, parse_decision
+from .reply_json import parse_reply_json
 
 
 class Clarifier:
@@ -45,7 +45,10 @@ class Clarifier:
                 role="writer",
                 run_id=run_id,
             )
-            payload = json.loads(completion_text(response))
+            payload = parse_reply_json(
+                completion_text(response),
+                accept=lambda value: isinstance(value, Mapping) and "gaps" in value,
+            )
             if isinstance(payload, Mapping) and isinstance(
                 payload.get("gaps"), Mapping
             ):

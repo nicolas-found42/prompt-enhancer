@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.success_tests import (
     SUCCESS_TEST_SCREEN_VERSION,
@@ -242,3 +244,97 @@ def test_only_exact_approved_screen_is_cached_for_its_snapshot() -> None:
     )
     assert changed_snapshot.screening_checks[0].cache_hit is False
     assert SUCCESS_TEST_SCREEN_VERSION == first.screening_version
+
+
+def _accepting_gateway(reply: str) -> ScriptedGateway:
+    return ScriptedGateway(
+        chat=lambda *_args, **_kwargs: reply,
+        decision=lambda request, **_kwargs: {
+            "type": "noul",
+            "noul": 0.0 if request["key"].endswith("evaluator_instructions") else 0.99,
+            "confidence": 0.99,
+        },
+    )
+
+
+_ONE_TEST = json.dumps(
+    {
+        "tests": [
+            {
+                "question": "Does the summary run to two sentences?",
+                "kind": "noul",
+                "expected": "yes",
+            }
+        ]
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        f"Here are the success tests:\n\n{_ONE_TEST}",
+        f"```json\n{_ONE_TEST}\n```\nThese cover the length rule.",
+        f"Sure! {_ONE_TEST} Let me know if you want more.",
+        f"{_ONE_TEST}}}",
+        f"{_ONE_TEST})",
+        f"{_ONE_TEST}.",
+    ],
+    ids=[
+        "prose-before",
+        "fence-and-prose-after",
+        "prose-both-sides",
+        "stray-brace",
+        "stray-paren",
+        "stray-dot",
+    ],
+)
+def test_success_tests_are_read_from_a_reply_wrapped_in_prose(reply: str) -> None:
+    compiled = SuccessTestCompiler(_accepting_gateway(reply)).compile(
+        "Summarize the report in two sentences."
+    )
+
+    assert [test.question for test in compiled.tests] == [
+        "Does the summary run to two sentences?"
+    ]
+
+
+def test_an_unfinished_success_test_reply_after_prose_is_still_repaired() -> None:
+    unfinished = _ONE_TEST[:-2]
+    compiled = SuccessTestCompiler(
+        _accepting_gateway(f"Here you go: {unfinished}")
+    ).compile("Summarize the report in two sentences.")
+
+    assert [test.question for test in compiled.tests] == [
+        "Does the summary run to two sentences?"
+    ]
+
+
+def test_a_success_test_reply_without_json_still_fails_to_compile() -> None:
+    with pytest.raises(ValueError):
+        SuccessTestCompiler(
+            _accepting_gateway("I cannot write tests for that.")
+        ).compile("Summarize the report in two sentences.")
+
+
+@pytest.mark.parametrize("reply", ["[]", "```json\n[]\n```", "Here are the tests: []"])
+def test_empty_success_test_lists_compile_equally_with_and_without_wrappers(
+    reply: str,
+) -> None:
+    compiled = SuccessTestCompiler(_accepting_gateway(reply)).compile(
+        "Summarize the report."
+    )
+
+    assert compiled.tests == ()
+
+
+@pytest.mark.parametrize("missing", [1, 2])
+def test_fenced_success_test_replies_keep_final_delimiter_repair(missing: int) -> None:
+    reply = f"```json\n{_ONE_TEST[:-missing]}\n```"
+    compiled = SuccessTestCompiler(_accepting_gateway(reply)).compile(
+        "Summarize the report in two sentences."
+    )
+
+    assert [test.question for test in compiled.tests] == [
+        "Does the summary run to two sentences?"
+    ]

@@ -144,6 +144,12 @@ class RewordGateway(ScriptedGateway):
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
 
+class ProseWrappedRewordGateway(RewordGateway):
+    def _chat(self, model, messages, **kwargs):
+        reply = super()._chat(model, messages, **kwargs)
+        return f"Here are the alternatives you asked for:\n\n{reply}\n\nEnjoy!"
+
+
 def _store(path: Path) -> SQLiteRubricStore:
     store = SQLiteRubricStore(path)
     store.initialize(
@@ -1047,3 +1053,22 @@ def test_missing_pricing_dollar_limit_and_provider_failure_hold(tmp_path: Path) 
     )
     assert failed["status"] == "hold"
     assert "scripted" in failed["reason"]
+
+
+def test_reword_alternatives_are_read_from_a_reply_wrapped_in_prose(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path / "rubric.sqlite3")
+
+    result = optimize_reword(
+        store,
+        ProseWrappedRewordGateway(),
+        "task-clarity",
+        _dataset(),
+        attempt_id="wrapped",
+    )
+
+    assert result["status"] == "adopted"
+    question = store.active_rubric().question("task-clarity")
+    assert question is not None
+    assert question.text == ALTERNATIVE

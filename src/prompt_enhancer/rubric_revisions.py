@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from .catalog import DEFAULT_GO_WRITER
 from .gateway import Gateway, completion_text, writer_messages
+from .reply_json import parse_reply_json
 
 
 class RevisionKind(StrEnum):
@@ -402,7 +403,10 @@ class WriterRevisionProposer:
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"
         )
-        payload = json.loads(completion_text(response))
+        payload = parse_reply_json(
+            completion_text(response),
+            accept=lambda value: isinstance(value, Mapping) and "suggestions" in value,
+        )
         suggestions = (
             payload.get("suggestions") if isinstance(payload, Mapping) else None
         )
