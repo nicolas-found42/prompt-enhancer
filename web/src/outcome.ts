@@ -91,6 +91,48 @@ export function failureOf(result: OptimizeResult): Failure {
   };
 }
 
+export type Pause = {
+  reason: string;
+  limit: number | null;
+  spent_usd: number;
+  elapsed_ms: number;
+  completed_rounds: number;
+};
+
+/** A budget pause awaiting approval, or null when the run is not paused. */
+export function pauseOf(result: OptimizeResult): Pause | null {
+  if (result.status !== "needs_input") return null;
+  if (String(result.report.status ?? "") !== "awaiting_approval") return null;
+  const pause = record(result.report.pause);
+  const spent = typeof pause.spent_usd === "number" ? pause.spent_usd : NaN;
+  if (!Number.isFinite(spent)) return null;
+  const limit = typeof pause.limit === "number" ? pause.limit : null;
+  const elapsed =
+    typeof pause.elapsed_ms === "number" ? Math.max(0, pause.elapsed_ms) : 0;
+  const rounds =
+    typeof pause.completed_rounds === "number"
+      ? Math.max(0, Math.floor(pause.completed_rounds))
+      : 0;
+  return {
+    reason: typeof pause.reason === "string" ? pause.reason : "limit",
+    limit,
+    spent_usd: spent,
+    elapsed_ms: elapsed,
+    completed_rounds: rounds,
+  };
+}
+
+export function pauseText(pause: Pause): string {
+  const limit =
+    pause.reason === "spend_limit" && pause.limit !== null
+      ? `spend limit of $${pause.limit.toFixed(2)}`
+      : pause.reason === "time_limit" && pause.limit !== null
+        ? `time limit of ${pause.limit}s`
+        : "limit";
+  const rounds = `${pause.completed_rounds} completed round${pause.completed_rounds === 1 ? "" : "s"}`;
+  return `Paused after ${rounds} at your ${limit} ($${pause.spent_usd.toFixed(4)} spent).`;
+}
+
 export type Outcome = { headline: string; reason: string | null };
 
 /** Choose the result headline from the evidence rather than from `original_kept` alone. */

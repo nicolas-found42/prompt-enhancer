@@ -47,7 +47,7 @@ from .diagnosis import (
     GapImpact,
     split_sentences,
 )
-from .failures import describe_failure
+from .failures import RunCancelled, describe_failure
 from .gateway import (
     Gateway,
     GatewayConfig,
@@ -64,13 +64,33 @@ from .models import (
     new_run_id,
     utc_now,
 )
-from .repeat import RepeatCoordinator, RoundRequest, RoundRunner
+from .repeat import (
+    RepeatCoordinator,
+    RoundEvidence,
+    RoundRequest,
+    RoundRunner,
+    _history_from_run,
+)
 from .rewrite import (
     CURRENT_WRITER_INSTRUCTION_VERSION,
     WRITER_INSTRUCTION_VERSIONS,
 )
 from .rounds import RoundOutcome, RoundPlan, prompt_diff, run_round
 from .rubric_revisions import SQLiteRubricStore
+from .run_control import (
+    PAUSED_REPORT_STATUS,
+    RESUME_CONTEXT_KEY,
+    BudgetPaused,
+    RoundTracker,
+    RunControl,
+    RunControlState,
+    as_optimize_result,
+    build_cancelled_result,
+    build_paused_result,
+    build_stopped_result,
+    resume_context,
+    take_resume_context,
+)
 from .settings import ModelDefaults, SettingsStore
 from .store import RunStore
 from .styles import parse_improvement_style
@@ -233,6 +253,9 @@ class PromptOptimizer:
         self.repeat = RepeatCoordinator()
         self._progress: ProgressCallback | None = None
         self._round: dict[str, int] = {}
+        self._scope_perf: float | None = None
+        self._scope_cost_base: float = 0.0
+        self._scope_elapsed_base_ms: int = 0
         self._clarification = ClarificationService(
             self._clarification_repository(),
             continuation=self._continue_clarification,
@@ -422,22 +445,63 @@ class PromptOptimizer:
             supplied_options.get("improvement_style", "auto")
         )
         supplied_options["improvement_style"] = style
+        # Optional run-control limits ride along in the options; reject an
+        # invalid limit here so callers fail fast with a ValueError.
+        RunControl.from_options(supplied_options)
         run_settings = self._run_settings(supplied_options, tier)
         run_seed = _run_seed(prompt, supplied_options.get("seed"))
         return supplied_options, tier, run_settings, run_seed
 
     @contextmanager
-    def _progress_scope(self, progress: ProgressCallback | None) -> Iterator[None]:
-        previous, previous_round = self._progress, self._round
+    def _progress_scope(
+        self,
+        progress: ProgressCallback | None,
+        *,
+        started_perf: float | None = None,
+        cost_base: float = 0.0,
+        elapsed_base_ms: int = 0,
+    ) -> Iterator[None]:
+        previous = (
+            self._progress,
+            self._round,
+            self._scope_perf,
+            self._scope_cost_base,
+            self._scope_elapsed_base_ms,
+        )
         self._progress, self._round = progress, {}
+        self._scope_perf = started_perf
+        self._scope_cost_base = cost_base
+        self._scope_elapsed_base_ms = elapsed_base_ms
         try:
             yield
         finally:
-            self._progress, self._round = previous, previous_round
+            (
+                self._progress,
+                self._round,
+                self._scope_perf,
+                self._scope_cost_base,
+                self._scope_elapsed_base_ms,
+            ) = previous
 
     def _stage(self, name: str) -> None:
         if self._progress is not None:
-            self._progress(name, dict(self._round))
+            payload: dict[str, Any] = dict(self._round)
+            if self._scope_perf is not None:
+                payload["elapsed_ms"] = self._scope_elapsed_base_ms + max(
+                    0, round((perf_counter() - self._scope_perf) * 1000)
+                )
+                payload["cost_total"] = max(
+                    0.0, self._scope_cost_base + self._current_usage_total()
+                )
+            self._progress(name, payload)
+
+    def _current_usage_total(self) -> float:
+        try:
+            report = self.gateway.usage_report() or {}
+            total = report.get("total", 0.0)
+            return float(total) if isinstance(total, (int, float)) else 0.0
+        except Exception:  # noqa: BLE001 - progress must never fail a run
+            return 0.0
 
     def optimize(
         self,
@@ -454,7 +518,7 @@ class PromptOptimizer:
         self.gateway.new_run(run_id)
 
         try:
-            with self._progress_scope(progress):
+            with self._progress_scope(progress, started_perf=started_perf):
                 result = self._optimize_started(
                     prompt,
                     supplied_options,
@@ -594,6 +658,10 @@ class PromptOptimizer:
             ),
             tier,
             prior_failures=options.get("prior_round_failures", ()),
+            control=RunControl.from_options(options),
+            options=options,
+            started_perf=started_perf,
+            started_at=started_at,
         )
 
     def _round_executor(self, context: _RunContext) -> RoundRunner:
@@ -630,15 +698,95 @@ class PromptOptimizer:
         tier: str,
         *,
         prior_failures: Any = (),
+        prior_history: tuple[RoundEvidence, ...] = (),
+        tracker: RoundTracker | None = None,
+        control: RunControl | None = None,
+        options: Mapping[str, Any] | None = None,
+        started_perf: float | None = None,
+        started_at: str | None = None,
+        cost_base: float = 0.0,
+        elapsed_base_ms: int = 0,
     ) -> OptimizeResult:
-        repeated = self.repeat.run(
+        active = tracker if tracker is not None else RoundTracker()
+        state = RunControlState(
+            control=control or RunControl(),
+            tracker=active,
+            usage_total=self._current_usage_total,
+            started_perf=started_perf if started_perf is not None else perf_counter(),
+            cost_base=cost_base,
+            elapsed_base_ms=elapsed_base_ms,
+        )
+        base_execute = self._round_executor(context)
+
+        def execute_round(request: RoundRequest) -> RoundOutcome:
+            outcome = base_execute(request)
+            state.note_completed(request, outcome)
+            return outcome
+
+        try:
+            repeated = self.repeat.run(
+                run_id=context.run_id,
+                prompt=context.prompt,
+                tier=tier,
+                execute_round=execute_round,
+                initial_failures=prior_failures,
+                prior_history=prior_history,
+            )
+        except BudgetPaused as paused:
+            return self._paused_result(
+                context, tier, state, paused, options, started_at
+            )
+        except RunCancelled:
+            return as_optimize_result(
+                build_cancelled_result(
+                    run_id=context.run_id,
+                    prompt=context.prompt,
+                    tracker=active,
+                    cost=self._usage_cost(),
+                    timing={
+                        "total_ms": state.elapsed_ms(),
+                        "started_at": started_at or utc_now(),
+                        "finished_at": utc_now(),
+                    },
+                )
+            )
+        return cast(OptimizeResult, repeated.as_payload())
+
+    def _paused_result(
+        self,
+        context: _RunContext,
+        tier: str,
+        state: RunControlState,
+        paused: BudgetPaused,
+        options: Mapping[str, Any] | None,
+        started_at: str | None,
+    ) -> OptimizeResult:
+        payload = build_paused_result(
             run_id=context.run_id,
             prompt=context.prompt,
-            tier=tier,
-            execute_round=self._round_executor(context),
-            initial_failures=prior_failures,
+            models=context.settings.model_roles(),
+            diagnosis=context.diagnosis,
+            assumptions=context.assumptions,
+            tracker=state.tracker,
+            control=state.control,
+            paused=paused,
+            cost=self._usage_cost(),
+            timing={
+                "total_ms": state.elapsed_ms(),
+                "started_at": started_at or utc_now(),
+                "finished_at": utc_now(),
+            },
         )
-        return cast(OptimizeResult, repeated.as_payload())
+        payload[RESUME_CONTEXT_KEY] = resume_context(
+            tier=tier,
+            options={**(options or {}), "tier": tier},
+            diagnosis=context.diagnosis,
+            assumptions=context.assumptions,
+            seed=context.seed,
+            spent_usd=paused.spent_usd,
+            elapsed_ms=paused.elapsed_ms,
+        )
+        return as_optimize_result(payload)
 
     def _diagnose(self, prompt: str) -> DiagnosisReport | None:
         rubric = None
@@ -877,7 +1025,11 @@ class PromptOptimizer:
             state.get("metadata") if isinstance(state.get("metadata"), Mapping) else {}
         )
         tier = str((metadata or {}).get("tier", "standard"))
-        run_settings = self._run_settings((metadata or {}).get("options", {}), tier)
+        stored_options = (metadata or {}).get("options", {})
+        options: Mapping[str, Any] = (
+            stored_options if isinstance(stored_options, Mapping) else {}
+        )
+        run_settings = self._run_settings(options, tier)
         assumptions = state.get("assumptions", [])
         context = _RunContext(
             prompt,
@@ -887,9 +1039,16 @@ class PromptOptimizer:
             ),
             assumptions,
             run_settings,
-            _run_seed(prompt, (metadata or {}).get("options", {}).get("seed")),
+            _run_seed(prompt, options.get("seed")),
         )
-        return self._run_rounds(context, tier)
+        return self._run_rounds(
+            context,
+            tier,
+            control=RunControl.from_options(options),
+            options=options,
+            started_perf=perf_counter(),
+            started_at=utc_now(),
+        )
 
     def resume(
         self,
@@ -901,7 +1060,7 @@ class PromptOptimizer:
         usage_before = self._usage_cost()
         started_perf = perf_counter()
         try:
-            with self._progress_scope(progress):
+            with self._progress_scope(progress, started_perf=started_perf):
                 state = self._clarification.resume(run_id, answers)
         except UnknownRunError as exc:
             if self.store.get_run(run_id) is not None:
@@ -921,13 +1080,164 @@ class PromptOptimizer:
                 raise RunNotPausedError(f"Run {run_id!r} is not paused") from exc
             raise RunNotFoundError(run_id) from exc
 
+    def _paused_record(
+        self, run_id: str
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        """Return the record, result, and resume context of a budget-paused run."""
+        record = self.store.get_run(run_id)
+        if record is None:
+            raise RunNotFoundError(run_id)
+        raw_result = record.get("result")
+        result = dict(raw_result) if isinstance(raw_result, Mapping) else {}
+        raw_report = result.get("report")
+        report = raw_report if isinstance(raw_report, Mapping) else {}
+        if report.get("status") != PAUSED_REPORT_STATUS:
+            raise RunNotPausedError(f"Run {run_id!r} is not paused for approval")
+        raw_context = record.get(RESUME_CONTEXT_KEY)
+        if not isinstance(raw_context, Mapping):
+            raise RunNotPausedError(f"Run {run_id!r} has no resumable state")
+        return record, result, dict(raw_context)
+
+    def validate_continue(
+        self,
+        run_id: str,
+        time_limit_s: Any = None,
+        spend_limit_usd: Any = None,
+    ) -> None:
+        """Validate an approval request before its background job is queued."""
+        self._paused_record(run_id)
+        RunControl.from_options(
+            {"time_limit_s": time_limit_s, "spend_limit_usd": spend_limit_usd}
+        )
+
+    def continue_run(
+        self,
+        run_id: str,
+        *,
+        progress: ProgressCallback | None = None,
+        time_limit_s: Any = None,
+        spend_limit_usd: Any = None,
+    ) -> OptimizeResult:
+        """Resume a budget-paused run from its paused Round boundary.
+
+        Approval continues without the previous limits unless new ones are
+        supplied: spend only grows, so keeping the triggered limit would
+        pause again at the very next boundary.
+        """
+        record, paused_result, saved = self._paused_record(run_id)
+        control = RunControl.from_options(
+            {"time_limit_s": time_limit_s, "spend_limit_usd": spend_limit_usd}
+        )
+        options = dict(saved.get("options") or {})
+        tier = str(saved.get("tier") or "deep")
+        run_settings = self._run_settings(options, tier)
+        prompt = str(record.get("prompt") or "")
+        saved_diagnosis = saved.get("diagnosis")
+        diagnosis: Mapping[str, Any] = (
+            dict(saved_diagnosis)
+            if isinstance(saved_diagnosis, Mapping)
+            else {"confirmed_gaps": [], "problem_sentences": []}
+        )
+        saved_assumptions = saved.get("assumptions")
+        assumptions = (
+            list(saved_assumptions) if isinstance(saved_assumptions, list) else []
+        )
+        raw_seed = saved.get("seed")
+        seed = raw_seed if isinstance(raw_seed, int) else _run_seed(prompt, None)
+        context = _RunContext(
+            prompt, run_id, diagnosis, assumptions, run_settings, seed
+        )
+        prior_history = _history_from_run(paused_result)
+        tracker = RoundTracker.preload(
+            [evidence.to_dict() for evidence in prior_history],
+            str(paused_result.get("final_prompt") or prompt),
+            bool(paused_result.get("original_kept", True)),
+        )
+        usage_before = self._usage_cost()
+        cost_base = _mapping_total(record.get("cost")) - _mapping_total(usage_before)
+        elapsed_base_ms = int(saved.get("elapsed_ms", 0) or 0)
+        started_perf = perf_counter()
+        with self._progress_scope(
+            progress,
+            started_perf=started_perf,
+            cost_base=cost_base,
+            elapsed_base_ms=elapsed_base_ms,
+        ):
+            result = dict(
+                self._run_rounds(
+                    context,
+                    tier,
+                    tracker=tracker,
+                    control=control,
+                    options=options,
+                    prior_history=prior_history,
+                    started_perf=started_perf,
+                    started_at=str(record.get("created_at") or utc_now()),
+                    cost_base=cost_base,
+                    elapsed_base_ms=elapsed_base_ms,
+                )
+            )
+        raw_timing = result.get("timing")
+        timing = dict(raw_timing) if isinstance(raw_timing, Mapping) else {}
+        timing["total_ms"] = int(timing.get("total_ms", 0) or 0) + elapsed_base_ms
+        result["timing"] = timing
+        result["cost"] = _add_usage_delta(
+            dict(record.get("cost") or {}), usage_before, self._usage_cost()
+        )
+        return self._save_continued_run(record, cast(OptimizeResult, result))
+
+    def stop_run(self, run_id: str) -> OptimizeResult:
+        """Permanently stop a budget-paused run, keeping completed rounds."""
+        record, paused_result, _saved = self._paused_record(run_id)
+        timing = dict(paused_result.get("timing") or {})
+        timing["finished_at"] = utc_now()
+        stored_cost = record.get("cost")
+        stopped = build_stopped_result(
+            paused_result=paused_result,
+            cost=dict(stored_cost)
+            if isinstance(stored_cost, Mapping)
+            else dict(paused_result.get("cost") or {}),
+            timing=timing,
+        )
+        return self._save_continued_run(record, as_optimize_result(stopped))
+
+    def _save_continued_run(
+        self,
+        record: Mapping[str, Any],
+        result: OptimizeResult,
+        *,
+        tier: str | None = None,
+        options: Mapping[str, Any] | None = None,
+    ) -> OptimizeResult:
+        resume_ctx = take_resume_context(cast(dict[str, Any], result))
+        evidence = self._training_evidence(result, record)
+        self._attach_jev_evidence(result, evidence)
+        cleaned = {
+            key: value for key, value in record.items() if key != RESUME_CONTEXT_KEY
+        }
+        saved: dict[str, Any] = {
+            **cleaned,
+            "result": result,
+            "cost": result.get("cost", cleaned.get("cost", {})),
+            "timing": result.get("timing", cleaned.get("timing", {})),
+            **evidence,
+        }
+        if tier is not None:
+            saved["tier"] = tier
+        if options is not None:
+            saved["options"] = dict(options)
+        if resume_ctx is not None:
+            saved[RESUME_CONTEXT_KEY] = resume_ctx
+        self.store.save_run(saved)
+        return result
+
     def skip_clarification(
         self, run_id: str, *, progress: ProgressCallback | None = None
     ) -> OptimizeResult:
         usage_before = self._usage_cost()
         started_perf = perf_counter()
         try:
-            with self._progress_scope(progress):
+            with self._progress_scope(progress, started_perf=started_perf):
                 state = self._clarification.skip(run_id)
         except UnknownRunError as exc:
             if self.store.get_run(run_id) is not None:
@@ -949,6 +1259,7 @@ class PromptOptimizer:
             raise RunNotFoundError(run_id)
         result = dict(result)
         result["timing"] = _finished_timing(result.get("timing"), started_perf)
+        resume_ctx = take_resume_context(result)
         record = self.store.get_run(run_id)
         if record is not None:
             result["cost"] = _add_usage_delta(
@@ -956,15 +1267,16 @@ class PromptOptimizer:
             )
             evidence = self._training_evidence(result, record)
             self._attach_jev_evidence(cast(OptimizeResult, result), evidence)
-            self.store.save_run(
-                {
-                    **record,
-                    "result": result,
-                    "cost": result.get("cost", record.get("cost", {})),
-                    "timing": result.get("timing", record.get("timing", {})),
-                    **evidence,
-                }
-            )
+            saved: dict[str, Any] = {
+                **record,
+                "result": result,
+                "cost": result.get("cost", record.get("cost", {})),
+                "timing": result.get("timing", record.get("timing", {})),
+                **evidence,
+            }
+            if resume_ctx is not None:
+                saved[RESUME_CONTEXT_KEY] = resume_ctx
+            self.store.save_run(saved)
         return cast(OptimizeResult, result)
 
     def update_assumption(
@@ -1052,7 +1364,7 @@ class PromptOptimizer:
         self, run_id: str, *, progress: ProgressCallback | None = None
     ) -> OptimizeResult:
         started_perf = perf_counter()
-        with self._progress_scope(progress):
+        with self._progress_scope(progress, started_perf=started_perf):
             result = self._start_deep_pass(run_id)
         result["timing"] = _finished_timing(result.get("timing"), started_perf)
         return result
@@ -1083,21 +1395,61 @@ class PromptOptimizer:
         deep_options["tier"] = "deep"
         run_settings = self._run_settings(deep_options, "deep")
         prior_report = dict((record.get("result") or {}).get("report") or {})
-        repeated = self.repeat.deep_pass(
-            detail,
-            self._round_executor(
-                _RunContext(
-                    str(record["prompt"]),
-                    run_id,
-                    prior_report.get("diagnosis", {}),
-                    prior_report.get("assumptions", []),
-                    run_settings,
-                    _run_seed(
-                        str(record["prompt"]), (record.get("options") or {}).get("seed")
-                    ),
-                )
-            ),
+        deep_context = _RunContext(
+            str(record["prompt"]),
+            run_id,
+            prior_report.get("diagnosis", {}),
+            prior_report.get("assumptions", []),
+            run_settings,
+            _run_seed(str(record["prompt"]), (record.get("options") or {}).get("seed")),
         )
+        prior_result = record.get("result")
+        prior_result_map = prior_result if isinstance(prior_result, Mapping) else {}
+        deep_tracker = RoundTracker.preload(
+            [evidence.to_dict() for evidence in _history_from_run(prior_result_map)],
+            str(prior_result_map.get("final_prompt") or record["prompt"]),
+            bool(prior_result_map.get("original_kept", True)),
+        )
+        deep_state = RunControlState(
+            control=RunControl.from_options(deep_options),
+            tracker=deep_tracker,
+            usage_total=self._current_usage_total,
+            started_perf=perf_counter(),
+        )
+        base_execute = self._round_executor(deep_context)
+
+        def execute_deep_round(request: RoundRequest) -> RoundOutcome:
+            outcome = base_execute(request)
+            deep_state.note_completed(request, outcome)
+            return outcome
+
+        try:
+            repeated = self.repeat.deep_pass(detail, execute_deep_round)
+        except BudgetPaused as paused:
+            interrupted = self._paused_result(
+                deep_context, "deep", deep_state, paused, deep_options, None
+            )
+            cast(dict[str, Any], interrupted)["cost"] = _add_usage_delta(
+                prior_cost, {"total": 0.0}, self._usage_cost()
+            )
+            return self._save_continued_run(record, interrupted, options=deep_options)
+        except RunCancelled:
+            cancelled = as_optimize_result(
+                build_cancelled_result(
+                    run_id=run_id,
+                    prompt=str(record["prompt"]),
+                    tracker=deep_tracker,
+                    cost=_add_usage_delta(
+                        prior_cost, {"total": 0.0}, self._usage_cost()
+                    ),
+                    timing={
+                        "total_ms": deep_state.elapsed_ms(),
+                        "started_at": utc_now(),
+                        "finished_at": utc_now(),
+                    },
+                )
+            )
+            return self._save_continued_run(record, cancelled, options=deep_options)
         result = cast(OptimizeResult, repeated.as_payload())
         result["cost"] = cast(
             CostBreakdown,
@@ -1159,21 +1511,23 @@ class PromptOptimizer:
         result: OptimizeResult,
         created_at: str,
     ) -> None:
+        resume_ctx = take_resume_context(cast(dict[str, Any], result))
         evidence = self._training_evidence(result)
         self._attach_jev_evidence(result, evidence)
-        self.store.save_run(
-            {
-                "run_id": result["run_id"],
-                "created_at": created_at,
-                "prompt": prompt,
-                "tier": tier,
-                "options": {**options, "tier": tier},
-                "result": result,
-                "cost": result["cost"],
-                "timing": result["timing"],
-                **evidence,
-            }
-        )
+        record: dict[str, Any] = {
+            "run_id": result["run_id"],
+            "created_at": created_at,
+            "prompt": prompt,
+            "tier": tier,
+            "options": {**options, "tier": tier},
+            "result": result,
+            "cost": result["cost"],
+            "timing": result["timing"],
+            **evidence,
+        }
+        if resume_ctx is not None:
+            record[RESUME_CONTEXT_KEY] = resume_ctx
+        self.store.save_run(record)
 
     def _training_evidence(
         self, result: Mapping[str, Any], previous: Mapping[str, Any] | None = None
@@ -1274,6 +1628,15 @@ def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
     if not lines:
         return prompt
     return prompt.rstrip() + "\n\nClarifications:\n" + "\n".join(lines)
+
+
+def _mapping_total(report: Any) -> float:
+    if not isinstance(report, Mapping):
+        return 0.0
+    total = report.get("total", 0.0)
+    if isinstance(total, bool) or not isinstance(total, (int, float)):
+        return 0.0
+    return float(total)
 
 
 def _add_usage_delta(

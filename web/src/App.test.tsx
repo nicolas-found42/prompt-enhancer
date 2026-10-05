@@ -523,7 +523,8 @@ describe("improvement style selector", () => {
       expect(startOptimize).toHaveBeenCalledWith(
         "Write a note to my neighbour.",
         "shorter",
-        expect.anything()
+        expect.anything(),
+        undefined
       )
     );
   });

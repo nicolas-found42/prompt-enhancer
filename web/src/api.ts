@@ -121,13 +121,15 @@ export type OptimizeResult = {
 export type JobRound = { round?: number; max_rounds?: number };
 export type Job = {
   run_id: string;
-  kind: "optimize" | "resume" | "skip" | "deep";
+  kind: "optimize" | "resume" | "skip" | "deep" | "continue";
   prompt?: string;
   state: "queued" | "running" | "done";
   stage: string | null;
   round: JobRound;
   stages_seen: string[];
   elapsed_ms: number;
+  /** Accumulated provider cost in USD from the run's progress events. */
+  cost_total?: number;
   cancel_requested: boolean;
   result: OptimizeResult | null;
 };
@@ -207,15 +209,27 @@ function postJson<T>(url: string, body?: unknown): Promise<T> {
   });
 }
 
+export type RunLimits = {
+  time_limit_s?: number;
+  spend_limit_usd?: number;
+};
+
 export function startOptimize(
   prompt: string,
   improvementStyle: string,
-  modelOverrides?: ModelSelection
+  modelOverrides?: ModelSelection,
+  limits?: RunLimits
 ): Promise<Job> {
   return postJson<Job>("/api/jobs/optimize", {
     prompt,
     improvement_style: improvementStyle,
     model_overrides: modelOverrides,
+    ...(limits?.time_limit_s != null
+      ? { time_limit_s: limits.time_limit_s }
+      : {}),
+    ...(limits?.spend_limit_usd != null
+      ? { spend_limit_usd: limits.spend_limit_usd }
+      : {}),
   });
 }
 
@@ -234,6 +248,23 @@ export function startSkip(runId: string): Promise<Job> {
 
 export function startDeep(runId: string): Promise<Job> {
   return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/deep`);
+}
+
+export function startContinue(runId: string, limits?: RunLimits): Promise<Job> {
+  return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/continue`, {
+    ...(limits?.time_limit_s != null
+      ? { time_limit_s: limits.time_limit_s }
+      : {}),
+    ...(limits?.spend_limit_usd != null
+      ? { spend_limit_usd: limits.spend_limit_usd }
+      : {}),
+  });
+}
+
+export function stopRun(runId: string): Promise<OptimizeResult> {
+  return postJson<OptimizeResult>(
+    `/api/runs/${encodeURIComponent(runId)}/stop`
+  );
 }
 
 export function getJob(runId: string): Promise<Job> {

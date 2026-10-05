@@ -19,10 +19,12 @@ import {
   getRunResult,
   getSettings,
   saveSettings,
+  startContinue,
   startDeep,
   startOptimize,
   startResume,
   startSkip,
+  stopRun,
   updateAssumption,
   type Assumption,
   type Job,
@@ -32,6 +34,7 @@ import {
   type ProviderReport,
   type PromptHealthResult,
   type PromptHealthSettings,
+  type RunLimits,
   type Tier,
   type TierEstimate,
 } from "./api";
@@ -50,6 +53,8 @@ import {
   failureOf,
   loopDescription,
   outcomeOf,
+  pauseOf,
+  pauseText,
   possibleGapHints,
   record,
   roughCost,
@@ -318,6 +323,7 @@ export default function App() {
   const pausedDelay = useRef(HEALTH_RETRY_INITIAL_MS);
   const promptField = useRef<HTMLTextAreaElement | null>(null);
   const [style, setStyle] = useState<ImprovementStyle>("auto");
+  const [spendLimit, setSpendLimit] = useState("");
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
   const [historyNavigation, setHistoryNavigation] = useState(0);
@@ -341,6 +347,7 @@ export default function App() {
   const lastRequest = useRef<{
     prompt: string;
     style: ImprovementStyle;
+    spendLimit: string;
   } | null>(null);
   const composer = useRef<HTMLFormElement | null>(null);
   const draftWasSet = useRef(initialDraft.present);
@@ -553,11 +560,26 @@ export default function App() {
         })
         .catch((caught) => {
           if (caught instanceof ApiError && caught.status === 404) {
-            setJob(null);
-            rememberRun(null);
-            setError(
-              "The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again."
-            );
+            // The job is gone, but a budget-paused run survives a restart
+            // in history: offer its Continue/Stop choice instead of loss.
+            void getRunResult(runId)
+              .then((found) => {
+                const resumed = found.result ?? null;
+                setJob(null);
+                rememberRun(null);
+                if (resumed && pauseOf(resumed)) setResult(resumed);
+                else
+                  setError(
+                    "The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again."
+                  );
+              })
+              .catch(() => {
+                setJob(null);
+                rememberRun(null);
+                setError(
+                  "The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again."
+                );
+              });
           } else {
             setError(
               caught instanceof Error
@@ -595,10 +617,25 @@ export default function App() {
     }
   }
 
+  function runLimits(raw: string): RunLimits | undefined {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    const value = Number(trimmed);
+    if (!Number.isFinite(value) || value < 0) return undefined;
+    return { spend_limit_usd: value };
+  }
+
   function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
-    lastRequest.current = { prompt, style };
-    void begin(() => startOptimize(prompt, style, selection ?? undefined));
+    if (spendLimit.trim() && !runLimits(spendLimit)) {
+      setError("Spend limit must be a number of dollars, at least 0.");
+      return;
+    }
+    lastRequest.current = { prompt, style, spendLimit };
+    const limits = runLimits(spendLimit);
+    void begin(() =>
+      startOptimize(prompt, style, selection ?? undefined, limits)
+    );
   }
 
   function retry() {
@@ -606,8 +643,15 @@ export default function App() {
     if (previous) {
       changeDraft(previous.prompt);
       setStyle(previous.style);
+      setSpendLimit(previous.spendLimit);
+      const limits = runLimits(previous.spendLimit);
       void begin(() =>
-        startOptimize(previous.prompt, previous.style, selection ?? undefined)
+        startOptimize(
+          previous.prompt,
+          previous.style,
+          selection ?? undefined,
+          limits
+        )
       );
     } else {
       submit();
@@ -622,6 +666,21 @@ export default function App() {
       setError(
         caught instanceof Error ? caught.message : "Unable to cancel the run."
       );
+    }
+  }
+
+  async function stopPaused() {
+    if (!result) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setResult(await stopRun(result.run_id));
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Unable to stop the run."
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -773,6 +832,7 @@ export default function App() {
 
   const questions: ClarificationQuestion[] =
     !job && result?.status === "needs_input" ? (result.questions ?? []) : [];
+  const paused = !job && result ? pauseOf(result) : null;
   const assumptions = useMemo(
     () => (result ? reportAssumptions(result) : []),
     [result]
@@ -913,6 +973,21 @@ export default function App() {
             {job ? "Optimizing…" : "Optimize prompt"}
           </button>
         </div>
+        <div className="form-actions">
+          <label className="limit-label" htmlFor="spend-limit">
+            Spend limit (USD, optional)
+            <input
+              id="spend-limit"
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={spendLimit}
+              onChange={(event) => setSpendLimit(event.target.value)}
+              placeholder="No limit"
+            />
+          </label>
+        </div>
         {!prompt.trim() && (
           <p className="composer-hint" id="optimize-hint">
             Enter a prompt to enable Optimize prompt.
@@ -958,6 +1033,37 @@ export default function App() {
           onCancel={() => void cancel()}
         />
       )}
+
+      {paused ? (
+        <section
+          id="paused-panel"
+          className="result paused"
+          aria-live="polite"
+          tabIndex={-1}
+        >
+          <p className="eyebrow">PAUSED</p>
+          <h2>Paused at your limit</h2>
+          <p>{pauseText(paused)}</p>
+          <div className="paused-actions">
+            <button
+              className="primary"
+              type="button"
+              disabled={busy}
+              onClick={() => void begin(() => startContinue(result!.run_id))}
+            >
+              Continue
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              disabled={busy}
+              onClick={() => void stopPaused()}
+            >
+              Stop
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {questions.length > 0 ? (
         <ClarificationPanel

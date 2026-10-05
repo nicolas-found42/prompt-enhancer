@@ -31,6 +31,13 @@ class OptimizeRequest(BaseModel):
     options: dict[str, Any] = Field(default_factory=dict)
     model_overrides: dict[str, Any] = Field(default_factory=dict)
     clarification_allowed: bool | None = None
+    time_limit_s: float | None = None
+    spend_limit_usd: float | None = None
+
+
+class ContinueRequest(BaseModel):
+    time_limit_s: float | None = None
+    spend_limit_usd: float | None = None
 
 
 class AnswersRequest(BaseModel):
@@ -68,6 +75,10 @@ def _optimize_options(request: OptimizeRequest) -> dict[str, Any]:
     # Deep is the only workload: any tier smuggled in via options is ignored.
     options["tier"] = "deep"
     options["improvement_style"] = request.improvement_style
+    if request.time_limit_s is not None:
+        options["time_limit_s"] = request.time_limit_s
+    if request.spend_limit_usd is not None:
+        options["spend_limit_usd"] = request.spend_limit_usd
     if request.model_overrides:
         options["model_overrides"] = {
             **options.get("model_overrides", {}),
@@ -268,6 +279,32 @@ def create_app(
             lambda progress: app_optimizer.start_deep_pass(run_id, progress=progress),
         )
 
+    @app.post("/api/jobs/{run_id}/continue", status_code=202)
+    def start_continue(run_id: str, request: ContinueRequest) -> dict[str, Any]:
+        require_run(run_id)
+        try:
+            app_optimizer.validate_continue(
+                run_id,
+                time_limit_s=request.time_limit_s,
+                spend_limit_usd=request.spend_limit_usd,
+            )
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return submit(
+            run_id,
+            "continue",
+            lambda progress: app_optimizer.continue_run(
+                run_id,
+                progress=progress,
+                time_limit_s=request.time_limit_s,
+                spend_limit_usd=request.spend_limit_usd,
+            ),
+        )
+
     @app.get("/api/jobs")
     def active_jobs() -> list[dict[str, Any]]:
         return jobs.active()
@@ -353,6 +390,15 @@ def create_app(
     @app.post("/api/runs/{run_id}/resume")
     def resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:
         return continue_run(lambda: app_optimizer.resume(run_id, request.answers))
+
+    @app.post("/api/runs/{run_id}/stop")
+    def stop(run_id: str) -> dict[str, Any]:
+        try:
+            return dict(app_optimizer.stop_run(run_id))
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/optimize/resume/{run_id}")
     def optimize_resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:

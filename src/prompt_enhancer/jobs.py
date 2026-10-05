@@ -44,9 +44,16 @@ class _Job:
     finished_at: float | None = None
     result: Mapping[str, Any] | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
+    run_elapsed_ms: int | None = None
+    cost_total: float = 0.0
 
     def snapshot(self) -> dict[str, Any]:
         end = self.finished_at or time.time()
+        elapsed = (
+            self.run_elapsed_ms
+            if self.run_elapsed_ms is not None
+            else round((end - self.started_at) * 1000)
+        )
         return {
             "run_id": self.run_id,
             "kind": self.kind,
@@ -55,7 +62,8 @@ class _Job:
             "stage": self.stage,
             "round": dict(self.round),
             "stages_seen": list(self.stages_seen),
-            "elapsed_ms": round((end - self.started_at) * 1000),
+            "elapsed_ms": elapsed,
+            "cost_total": self.cost_total,
             "cancel_requested": self.cancel.is_set(),
             "result": self.result,
         }
@@ -98,8 +106,23 @@ class RunJobs:
         def progress(stage: str, round_info: Mapping[str, Any]) -> None:
             if job.cancel.is_set():
                 raise RunCancelled(job.run_id)
+            info = dict(round_info)
+            elapsed = info.pop("elapsed_ms", None)
+            cost = info.pop("cost_total", None)
             job.stage = stage
-            job.round = {str(key): int(value) for key, value in round_info.items()}
+            job.round = {
+                str(key): int(value)
+                for key, value in info.items()
+                if str(key) in {"round", "max_rounds"}
+            }
+            if isinstance(elapsed, bool):
+                pass
+            elif isinstance(elapsed, (int, float)):
+                job.run_elapsed_ms = max(0, int(elapsed))
+            if isinstance(cost, bool):
+                pass
+            elif isinstance(cost, (int, float)):
+                job.cost_total = max(0.0, float(cost))
             if stage not in job.stages_seen:
                 job.stages_seen.append(stage)
 

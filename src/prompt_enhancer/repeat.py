@@ -283,6 +283,7 @@ class RepeatCoordinator:
         answers: Mapping[str, str] | None = None,
         assumptions: Sequence[str] = (),
         initial_failures: Sequence[CandidateFailure | Mapping[str, Any] | str] = (),
+        prior_history: tuple[RoundEvidence, ...] = (),
     ) -> RepeatResult:
         selected_tier = Tier.parse(tier)
         workflow = WorkflowContext(
@@ -293,12 +294,18 @@ class RepeatCoordinator:
             answers=dict(answers or {}),
             assumptions=tuple(str(assumption) for assumption in assumptions),
         )
+        supplied = tuple(_supplied_failure(value) for value in initial_failures)
+        if not supplied and prior_history:
+            # Resuming from a paused boundary retries the last round's
+            # failures, the same way a Deep pass retries its source run.
+            supplied = prior_history[-1].candidate_failures
         history, outcome = _run_tier(
             execute_round,
             workflow,
             selected_tier,
-            history=(),
-            failures=tuple(_supplied_failure(value) for value in initial_failures),
+            history=prior_history,
+            failures=supplied,
+            tier_round_start=(prior_history[-1].tier_round + 1 if prior_history else 1),
         )
         original_kept = history[-1].original_kept
         # A round may decline the offer (``report.offer_deep`` false) when a
@@ -412,10 +419,11 @@ def _run_tier(
     *,
     history: tuple[RoundEvidence, ...],
     failures: tuple[CandidateFailure, ...],
+    tier_round_start: int = 1,
 ) -> tuple[tuple[RoundEvidence, ...], RoundOutcome]:
     """Run up to the tier's round limit, feeding each round the last one's failures."""
     next_round_number = history[-1].round_number + 1 if history else 1
-    tier_round = 1
+    tier_round = tier_round_start
     while True:
         request = RoundRequest(
             run_id=workflow.run_id,
