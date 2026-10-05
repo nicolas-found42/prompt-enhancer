@@ -324,6 +324,8 @@ def test_confirmed_answer_supports_an_authorized_gap_fill() -> None:
             probability = 0.99
         elif key == "gap:language":
             probability = 0.99
+        elif key.startswith("score:"):
+            probability = 0.99
         elif key.startswith("strategy_recheck:"):
             probability = float(key.endswith("add_missing_context"))
         else:
@@ -632,7 +634,7 @@ def test_clear_prompt_with_success_tests_is_still_rewritten() -> None:
         key = str(request.get("key", ""))
         probability = (
             1.0
-            if key.startswith(("faithful:", "fidelity:", "grade_"))
+            if key.startswith(("faithful:", "fidelity:", "grade_", "score:"))
             or (key == "strategy_recheck:add_missing_context")
             else 0.01
         )
@@ -704,7 +706,7 @@ def test_writer_choice_test_without_unknown_does_not_fail_run() -> None:
                 "type": "noul",
                 "probability_true": 1.0
                 if str(request.get("key", "")).startswith(
-                    ("faithful:", "fidelity:", "strategy_recheck:")
+                    ("faithful:", "fidelity:", "strategy_recheck:", "score:")
                 )
                 else 0.01,
                 "confidence": 1.0,
@@ -743,7 +745,7 @@ def test_writer_missing_final_json_delimiters_does_not_fail_run() -> None:
         probability = (
             1.0
             if str(request.get("key", "")).startswith(
-                ("faithful:", "fidelity:", "strategy_recheck:", "grade_")
+                ("faithful:", "fidelity:", "strategy_recheck:", "grade_", "score:")
             )
             else 0.01
         )
@@ -795,7 +797,7 @@ def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> N
         probability = (
             1.0
             if str(request.get("key", "")).startswith(
-                ("faithful:", "fidelity:", "strategy_recheck:", "grade_")
+                ("faithful:", "fidelity:", "strategy_recheck:", "grade_", "score:")
             )
             else 0.01
         )
@@ -870,7 +872,7 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
         probability = (
             1.0
             if key.startswith(
-                ("gap:goal", "faithful:", "strategy_recheck:", "fidelity:")
+                ("gap:goal", "faithful:", "strategy_recheck:", "fidelity:", "score:")
             )
             else 0.01
         )
@@ -979,7 +981,7 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
         probability = (
             1.0
             if key.startswith(
-                ("gap:goal", "faithful:", "strategy_recheck:", "fidelity:")
+                ("gap:goal", "faithful:", "strategy_recheck:", "fidelity:", "score:")
             )
             else 0.01
         )

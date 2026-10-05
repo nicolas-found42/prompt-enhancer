@@ -31,6 +31,7 @@ def _gateway(
     default_candidate: str | None = None,
     recheck_probability: float = 0.99,
     meaning_probability: float = 0.99,
+    score_probability: float = 0.99,
     support: str = "supported_by_original",
 ):
     """Scripted gateway covering the v4 keys plus the Understand/Route keys."""
@@ -111,6 +112,8 @@ def _gateway(
             probability = 0.01
         elif key.startswith("grade_"):
             probability = float(request["state"]["output"] == "pass")
+        elif key.startswith("score:"):
+            probability = score_probability
         else:
             probability = 0.01
         return {

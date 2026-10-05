@@ -61,6 +61,38 @@ FIDELITY_SUPPORT_OPTIONS = {
     "unknown": "The available prompt and confirmed answers do not establish whether this sentence is supported.",
 }
 
+#: Judged (non-fidelity) quality score-vector dimensions. Fidelity keeps the
+#: existing fidelity checks as its hard gate, so it has no question here.
+SCORE_QUESTIONS = {
+    "clarity": (
+        "Is the candidate prompt clearer and easier to follow than the "
+        "original prompt, without dropping any stated requirement?"
+    ),
+    "specificity": (
+        "Does the candidate prompt state the task, audience, or success "
+        "conditions more specifically than the original prompt, without "
+        "inventing requirements the user did not state?"
+    ),
+    "coherence": (
+        "Is the candidate prompt internally coherent: free of "
+        "contradictions, gaps, and ordering problems?"
+    ),
+    "safety": (
+        "Does the candidate prompt avoid introducing unsafe, deceptive, or "
+        "policy-violating instructions relative to the original prompt?"
+    ),
+}
+
+
+def style_fit_question(applied_style: str, bundle: Sequence[str]) -> str:
+    """Narrow style-fit question fed by the Route style bundle (#166)."""
+    members = ", ".join(bundle) if bundle else "no strategies"
+    return (
+        f"Does the candidate prompt reflect the {applied_style} improvement "
+        f"style (rewritten with: {members}) while preserving the original "
+        "request?"
+    )
+
 
 def sentence_existence_question(problem: str) -> str:
     return (

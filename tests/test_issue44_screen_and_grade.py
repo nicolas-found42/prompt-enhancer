@@ -105,6 +105,7 @@ def _run_screened_round(
     settings: Settings | None = None,
     confirmation_provider_error: bool = False,
     retry_count: int = 0,
+    score_probability: float = 1.0,
 ) -> tuple[dict[str, Any], list[list[dict[str, Any]]]]:
     batches: list[list[dict[str, Any]]] = []
     prompt = "Read the background notes. Summarize the report."
@@ -197,6 +198,8 @@ def _run_screened_round(
             ("gap:goal", "strategy_recheck:restructure_lossless", "fidelity:meaning")
         ):
             probability = 1.0
+        elif key.startswith("score:"):
+            probability = score_probability
         else:
             probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
