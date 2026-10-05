@@ -1,29 +1,40 @@
-## Agent skills
+# Prompt Enhancer agent guide
 
-### Branches
+Prompt Enhancer evaluates prompts with Jev and bounded rewrites. The Gateway is
+the engine's single route to model providers.
 
-When creating, naming, or checking a Git branch, use the `conventional-branch` skill.
+## Find the right guidance
 
-### Issue tracker
+- For domain changes, read [GLOSSARY-MAP.md](GLOSSARY-MAP.md), the relevant
+  glossary, and applicable [ADRs](docs/adr/). Use their terms and surface any
+  conflict with an accepted decision.
+- For setup, local servers, model configuration, and API behavior, use the
+  [README](README.md) and current code or configuration.
+- For GitHub issue work, use `gh` and read the
+  [issue tracker guide](docs/agents/issue-tracker.md) and
+  [triage labels](docs/agents/triage-labels.md). Before publishing an issue,
+  apply the `issue-authoring` skill.
 
-Issues live in GitHub Issues for `nicolas-found42/prompt-enhancer`; use the `gh` CLI. See `docs/agents/issue-tracker.md`.
+- For Gateway recordings or request-hash audit claims, follow the
+  [capture integrity procedure](docs/agents/capture-audits.md).
 
-Whenever creating an issue, read and apply the `issue-authoring` skill at `~/.agents/skills/issue-authoring/SKILL.md` before publishing it.
+## Change and verify
 
-### Triage labels
+- When creating a branch, use a short lowercase kebab-case name. Prefix Codex
+  task branches with `codex/`; otherwise use a conventional type prefix. Preserve
+  a branch name supplied by the user.
+- Before handing off changes, follow the
+  [validation workflow](docs/agents/validation.md).
+- For source or test changes, branch reviews, or changes to Jev review tooling,
+  follow the [semantic review procedure](docs/quality-review.md#agent-procedure).
+  Jev findings are advisory; deterministic checks decide completion.
+- Before pulling into a checkout with local changes, follow the
+  [WIP-preserving pull procedure](docs/agents/branch-cleanup.md#pull-main-while-retaining-wip).
+- For merged-PR cleanup or worktree removal, follow the
+  [cleanup guide](docs/agents/branch-cleanup.md).
 
-Use the five canonical labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-This is a multi-context repository: start with `GLOSSARY-MAP.md`, then see `docs/agents/domain.md`.
-
-### Code quality and review
-
-Before handing off changes or declaring a PR ready, follow [docs/agents/validation.md](docs/agents/validation.md) for pre-commit installation, local checks, CI-only checks, CodeQL, and the validation report.
-
-When changing source code or tests, reviewing a branch, or modifying Jev review tooling, also follow the [Jev agent procedure](docs/quality-review.md#agent-procedure) for comparison bases, offline/live review, and finding triage. Semantic findings remain advisory alongside the deterministic checks.
-
-### Merged PR cleanup
-
-After a PR merges, follow [docs/agents/branch-cleanup.md](docs/agents/branch-cleanup.md) to sync local `main` and prune its branch and worktree.
+Keep credentials in the ignored `.env` and server-side. Make live model calls
+only when the task has authorized them; never expose credentials in arguments,
+logs, fixtures, or committed files.
+Stop and ask before reading or writing real credentials or weakening a
+deterministic check.
