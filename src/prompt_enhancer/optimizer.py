@@ -48,6 +48,7 @@ from .diagnosis import (
     split_sentences,
 )
 from .failures import RunCancelled, describe_failure
+from .feedback_labels import calibrate_score_floors as calibrate_feedback_floors
 from .gateway import (
     Gateway,
     GatewayConfig,
@@ -229,10 +230,19 @@ class PromptOptimizer:
             else None
         )
         if self.settings_store is not None:
-            defaults = self.settings_store.load().defaults
+            saved_settings = self.settings_store.load()
+            defaults = saved_settings.defaults
             self.config.writer_model = defaults.writer
             self.config.strong_check_model = defaults.strong
             self.config.weak_models = defaults.weak
+            for dimension, floor in (saved_settings.score_floors or {}).items():
+                if dimension in self.config.score_floors:
+                    try:
+                        numeric_floor = float(floor)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0.0 <= numeric_floor <= 1.0:
+                        setattr(self.config, f"score_floor_{dimension}", numeric_floor)
         self.gateway: Gateway = (
             gateway if gateway is not None else self._default_gateway()
         )
@@ -320,6 +330,24 @@ class PromptOptimizer:
 
     def get_model_settings(self) -> dict[str, Any]:
         return self.config.public_dict()
+
+    def recalibrate_score_floors(self) -> dict[str, Any]:
+        """Explicitly recompute, persist, and activate floors from run feedback."""
+        from .config import Settings as DefaultSettings
+
+        result = calibrate_feedback_floors(
+            self.history.all_runs(),
+            self.config.score_floors,
+            conservative_floors=DefaultSettings().score_floors,
+        )
+        if result.applied:
+            for dimension, floor in result.adjusted_floors.items():
+                setattr(self.config, f"score_floor_{dimension}", floor)
+        if self.settings_store is not None:
+            self.settings_store.update_score_floors(
+                result.adjusted_floors, result.to_dict()
+            )
+        return {**result.to_dict(), "active_floors": self.config.score_floors}
 
     def update_model_settings(self, values: Mapping[str, Any]) -> dict[str, Any]:
         if "judge_model" in values and values["judge_model"] != self.config.judge_model:

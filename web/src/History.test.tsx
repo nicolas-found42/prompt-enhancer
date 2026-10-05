@@ -211,6 +211,24 @@ it("shows one final prompt with additions highlighted when the original was kept
   ).toHaveTextContent("Clarifications: Keep it under 120 words.");
 });
 
+it("shows weak dimensions linked to a rejected winner in history", async () => {
+  await openRunDetails({
+    ...savedRun,
+    status: "completed",
+    original_prompt: savedRun.prompt,
+    final_prompt: "Write a concise reply.",
+    feedback: "reject",
+    feedback_labels: {
+      status: "linked",
+      weak_dimensions: ["clarity", "specificity"],
+    },
+  });
+
+  expect(
+    screen.getByText("Weak dimensions: clarity, specificity.")
+  ).toBeVisible();
+});
+
 it("does not label an untested run with confirmed details as improved", async () => {
   await openRunDetails({
     ...savedRun,

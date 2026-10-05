@@ -9,11 +9,18 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Collection, Mapping
+from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from prompt_enhancer.api import create_app
 from prompt_enhancer.config import Settings
 from prompt_enhancer.gateway import ScriptedGateway
+from prompt_enhancer.history import RunHistory
+from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.rounds import RoundPlan, run_round
 from prompt_enhancer.score_vector import SCORE_DIMENSIONS, ScoreVector
+from prompt_enhancer.store import RunStore
 
 PROMPT = "Summarize the report."
 GAPS = {
@@ -143,6 +150,68 @@ def test_every_candidate_carries_a_six_dimension_vector() -> None:
         assert all(0.0 <= score <= 1.0 for score in vector["scores"].values())
         assert vector["breaches"] == []
         assert vector["passed"] is True
+
+
+def test_later_round_reads_an_adjusted_settings_floor() -> None:
+    settings = Settings()
+    settings.score_floor_clarity = 0.72
+
+    outcome = run_round(_gateway(), _plan(settings=settings))
+
+    vectors = _vectors(outcome)
+    assert vectors
+    assert all(vector["floors"]["clarity"] == 0.72 for vector in vectors.values())
+
+
+def test_optimizer_run_after_recalibration_uses_persisted_floors(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "calibrated-runs.sqlite3"
+    store = RunStore(database)
+    history = RunHistory(store)
+    for index in range(12):
+        decision = "accept" if index % 2 == 0 else "reject"
+        score = 0.95 if decision == "accept" else 0.45
+        history.save_run(
+            {
+                "run_id": f"calibration-{index}",
+                "prompt": PROMPT,
+                "result": {"status": "completed", "final_prompt": "Saved result"},
+                "feedback": decision,
+                "feedback_labels": {
+                    "decision": decision,
+                    "status": "linked",
+                    "candidate_id": f"candidate-{index}",
+                    "score_vector": {
+                        dimension: score for dimension in SCORE_DIMENSIONS
+                    },
+                    "weak_dimensions": [],
+                },
+            }
+        )
+    optimizer = PromptOptimizer(
+        store=store,
+        gateway=_gateway(),
+        config=Settings(database_path=str(database)),
+    )
+    client = TestClient(create_app(optimizer=optimizer, store=store))
+
+    recalibration = client.post("/api/quality/floors/recalibrate")
+    assert recalibration.status_code == 200
+    assert recalibration.json()["adjusted_floors"]["clarity"] == 0.7
+
+    after_restart = PromptOptimizer(
+        store=RunStore(database),
+        gateway=_gateway(),
+        config=Settings(database_path=str(database)),
+    )
+    result = after_restart.optimize(PROMPT, {"clarification_allowed": False})
+
+    assert result["report"].get("candidates"), result["report"]
+    assert all(
+        candidate["metadata"]["score_vector"]["floors"]["clarity"] == 0.7
+        for candidate in result["report"]["candidates"]
+    )
 
 
 def test_floor_breach_rejects_and_names_the_dimension() -> None:

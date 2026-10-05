@@ -477,6 +477,11 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.post("/api/quality/floors/recalibrate")
+    def recalibrate_quality_floors() -> dict[str, Any]:
+        """Explicitly calibrate quality floors from recorded keep/reject labels."""
+        return app_optimizer.recalibrate_score_floors()
+
     return app
 
 

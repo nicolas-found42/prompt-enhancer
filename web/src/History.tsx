@@ -13,6 +13,10 @@ export type RunSummary = {
   original_kept?: boolean | null;
   tier?: string | null;
   feedback?: "accept" | "reject" | null;
+  feedback_labels?: {
+    status?: "linked" | "unavailable";
+    weak_dimensions?: string[];
+  } | null;
   cost?: Record<string, unknown>;
   escalated_from?: string | null;
 };
@@ -337,7 +341,11 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
       setRuns((current) =>
         current.map((item) =>
           item.run_id === run.run_id
-            ? { ...item, feedback: run.feedback }
+            ? {
+                ...item,
+                feedback: run.feedback,
+                feedback_labels: run.feedback_labels,
+              }
             : item
         )
       );
@@ -501,9 +509,23 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                 No
               </button>
               {run.feedback ? (
-                <span role="status">
-                  Thanks, saved as {feedbackText[run.feedback]}.
-                </span>
+                <>
+                  <span role="status">
+                    Thanks, saved as {feedbackText[run.feedback]}.
+                  </span>
+                  {run.feedback_labels?.status === "linked" ? (
+                    <span>
+                      {run.feedback_labels.weak_dimensions?.length
+                        ? `Weak dimensions: ${run.feedback_labels.weak_dimensions.join(", ")}.`
+                        : "Feedback linked to the selected candidate's score vector."}
+                    </span>
+                  ) : run.feedback_labels?.status === "unavailable" ? (
+                    <span>
+                      This run has no selected candidate score vector for
+                      calibration.
+                    </span>
+                  ) : null}
+                </>
               ) : null}
             </div>
           )}

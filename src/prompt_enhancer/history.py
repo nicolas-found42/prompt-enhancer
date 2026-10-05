@@ -14,9 +14,12 @@ import json
 from collections.abc import Mapping, Sequence
 from datetime import UTC, date, datetime
 from enum import Enum
+from statistics import median
 from typing import Annotated, Any
 
 from fastapi import Body
+
+from .score_vector import SCORE_DIMENSIONS
 
 _VALID_FEEDBACK = {
     "accept": "accept",
@@ -84,6 +87,49 @@ def _mapping(value: Any) -> dict[str, Any]:
         for key in dir(value)
         if not key.startswith("_") and not callable(getattr(value, key))
     }
+
+
+def _winning_score_vector(
+    record: Mapping[str, Any], detail: Mapping[str, Any]
+) -> tuple[str | None, dict[str, float] | None]:
+    """Return the selected candidate's vector, without inferring missing data."""
+    result = record.get("result")
+    result_map = result if isinstance(result, Mapping) else {}
+    report = detail.get("report")
+    report_map = report if isinstance(report, Mapping) else {}
+    selected_id = record.get("selected_candidate_id") or result_map.get(
+        "selected_candidate_id"
+    )
+    if not selected_id:
+        evidence = report_map.get("selection_evidence")
+        if isinstance(evidence, Mapping):
+            selected_id = evidence.get("selected_candidate_id")
+    if not selected_id:
+        per_model = report_map.get("per_model")
+        ranking = per_model.get("ranking") if isinstance(per_model, Mapping) else None
+        if isinstance(ranking, Mapping):
+            selected_id = ranking.get("selected_candidate_id")
+    if not isinstance(selected_id, str) or not selected_id:
+        return None, None
+
+    for candidate in detail.get("candidates", ()):
+        if not isinstance(candidate, Mapping):
+            continue
+        if str(candidate.get("candidate_id") or "") != selected_id:
+            continue
+        metadata = candidate.get("metadata")
+        vector = metadata.get("score_vector") if isinstance(metadata, Mapping) else None
+        scores = vector.get("scores") if isinstance(vector, Mapping) else None
+        if not isinstance(scores, Mapping):
+            return selected_id, None
+        try:
+            selected_scores = {name: float(scores[name]) for name in SCORE_DIMENSIONS}
+        except (KeyError, TypeError, ValueError):
+            return selected_id, None
+        if any(not 0.0 <= score <= 1.0 for score in selected_scores.values()):
+            return selected_id, None
+        return selected_id, selected_scores
+    return selected_id, None
 
 
 def _normalise_record(
@@ -188,6 +234,7 @@ def _normalise_record(
         "decision",
         "feedback_at",
         "feedbackAt",
+        "feedback_labels",
         "round",
         "round_index",
         "roundIndex",
@@ -276,6 +323,7 @@ def _normalise_record(
         "metadata": _jsonable(metadata),
         "feedback": feedback_value,
         "feedback_at": _first(source, "feedback_at", "feedbackAt", default=None),
+        "feedback_labels": pick("feedback_labels", default=None),
         "escalated_from": _escalated_from(report_map),
     }
 
@@ -330,6 +378,7 @@ class RunHistory:
                 if "feedback" not in payload and "decision" not in payload:
                     merged["feedback"] = existing.get("feedback")
                     merged["feedback_at"] = existing.get("feedback_at")
+                    merged["feedback_labels"] = existing.get("feedback_labels")
                 if not _first(payload, "created_at", "createdAt"):
                     merged["created_at"] = existing.get("created_at")
                 payload = merged
@@ -380,6 +429,7 @@ class RunHistory:
                 "tier",
                 "feedback",
                 "feedback_at",
+                "feedback_labels",
                 "cost",
                 "timings",
             )
@@ -494,8 +544,40 @@ class RunHistory:
         original = self.store.get_run(str(run_id))
         if original is None:
             raise RunNotFound(f"run {run_id!r} was not found")
-        self.store.save_run({**original, "feedback": value, "feedback_at": _utc_now()})
+        candidate_id, scores = _winning_score_vector(original, detail)
+        weak_dimensions: list[str] = []
+        if value == "reject" and scores:
+            vector_median = median(scores.values())
+            weak_dimensions = sorted(
+                dimension
+                for dimension, score in scores.items()
+                if score < vector_median
+            )
+        labels = {
+            "decision": value,
+            "status": "linked" if scores is not None else "unavailable",
+            "candidate_id": candidate_id,
+            "score_vector": scores,
+            "weak_dimensions": weak_dimensions,
+            "recorded_at": _utc_now(),
+        }
+        self.store.save_run(
+            {
+                **original,
+                "feedback": value,
+                "feedback_at": labels["recorded_at"],
+                "feedback_labels": labels,
+            }
+        )
         return self.require_run(str(run_id))
+
+    def all_runs(self) -> list[dict[str, Any]]:
+        """Return all normalized run records for an explicit calibration action."""
+        all_runs = getattr(self.store, "all_runs", None)
+        records = (
+            all_runs() if callable(all_runs) else self._store_list(limit=200, offset=0)
+        )
+        return [_normalise_record(record) for record in records]
 
     def close(self) -> None:
         close = getattr(self.store, "close", None)
