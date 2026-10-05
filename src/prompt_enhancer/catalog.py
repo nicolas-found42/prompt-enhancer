@@ -20,13 +20,8 @@ DEFAULT_WEAK_PANEL = (
     "mistralai/mistral-nemo",
     "meta-llama/llama-3.2-3b-instruct",
 )
-DEFAULT_DEEP_WEAK_PANEL = DEFAULT_WEAK_PANEL + (
-    "mimo-v2.6-flash",
-    "muse-spark-1.3-contributor",
-)
-
 # The catalog flags models whose provider policies retain or train on prompts.
-# Muse is included in Deep only because the user explicitly selected it.
+# Excluded models remain available when the user explicitly selects them.
 _EXCLUDED_DEFAULT_FRAGMENTS = ("muse", "spark", "gpt-5.6-luna")
 
 
@@ -378,7 +373,6 @@ class StaticModelCatalog:
 
 
 __all__ = [
-    "DEFAULT_DEEP_WEAK_PANEL",
     "DEFAULT_GO_STRONG",
     "DEFAULT_GO_WRITER",
     "DEFAULT_WEAK_PANEL",

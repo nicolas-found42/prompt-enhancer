@@ -13,7 +13,6 @@ def _run(run_id: str = "run-1") -> dict:
     return {
         "run_id": run_id,
         "prompt": "Make a launch checklist for the API team",
-        "tier": "Standard",
         "options": {"models": {"writer": "fake-writer", "judge": "typesafe/jev-1.13"}},
         "result": {
             "status": "completed",
@@ -43,7 +42,8 @@ def test_history_search_detail_feedback_and_restart(tmp_path: Path):
     assert detail is not None
     assert detail["original_prompt"].startswith("Make a launch")
     assert detail["final_prompt"].startswith("Create a concise")
-    assert detail["tier"] == "Standard"
+    assert detail["outcome"] is None
+    assert detail["applied_style"] is None
     assert detail["models"]["writer"] == "fake-writer"
     assert detail["diagnosis"]["task"] == "planning"
     assert detail["tests"] == ["Every item has an owner"]
@@ -92,6 +92,7 @@ def test_feedback_links_rejection_to_selected_candidate_vector(tmp_path: Path):
     run["result"]["report"]["candidates"] = [
         {
             "candidate_id": "candidate-winner",
+            "text": run["result"]["final_prompt"],
             "selected": True,
             "metadata": {
                 "score_vector": {
@@ -128,6 +129,8 @@ def test_feedback_links_selected_vector_when_history_omits_it_from_candidates(
 ):
     history = RunHistory(RunStore(tmp_path / f"linked-{selected_id}.sqlite3"))
     run = _run(f"run-{selected_id}")
+    if selected_id == "original":
+        run["result"]["final_prompt"] = run["prompt"]
     vector = {
         "scores": {
             dimension: score
@@ -141,6 +144,7 @@ def test_feedback_links_selected_vector_when_history_omits_it_from_candidates(
         "selected_candidate_id": selected_id,
         "selected_candidate": {
             "candidate_id": selected_id,
+            "text": run["result"]["final_prompt"],
             "metadata": {"score_vector": vector},
         },
     }
@@ -174,6 +178,35 @@ def test_feedback_without_selected_vector_remains_visible_but_unlabeled(
     assert accepted["feedback"] == "accept"
     assert accepted["feedback_labels"]["status"] == "unavailable"
     assert accepted["feedback_labels"]["score_vector"] is None
+
+
+def test_feedback_for_manually_edited_final_prompt_has_no_stale_vector_label(
+    tmp_path: Path,
+):
+    history = RunHistory(RunStore(tmp_path / "edited-feedback.sqlite3"))
+    run = _run("run-edited-feedback")
+    run["result"]["report"]["status"] = "edited"
+    run["result"]["report"]["selection_evidence"] = {
+        "selected_candidate_id": "candidate-winner",
+        "selected_candidate": {
+            "candidate_id": "candidate-winner",
+            "text": run["result"]["final_prompt"],
+            "metadata": {
+                "score_vector": {
+                    "scores": {dimension: 0.9 for dimension in SCORE_DIMENSIONS}
+                }
+            },
+        },
+    }
+    run["result"]["selected_candidate_id"] = "candidate-winner"
+    run["result"]["final_prompt"] = "Manually edited prompt text."
+    history.save_run(run)
+
+    rejected = history.record_feedback("run-edited-feedback", "reject")
+
+    assert rejected["feedback"] == "reject"
+    assert rejected["feedback_labels"]["status"] == "unavailable"
+    assert rejected["feedback_labels"]["score_vector"] is None
 
 
 def test_history_summary_exposes_outcome_without_rewriting_legacy_status(
@@ -211,9 +244,11 @@ def test_history_summary_exposes_outcome_without_rewriting_legacy_status(
     summaries = {run["run_id"]: run for run in history.list_runs()}
 
     assert summaries["run-cancelled"]["status"] == "failed"
-    assert summaries["run-cancelled"]["outcome"] == "cancelled"
+    assert summaries["run-cancelled"]["outcome"] is None
+    assert summaries["run-cancelled"]["control_state"] == "cancelled"
     assert summaries["run-failed"]["status"] == "failed"
-    assert summaries["run-failed"]["outcome"] == "failed"
+    assert summaries["run-failed"]["outcome"] == "failed_operational"
+    assert summaries["run-failed"]["outcome_reason"]
 
 
 def test_history_summary_marks_unverified_completed_runs(tmp_path: Path):
@@ -270,10 +305,10 @@ def test_history_summary_marks_unverified_completed_runs(tmp_path: Path):
     summaries = {run["run_id"]: run for run in history.list_runs()}
 
     assert summaries["run-unverified"]["status"] == "completed"
-    assert summaries["run-unverified"]["outcome"] == "unverified"
-    assert summaries["run-improved-unverified"]["outcome"] == "improved_unverified"
-    assert summaries["run-clarified"]["outcome"] == "clarified"
-    assert summaries["run-edited"]["outcome"] == "completed"
+    assert summaries["run-unverified"]["outcome"] is None
+    assert summaries["run-improved-unverified"]["outcome"] is None
+    assert summaries["run-clarified"]["outcome"] is None
+    assert summaries["run-edited"]["outcome"] is None
 
 
 def test_history_rejects_feedback_for_incomplete_run(tmp_path: Path):

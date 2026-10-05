@@ -1,4 +1,5 @@
-import type { Failure, OptimizeResult, TierEstimate } from "./api";
+import type { Failure, OptimizeResult } from "./api";
+import { STYLE_LABELS, type ImprovementStyle } from "./styles";
 
 export function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -46,14 +47,6 @@ export function confirmedGaps(result: OptimizeResult): Gap[] {
     key: String(gap.key ?? ""),
     label: String(gap.label ?? gap.key ?? ""),
   }));
-}
-
-function originalPassRates(result: OptimizeResult): number[] {
-  const selection = record(result.report.selection_evidence);
-  const perModel = record(record(selection.original_score).per_model);
-  return Object.values(perModel).filter(
-    (value): value is number => typeof value === "number"
-  );
 }
 
 const possibleGapText: Record<string, string> = {
@@ -133,133 +126,77 @@ export function pauseText(pause: Pause): string {
   return `Paused after ${rounds} at your ${limit} ($${pause.spent_usd.toFixed(4)} spent).`;
 }
 
-export type Outcome = { headline: string; reason: string | null };
+export type CanonicalOutcome =
+  | "converged"
+  | "improved_tested"
+  | "improved_unverified"
+  | "impossible"
+  | "failed_operational";
 
-/** Choose the result headline from the evidence rather than from `original_kept` alone. */
+export type ControlState = "awaiting_approval" | "stopped" | "cancelled";
+
+export const OUTCOME_LABELS: Record<CanonicalOutcome, string> = {
+  converged: "Converged",
+  improved_tested: "Improved (tested)",
+  improved_unverified: "Improved (unverified)",
+  impossible: "Impossible",
+  failed_operational: "Failed (operational)",
+};
+
+const CONTROL_LABELS: Record<ControlState, string> = {
+  awaiting_approval: "Paused for approval",
+  stopped: "Stopped",
+  cancelled: "Cancelled",
+};
+
+export function isCanonicalOutcome(value: unknown): value is CanonicalOutcome {
+  return typeof value === "string" && Object.hasOwn(OUTCOME_LABELS, value);
+}
+
+export function controlLabel(value: unknown): string | null {
+  return typeof value === "string" && Object.hasOwn(CONTROL_LABELS, value)
+    ? CONTROL_LABELS[value as ControlState]
+    : null;
+}
+
+export type Outcome = {
+  headline: string;
+  reason: string | null;
+  appliedStyle: string | null;
+  controlState: string | null;
+};
+
+/** Render only the outcome and style recorded by the engine. */
 export function outcomeOf(result: OptimizeResult): Outcome {
-  const status = String(result.report.status ?? "");
-  if (status === "edited") return { headline: "Updated prompt", reason: null };
-  if (status === "clarified") {
+  const value = result.report.outcome;
+  if (!isCanonicalOutcome(value)) {
+    const editedEvidenceSummary =
+      result.report.status === "edited" &&
+      !result.report.legacy_metadata &&
+      typeof result.report.summary === "string" &&
+      result.report.summary.trim()
+        ? result.report.summary
+        : null;
     return {
-      headline: "Updated with your details",
-      reason:
-        "Your confirmed answers were added to the prompt. No rewrite improved on it further.",
+      headline: result.report.legacy_metadata
+        ? "Legacy run"
+        : "Outcome not established",
+      reason: editedEvidenceSummary,
+      appliedStyle: null,
+      controlState: controlLabel(result.report.control_state),
     };
   }
-  if (status === "converged") {
-    return {
-      headline: "Converged",
-      reason:
-        "Every quality dimension reached its floor and further rounds stopped buying improvement, so the loop stopped on purpose. The final scores and the floors they met are in the report below.",
-    };
-  }
-  if (status === "improved_unverified") {
-    return {
-      headline: "Improved (unverified)",
-      reason:
-        "No reliable way to check the answers was found, so this rewrite is unproven: it passed meaning and safety checks, but what the model answers to it was not tested. The original prompt is kept alongside it.",
-    };
-  }
-  if (status === "no_qualified_candidate") {
-    return {
-      headline: "No rewrite passed its checks",
-      reason:
-        "Every rewrite was checked, but none kept your meaning while changing the prompt, so your original prompt is unchanged — retrying gives the models another chance.",
-    };
-  }
-  // Without a verified test the run cannot claim an improvement, even when
-  // the user's confirmed clarification answers were appended to the prompt.
-  // The `unverified` status is no longer produced; it is kept so saved runs
-  // from before the always-attempt loop still render.
-  if (status === "unverified") {
-    return {
-      headline: "We couldn't test this prompt",
-      reason: result.original_kept
-        ? "No reliable way to check the answers was found, so your prompt is returned as it was. Retrying may find a verified improvement."
-        : "No reliable way to check the answers was found, so nothing was tested. The only change is the details you confirmed.",
-    };
-  }
-  if (status === "improvement_not_verified") {
-    return {
-      headline: "No verified improvement this time",
-      reason:
-        "Every rewrite was tested, but none passed verification while changing your prompt. Your original prompt is unchanged — retrying gives the models another chance.",
-    };
-  }
-  if (status === "impossible") {
-    return {
-      headline: "Style and requirements cannot both be satisfied",
-      reason:
-        "The chosen improvement style would have to rewrite an exact literal your prompt requires verbatim, so nothing was changed and no violation was emitted. Resubmit with a compatible style, or relax the exact-output requirement.",
-    };
-  }
-  if (!result.original_kept)
-    return { headline: "Optimized prompt", reason: null };
-  const gaps = confirmedGaps(result);
-  const rates = originalPassRates(result);
-  const weakest = rates.length > 0 ? Math.min(...rates) : null;
-  const reasons: string[] = [];
-  if (gaps.length > 0) {
-    reasons.push(
-      `It is missing ${gaps.map((gap) => gap.label).join(", ")}. Adding that yourself will likely help more than any rewrite.`
-    );
-  }
-  if (weakest !== null && weakest < 0.8) {
-    reasons.push(
-      `Your prompt passed only ${Math.round(weakest * 100)}% of checks on the weakest test model, but no rewrite did better without changing your meaning.`
-    );
-  }
+  const style = result.report.applied_style;
+  const appliedStyle =
+    typeof style === "string" && Object.hasOwn(STYLE_LABELS, style)
+      ? STYLE_LABELS[style as ImprovementStyle]
+      : null;
+  const reason = result.report.outcome_reason;
   return {
-    headline: "We couldn't safely improve this",
-    reason: reasons.join(" "),
-  };
-}
-
-// Every run uses the Deep workload in a loop until the prompt converges:
-// rewrites are written, tried, and retried with varied strategies while any
-// quality dimension is below its floor or the gains stay above epsilon.
-export const loopDescription =
-  "Deep work on every run: rewrites are written, tried, and retried until the prompt converges.";
-
-const fallbackEstimateTime =
-  "Usually under a minute for simple prompts, up to 30 min while the loop keeps improving.";
-
-// Every run is billed to the user's own provider keys (README: the private
-// .env holds OPENCODE_GO_KEY and OPENROUTER_API_KEY), so the cost line names
-// that account rather than leaving the dollars unattributed.
-const BILLED_ACCOUNT = "billed to your own OpenCode Go and OpenRouter accounts";
-
-const fallbackEstimateCost = `About $0.03–$0.15, ${BILLED_ACCOUNT}. (Rough estimate.)`;
-
-function durationRange(low: number, high: number): string {
-  const top = Math.max(high, low);
-  if (top < 1) return "Usually under a minute.";
-  if (low < 1) return `Usually under a minute, up to ${Math.round(top)} min.`;
-  const [lowText, highText] = [Math.round(low), Math.round(top)];
-  return lowText === highText
-    ? `About ${lowText} min.`
-    : `Usually ${lowText}–${highText} min.`;
-}
-
-/**
- * The two cost/time statements under the Improvement style control. Time and
- * cost are always separate sentences, and `cost` always names whose account
- * is billed. Cost accrues while the loop runs, until convergence, cancel, or
- * a budget pause.
- */
-export type LoopEstimate = { time: string; cost: string };
-
-export function estimateText(estimate?: TierEstimate): LoopEstimate {
-  if (!estimate || estimate.runs < 3)
-    return {
-      time: fallbackEstimateTime,
-      cost: fallbackEstimateCost,
-    };
-  const [low, high] = estimate.minutes;
-  const [lowCost, highCost] = estimate.cost;
-  return {
-    time: durationRange(low, high),
-    cost: `About $${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)}, ${BILLED_ACCOUNT} — from your last ${estimate.runs} runs.`,
+    headline: OUTCOME_LABELS[value],
+    reason: typeof reason === "string" && reason.trim() ? reason : null,
+    appliedStyle,
+    controlState: controlLabel(result.report.control_state),
   };
 }
 

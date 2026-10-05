@@ -128,7 +128,6 @@ def _plan(*, settings: Settings | None = None) -> RoundPlan:
         prompt=PROMPT,
         working_prompt=PROMPT,
         run_id="run",
-        tier="fast",
         seed=17,
         diagnosis=GAPS,
         assumptions=(),

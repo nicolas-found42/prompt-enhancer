@@ -132,6 +132,15 @@ def test_reference_to_unseen_details_is_asked_about_not_assumed() -> None:
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+                request.get("key", "")
+            ).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             choice = "writing" if request.get("key") == "task_type" else "unknown"
             return {
                 "type": "choice",
@@ -139,7 +148,14 @@ def test_reference_to_unseen_details_is_asked_about_not_assumed() -> None:
                 "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
-        probability = 0.97 if request.get("key") == "gap:outside_reference" else 0.01
+        key = str(request.get("key", ""))
+        probability = (
+            0.97
+            if key == "gap:outside_reference"
+            else 1.0
+            if key.startswith(("score:", "evaluate:"))
+            else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
@@ -147,7 +163,7 @@ def test_reference_to_unseen_details_is_asked_about_not_assumed() -> None:
     )
     result = optimizer.optimize(
         "Do the letter like last time. Mention the thing about the warranty.",
-        {"tier": "fast"},
+        {},
     )
 
     assert result["status"] == "needs_input"
@@ -167,6 +183,15 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+                request.get("key", "")
+            ).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             choice = "writing" if request.get("key") == "task_type" else "unknown"
             return {
                 "type": "choice",
@@ -174,13 +199,20 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
                 "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
-        probability = 0.97 if request.get("key") == "gap:outside_reference" else 0.01
+        key = str(request.get("key", ""))
+        probability = (
+            0.97
+            if key == "gap:outside_reference"
+            else 1.0
+            if key.startswith(("score:", "evaluate:"))
+            else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
     )
-    paused = optimizer.optimize("Mention the thing.", {"tier": "fast"})
+    paused = optimizer.optimize("Mention the thing.", {})
     done = optimizer.resume(
         paused["run_id"],
         {"outside_reference": {"value": "other", "text": "the 5-year warranty"}},
@@ -202,6 +234,15 @@ def test_unknown_context_is_asked_about_and_the_answer_reads_as_plain_text() -> 
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+                request.get("key", "")
+            ).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             choice = "writing" if request.get("key") == "task_type" else "unknown"
             return {
                 "type": "choice",
@@ -209,15 +250,20 @@ def test_unknown_context_is_asked_about_and_the_answer_reads_as_plain_text() -> 
                 "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
-        probability = 0.86 if request.get("key") == "gap:context" else 0.01
+        key = str(request.get("key", ""))
+        probability = (
+            0.86
+            if key == "gap:context"
+            else 1.0
+            if key.startswith(("score:", "evaluate:"))
+            else 0.01
+        )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
     )
-    paused = optimizer.optimize(
-        "Email my boss about the hours I worked today.", {"tier": "fast"}
-    )
+    paused = optimizer.optimize("Email my boss about the hours I worked today.", {})
 
     assert paused["status"] == "needs_input"
     assert paused["questions"][0]["id"] == "context"

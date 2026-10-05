@@ -177,9 +177,10 @@ def test_zero_pass_rates_with_tests_still_keep_the_original() -> None:
     assert round_report["evidence"]["tests"] != []
 
 
-def test_zero_candidates_with_clarifications_is_clarified_not_failed() -> None:
+def test_clarified_baseline_without_changed_candidates_converges_after_acceptance() -> (
+    None
+):
     from prompt_enhancer.config import Settings
-    from prompt_enhancer.models import Tier
     from prompt_enhancer.rounds import RoundPlan, run_round
 
     working = "whats 2 plus 2. Goal: summarize."
@@ -187,7 +188,6 @@ def test_zero_candidates_with_clarifications_is_clarified_not_failed() -> None:
         prompt="whats 2 plus 2",
         working_prompt=working,
         run_id="clarified-run",
-        tier=Tier.DEEP,
         seed=1,
         diagnosis={"confirmed_gaps": []},
         assumptions=(),
@@ -197,7 +197,14 @@ def test_zero_candidates_with_clarifications_is_clarified_not_failed() -> None:
     )
     outcome = run_round(_gateway(recheck_probability=0.01), plan)
 
-    assert outcome.status == "clarified"
+    assert outcome.status == "converged"
     assert outcome.original_kept is False
     assert outcome.final_prompt == working
     assert outcome.reported_failure is None
+    assert outcome.convergence["passed"] is True
+    assert outcome.convergence["selected"] is True
+    assert outcome.ranking.selected.candidate_id == "original"
+    assert (
+        outcome.evaluation_evidence["candidates"]["original"]["accept"]["accepted"]
+        is True
+    )

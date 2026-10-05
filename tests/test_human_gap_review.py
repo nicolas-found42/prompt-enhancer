@@ -119,7 +119,6 @@ def test_writer_comparison_excludes_unavailable_pairs():
         return {
             "run_identity": {"dataset_digest": "same"},
             "options": {
-                "tier": "fast",
                 "seed": 0,
                 "model_overrides": {"writer": writer},
             },

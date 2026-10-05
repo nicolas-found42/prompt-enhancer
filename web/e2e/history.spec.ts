@@ -11,7 +11,9 @@ const savedRun = {
   prompt,
   final_prompt: prompt,
   original_kept: true,
-  tier: "standard",
+  outcome: "converged",
+  outcome_reason: "The prompt met every quality floor.",
+  applied_style: "clearer",
 };
 
 function job(
@@ -24,7 +26,7 @@ function job(
     kind,
     state,
     stage: state === "running" ? "grading" : null,
-    round: { round: 1, max_rounds: 2 },
+    round: { round: 1 },
     stages_seen: [],
     elapsed_ms: 100,
     cancel_requested: false,
@@ -138,7 +140,7 @@ test("History distinguishes no matches and keeps its applied search through run 
   await page.getByRole("radio", { name: "Summarize" }).check();
   await page.getByRole("button", { name: "Use my answers" }).click();
   await expect(
-    page.getByRole("heading", { name: "Optimized prompt" })
+    page.getByRole("heading", { name: "Outcome not established" })
   ).toBeVisible();
   await expect
     .poll(() => historySearches.filter((value) => value === "supplier").length)
@@ -146,7 +148,7 @@ test("History distinguishes no matches and keeps its applied search through run 
   await expect(search).toHaveValue("supplier");
 });
 
-test("History explains every status pill and names a Failed row's reason", async ({
+test("History explains canonical outcome pills with style and reason", async ({
   page,
 }) => {
   const failure = {
@@ -161,13 +163,27 @@ test("History explains every status pill and names a Failed row's reason", async
       created_at: "2026-09-24T04:00:00Z",
       status: "failed",
       prompt: "Write a useful reply.",
-      tier: "standard",
-      report: { status: "failed", failure },
+      outcome: "failed_operational",
+      outcome_reason: "The model refused the request.",
+      applied_style: "shorter",
+      report: {
+        status: "failed_operational",
+        outcome: "failed_operational",
+        outcome_reason: "The model refused the request.",
+        applied_style: "shorter",
+        failure,
+      },
       result: {
         status: "failed",
         run_id: "failed-run",
         original_prompt: "Write a useful reply.",
-        report: { status: "failed", failure },
+        report: {
+          status: "failed_operational",
+          outcome: "failed_operational",
+          outcome_reason: "The model refused the request.",
+          applied_style: "shorter",
+          failure,
+        },
         cost: { total: 0 },
         timing: { total_ms: 10 },
       },
@@ -186,11 +202,11 @@ test("History explains every status pill and names a Failed row's reason", async
   const failedRow = history.getByRole("button", {
     name: /Write a useful reply/,
   });
-  const unchangedRow = history.getByRole("button", { name: /supplier/ });
+  const convergedRow = history.getByRole("button", { name: /supplier/ });
 
-  // The Failed row carries its short reason without being opened.
-  await expect(failedRow.getByText("Why it failed:")).toBeVisible();
-  await expect(failedRow).toContainText("The model refused the request");
+  await expect(failedRow).toContainText("Failed (operational)");
+  await expect(failedRow).toContainText("Applied style: Shorter");
+  await expect(failedRow).toContainText("The model refused the request.");
   await expect(page.getByRole("heading", { name: "Run details" })).toHaveCount(
     0
   );
@@ -198,11 +214,11 @@ test("History explains every status pill and names a Failed row's reason", async
   // Pointer: the pill exposes a native tooltip with the worded explanation.
   await expect(failedRow.locator(".badge")).toHaveAttribute(
     "title",
-    "The run stopped before finishing. The reason is shown on this row; open it for the full failure card."
+    "A provider or engine failure prevented the run from producing a supported final result."
   );
-  await expect(unchangedRow.locator(".badge")).toHaveAttribute(
+  await expect(convergedRow.locator(".badge")).toHaveAttribute(
     "title",
-    "No rewrite passed verification while changing your prompt, so the original was kept. Retrying may find an improvement."
+    "Every quality dimension met its floor and further rounds stopped buying improvement, so the run stopped on purpose."
   );
   // Keyboard: focusing the row describes the pill in words.
   await failedRow.focus();
@@ -210,14 +226,14 @@ test("History explains every status pill and names a Failed row's reason", async
     "aria-describedby",
     "history-status-explanation-failed-run"
   );
-  await expect(unchangedRow.locator(".badge")).toHaveText("Unchanged");
+  await expect(convergedRow.locator(".badge")).toHaveText("Converged");
 
   // The explanation surfaces visibly on focus, and never relies on colour alone.
   const shownExplanation = failedRow.locator(
     "xpath=following-sibling::span[@class='status-explanation']"
   );
   await expect(shownExplanation).toHaveText(
-    "The run stopped before finishing. The reason is shown on this row; open it for the full failure card."
+    "A provider or engine failure prevented the run from producing a supported final result."
   );
   // `toBeVisible` ignores clip-path, so assert the clipping is really lifted:
   // a clipped element is 1px wide, the revealed tooltip is much wider.
@@ -230,7 +246,7 @@ test("History explains every status pill and names a Failed row's reason", async
   expect(revealedStyle.clipPath).toBe("none");
 
   // Both pills still say which status they are in words.
-  await expect(failedRow.locator(".badge")).toHaveText("Failed");
+  await expect(failedRow.locator(".badge")).toHaveText("Failed (operational)");
 
   // Screenshot of the list with the explanations visible, for the visual issue.
   await page
@@ -241,10 +257,10 @@ test("History explains every status pill and names a Failed row's reason", async
   await failedRow.click();
   const details = page.getByRole("article", { name: "Run details" });
   await expect(details).toBeVisible();
-  await expect(details.locator(".badge")).toHaveText("Failed");
+  await expect(details.locator(".badge")).toHaveText("Failed (operational)");
   await expect(details.locator(".badge")).toHaveAttribute(
     "title",
-    /stopped before finishing/
+    /provider or engine failure/
   );
   await expect(details.locator(".badge")).toHaveAttribute(
     "aria-describedby",

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from prompt_enhancer.convergence import best_candidate_vector, convergence_decision
+from prompt_enhancer.convergence import (
+    best_candidate_vector,
+    convergence_decision,
+    convergence_summary,
+)
 
 
 def _vector(*, clarity: float = 0.8, passed: bool = True) -> dict:
@@ -57,6 +61,14 @@ def test_first_round_with_a_floor_passing_candidate_converges() -> None:
 
     assert decision.converged is True
     assert decision.gain is None
+
+
+def test_first_round_summary_does_not_claim_measured_plateau() -> None:
+    summary = convergence_summary(_vector()["scores"], _vector()["floors"])
+
+    assert "first round" in summary
+    assert "no earlier round existed" in summary
+    assert "stopped buying improvement" not in summary
 
 
 def test_convergence_uses_the_selected_candidate_not_a_rejected_ranked_vector() -> None:

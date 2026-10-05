@@ -1,5 +1,12 @@
 import type { OptimizeResult } from "./api";
-import { humanize, items, plainReason, record } from "./outcome";
+import {
+  humanize,
+  isCanonicalOutcome,
+  items,
+  outcomeOf,
+  plainReason,
+  record,
+} from "./outcome";
 import { STYLE_LABELS, type ImprovementStyle } from "./styles";
 
 function text(value: unknown): string {
@@ -270,14 +277,29 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   const originalPrompt = result.original_prompt ?? "";
   const diff = text(report.diff);
   const appliedStyle = text(report.applied_style);
-  const appliedLabel =
-    appliedStyle in STYLE_LABELS
-      ? STYLE_LABELS[appliedStyle as ImprovementStyle]
-      : appliedStyle;
+  const appliedLabel = Object.hasOwn(STYLE_LABELS, appliedStyle)
+    ? STYLE_LABELS[appliedStyle as ImprovementStyle]
+    : appliedStyle;
+  const canonicalOutcome = isCanonicalOutcome(report.outcome)
+    ? outcomeOf(result)
+    : null;
 
   return (
     <div className="report-content">
       <p>{text(report.summary)}</p>
+      {canonicalOutcome && (
+        <section aria-label="Run outcome">
+          <p>
+            <strong>Outcome:</strong> {canonicalOutcome.headline}
+          </p>
+          {canonicalOutcome.reason && (
+            <p className="outcome-reason">{canonicalOutcome.reason}</p>
+          )}
+          {canonicalOutcome.controlState && (
+            <p>Run state: {canonicalOutcome.controlState}.</p>
+          )}
+        </section>
+      )}
       {appliedStyle && (
         <p>
           Applied style: {appliedLabel}

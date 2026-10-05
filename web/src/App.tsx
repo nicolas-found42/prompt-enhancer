@@ -12,7 +12,6 @@ import {
   checkPromptHealth,
   getActiveJobs,
   getCatalog,
-  getEstimates,
   getJob,
   getProviders,
   getPromptHealthSettings,
@@ -20,7 +19,6 @@ import {
   getSettings,
   saveSettings,
   startContinue,
-  startDeep,
   startOptimize,
   startResume,
   startSkip,
@@ -35,8 +33,6 @@ import {
   type PromptHealthResult,
   type PromptHealthSettings,
   type RunLimits,
-  type Tier,
-  type TierEstimate,
 } from "./api";
 import ClarificationPanel, {
   type ClarificationQuestion,
@@ -48,16 +44,13 @@ import ModelPicker from "./ModelPicker";
 import PromptHealthPanel from "./PromptHealthPanel";
 import {
   confirmedGaps,
-  estimateText,
   humanize,
   failureOf,
-  loopDescription,
   outcomeOf,
   pauseOf,
   pauseText,
   possibleGapHints,
   record,
-  roughCost,
 } from "./outcome";
 import RunReport from "./RunReport";
 import {
@@ -290,19 +283,6 @@ function clarificationValidationError(
   return { questionId: detail.question_id, message: detail.message };
 }
 
-function deepOfferText(result: OptimizeResult): string {
-  const offer = record(result.report.offer_deep);
-  const multiplier =
-    typeof offer.expected_evaluation_multiplier === "number"
-      ? offer.expected_evaluation_multiplier
-      : null;
-  if (multiplier === null)
-    return "Deep tries more rewrites on more test models. It takes longer and costs more.";
-  const cost = result.cost.total * multiplier;
-  const costText = cost > 0 ? `, ${roughCost(cost)}` : "";
-  return `Deep tries more rewrites on more test models. Expect about ${multiplier.toFixed(1)}× the work of this run${costText}.`;
-}
-
 export default function App() {
   const [initialDraft] = useState(readDraft);
   const [prompt, setPrompt] = useState(initialDraft.prompt);
@@ -341,9 +321,6 @@ export default function App() {
     strong: string;
   } | null>(null);
   const [providers, setProviders] = useState<ProviderReport | null>(null);
-  const [estimates, setEstimates] = useState<
-    Partial<Record<Tier, TierEstimate>>
-  >({});
   const lastRequest = useRef<{
     prompt: string;
     style: ImprovementStyle;
@@ -478,9 +455,6 @@ export default function App() {
     void getProviders(true)
       .then(setProviders)
       .catch(() => setProviders(null));
-    void getEstimates()
-      .then(setEstimates)
-      .catch(() => setEstimates({}));
   }, []);
 
   const finish = useCallback(
@@ -493,9 +467,6 @@ export default function App() {
         const original = originalPromptOf(finishedResult);
         if (original) restoreDraft(original);
       }
-      void getEstimates()
-        .then(setEstimates)
-        .catch(() => undefined);
       void getProviders(false)
         .then(setProviders)
         .catch(() => undefined);
@@ -837,9 +808,11 @@ export default function App() {
     () => (result ? reportAssumptions(result) : []),
     [result]
   );
-  const estimate = estimateText(estimates.deep);
-  const progressEstimate = estimateText(estimates.deep);
-  const outcome = result?.status === "completed" ? outcomeOf(result) : null;
+  const outcome =
+    result &&
+    (result.status === "completed" || typeof result.report.outcome === "string")
+      ? outcomeOf(result)
+      : null;
   const gaps =
     result?.status === "completed" && result.original_kept
       ? confirmedGaps(result)
@@ -851,8 +824,6 @@ export default function App() {
   const resultPrompt = result ? originalPromptOf(result) : undefined;
   const resultForEarlierPrompt =
     resultPrompt !== undefined && resultPrompt !== prompt;
-  // Deep only rewrites against a confirmed gap; without one it cannot do more.
-  const offerDeep = Boolean(result?.report.offer_deep) && gaps.length > 0;
 
   return (
     <main className="shell">
@@ -994,8 +965,8 @@ export default function App() {
           </p>
         )}
         <p className="loop-estimate">
-          <span>{loopDescription}</span> <span>{estimate.time}</span>{" "}
-          <span>{estimate.cost}</span>
+          The loop continues until its quality evidence converges. Time and
+          spend limits pause the run for your approval.
         </p>
         {selection && (
           <ModelPicker
@@ -1026,13 +997,7 @@ export default function App() {
         </p>
       )}
 
-      {job && (
-        <RunProgress
-          job={job}
-          estimate={progressEstimate.time}
-          onCancel={() => void cancel()}
-        />
-      )}
+      {job && <RunProgress job={job} onCancel={() => void cancel()} />}
 
       {paused ? (
         <section
@@ -1103,7 +1068,7 @@ export default function App() {
         />
       )}
 
-      {!job && result?.status === "completed" && outcome ? (
+      {!job && outcome && result ? (
         <section
           id="run-outcome"
           className="result"
@@ -1114,8 +1079,16 @@ export default function App() {
             <div>
               <p className="eyebrow">RESULT</p>
               <h2>{outcome.headline}</h2>
+              {outcome.appliedStyle && (
+                <p>Applied style: {outcome.appliedStyle}.</p>
+              )}
               {outcome.reason && (
                 <p className="outcome-reason">{outcome.reason}</p>
+              )}
+              {outcome.controlState && (
+                <p className="control-state">
+                  Run state: {outcome.controlState}.
+                </p>
               )}
             </div>
             {result.final_prompt && (
@@ -1156,19 +1129,6 @@ export default function App() {
           )}
           {result.final_prompt && (
             <pre className="final-prompt">{result.final_prompt}</pre>
-          )}
-          {offerDeep && (
-            <div className="deep-offer">
-              <p>{deepOfferText(result)}</p>
-              <button
-                className="secondary"
-                type="button"
-                disabled={busy}
-                onClick={() => void begin(() => startDeep(result.run_id))}
-              >
-                Try a Deep pass
-              </button>
-            </div>
           )}
           <details className="report">
             <summary>View report</summary>

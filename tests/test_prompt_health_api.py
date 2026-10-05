@@ -318,7 +318,9 @@ def test_health_request_beside_active_optimization_keeps_separate_costs(
         future = pool.submit(
             optimizer.optimize,
             "Write a note.",
-            {"clarification_allowed": False},
+            # This fixture exercises concurrent accounting with a deficient
+            # baseline. The user budget pauses it after the active round.
+            {"clarification_allowed": False, "time_limit_s": 0},
         )
         assert started.wait(10)
         try:
@@ -332,6 +334,9 @@ def test_health_request_beside_active_optimization_keeps_separate_costs(
         finally:
             release.set()
         optimized = future.result(timeout=10)
+    assert optimized["status"] == "needs_input"
+    assert optimized["report"]["control_state"] == "awaiting_approval"
+    assert len(optimized["report"]["history"]) == 1
     assert optimized["cost"]["total"] >= 0.02
 
 

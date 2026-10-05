@@ -1,9 +1,19 @@
 # Prompt Enhancer
 
-A local prompt workbench that diagnoses a request with Jev, checks proposed
-success tests, tries bounded rewrites on every request, and shows the verified
-improved prompt — or reports that no verified improvement was found this time.
-Runs and feedback are stored in a local SQLite database.
+A local prompt workbench that diagnoses a request with Jev, resolves the
+requested improvement style, and evaluates up to six candidates per bounded
+round. An early routing or writing decision can end a round before panel
+requests; generated candidates are tested on five distinct models with three
+samples per model, then fidelity, score-floor, and acceptance checks decide
+which qualify. The Perfect Prompt Loop repeats rounds until its score evidence meets the quality
+floors and stops gaining, or a separate run-control or provider condition
+interrupts it. When those details are available, a result names its applied
+style and gives a brief explanation grounded in the run evidence. The five
+outcomes are converged,
+improved (tested), improved (unverified), impossible, and failed (operational).
+Pauses, cancellations, and a user's decision to stop are reported as control
+states, separate from the outcome. Runs and feedback are stored in a local
+SQLite database.
 
 Recorded keep/reject labels can explicitly recalibrate the per-dimension
 quality floors. Recalibration requires 12 linked labels (at least three of each

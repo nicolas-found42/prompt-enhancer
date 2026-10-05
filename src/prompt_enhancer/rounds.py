@@ -38,19 +38,17 @@ from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
 from .grading_cascade import CascadeBudget
 from .improve import (
-    failure_no_candidate_written,
     failure_no_confirmed_improvement,
     failure_no_qualified_candidate,
     failure_unverified,
     improved_unverified_summary,
     improvement_unverified_summary,
-    no_candidate_written_summary,
     no_confirmed_improvement_reason,
     prompts_differ_meaningfully,
 )
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
-from .models import Tier, utc_now
+from .models import utc_now
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
 from .score_vector import score_candidate
@@ -67,6 +65,7 @@ from .strategies import (
     search_strategies,
 )
 from .strong_check import StrongCheckPolicy, StrongCheckReport
+from .styles import style_authorization_for
 from .success_tests import SuccessTestCompiler, SuccessTestScreenCache
 
 StageCallback = Callable[[str], None]
@@ -219,7 +218,6 @@ class RoundPlan:
     working_prompt: str
     """The prompt with confirmed clarifications applied; candidates rewrite this."""
     run_id: str
-    tier: Tier
     seed: int
     diagnosis: Mapping[str, Any]
     assumptions: Sequence[Any]
@@ -333,7 +331,6 @@ class RoundOutcome:
                 "assumptions": list(plan.assumptions),
                 "diff": prompt_diff(plan.prompt, self.final_prompt),
                 "convergence": dict(self.convergence or {}),
-                "offer_deep": False,
                 "history": [],
             }
         grading_policies: list[dict[str, Any]] = []
@@ -342,8 +339,7 @@ class RoundOutcome:
             if isinstance(policy, Mapping) and dict(policy) not in grading_policies:
                 grading_policies.append(dict(policy))
         if self.ranking is None:
-            # Without a confirmed gap no strategy can run, so a Deep pass would
-            # only repeat the diagnosis; it is not offered.
+            # Without a confirmed gap no strategy can safely run.
             report = {
                 "status": self.status,
                 "models": models,
@@ -359,8 +355,6 @@ class RoundOutcome:
                 "per_model": {},
                 "assumptions": list(plan.assumptions),
                 "diff": prompt_diff(plan.prompt, plan.working_prompt),
-                "offer_deep": plan.tier != "deep"
-                and bool(plan.diagnosis.get("confirmed_gaps")),
                 "history": [],
             }
             if self.convergence is not None:
@@ -449,7 +443,6 @@ class RoundOutcome:
                 if self.reported_failure is not None
                 else {}
             ),
-            "offer_deep": plan.tier != "deep" and self.original_kept,
             "history": [],
         }
 
@@ -539,6 +532,8 @@ def _ranking_candidate(
         assumptions=plan.assumptions,
         support_prompt=plan.prompt,
         preservation_proof=candidate.metadata.get("lossless_proof"),
+        applied_style=plan.applied_style,
+        style_authorization=style_authorization_for(plan.applied_style),
         legacy_protocol=plan.writer_instruction_version < 4,
         candidate_id=candidate.candidate_id,
         round_number=plan.round_number,
@@ -816,12 +811,14 @@ def run_round(
     search = search_strategies(
         working_prompt,
         model_view,
-        plan.tier,
+        settings=settings,
         strategies=strategy_library,
         writer=write_selected,
         previous_failures=plan.prior_failures,
         recheck=recheck_strategy,
         priority_strategy=preferred_strategy,
+        applied_style=plan.applied_style,
+        style_authorization=style_authorization_for(plan.applied_style),
     )
     if lossless_build is not None:
         kept: list[CandidateDraft] = []
@@ -858,58 +855,13 @@ def run_round(
     candidate_prompts.update(
         {candidate.candidate_id: candidate.text for candidate in candidates}
     )
-    if not candidates:
-        rejections = len(search.rejections)
-        if not tests and working_prompt != plan.prompt:
-            # Confirmed clarifications changed the prompt even though no
-            # rewrite could be written; report them, not a failure.
-            return replace(
-                ended(
-                    "clarified",
-                    "Clarifications were included; no changed prompt was produced.",
-                    tests,
-                ),
-                strategies=search,
-                lossless_restructuring=lossless_build.evidence
-                if lossless_build is not None
-                else None,
-                test_screening=screening_evidence,
-            )
-        if tests:
-            return replace(
-                ended(
-                    "improvement_not_verified",
-                    improvement_unverified_summary(),
-                    tests,
-                ),
-                strategies=search,
-                lossless_restructuring=lossless_build.evidence
-                if lossless_build is not None
-                else None,
-                test_screening=screening_evidence,
-                reported_failure=failure_unverified(),
-            )
-        return replace(
-            ended(
-                "no_qualified_candidate",
-                no_candidate_written_summary(rejections),
-                tests,
-            ),
-            strategies=search,
-            lossless_restructuring=lossless_build.evidence
-            if lossless_build is not None
-            else None,
-            test_screening=screening_evidence,
-            reported_failure=failure_no_candidate_written(rejections),
-        )
-
     stage("running_weak_models")
     panel = run_candidates(
         candidates,
         settings.weak_models,
         gateway,
         original=working_prompt,
-        budget=plan.tier,
+        settings=settings,
         run_seed=plan.seed,
         run_id=plan.run_id,
     )
@@ -927,8 +879,8 @@ def run_round(
         shared_state=plan.writer_instruction_version >= 5,
         output_screen=plan.writer_instruction_version >= 6,
         decision_policy=plan.decision_policy,
-        cascade_budget=CascadeBudget.for_tier(
-            plan.tier.value,
+        cascade_budget=CascadeBudget.for_settings(
+            settings,
             pair_cap=settings.grading_cascade_pair_cap,
             dollar_cap=settings.grading_cascade_dollar_cap,
             judge_reservation_usd=settings.grading_confirmation_reservation_usd,
@@ -1051,6 +1003,7 @@ def run_round(
         evaluation_candidates,
         constraints=plan.hard_constraints,
         improvement_style=plan.applied_style,
+        style_authorization=style_authorization_for(plan.applied_style),
         style_bundle=_style_bundle(plan),
         success_tests=tests,
         candidate_outputs=candidate_outputs,
@@ -1130,8 +1083,8 @@ def run_round(
             gateway,
             judge_model=settings.judge_model,
             run_id=plan.run_id,
-            budget=AttributionBudget.for_tier(
-                plan.tier,
+            budget=AttributionBudget.for_settings(
+                settings,
                 pair_cap=settings.attribution_pair_cap,
                 dollar_cap=settings.attribution_dollar_cap,
             ),
@@ -1219,7 +1172,9 @@ def run_round(
             convergence["verification"] = "unverified"
     if decision.converged:
         status = CONVERGED_STATUS
-        summary = convergence_summary(decision.scores, decision.floors)
+        summary = convergence_summary(
+            decision.scores, decision.floors, gain=decision.gain
+        )
         reported_failure = None
     return RoundOutcome(
         plan=plan,

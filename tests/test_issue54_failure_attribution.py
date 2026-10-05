@@ -13,6 +13,7 @@ from prompt_enhancer.config import Settings
 from prompt_enhancer.evaluation import Dataset, EvaluationHarness
 from prompt_enhancer.evaluation.harness import default_engine_factory
 from prompt_enhancer.evaluation.recording import RecordingGateway
+from prompt_enhancer.failure_attribution import AttributionBudget
 from prompt_enhancer.gateway import ProviderError, ScriptedGateway
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.store import RunStore
@@ -158,13 +159,13 @@ class AttributionGateway(ScriptedGateway):
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
 
-def _optimize(gateway: AttributionGateway, *, tier: str = "standard", settings=None):
+def _optimize(gateway: AttributionGateway, *, settings=None):
     return PromptOptimizer(
         gateway=gateway,
         store=RunStore(":memory:"),
         config=settings or Settings(),
         writer_instruction_version=8,
-    ).optimize(PROMPT, {"tier": tier, "clarification_allowed": False})
+    ).optimize(PROMPT, {"clarification_allowed": False})
 
 
 def test_supported_source_attribution_reaches_next_round_writer() -> None:
@@ -216,19 +217,29 @@ def test_low_confidence_none_unknown_and_provider_failure_stay_auditable() -> No
         assert all(record["status"] == "unresolved" for record in records)
 
 
-def test_fast_and_missing_pricing_skip_attribution_without_losing_failure() -> None:
-    for tier, priced, reason in (
-        ("fast", True, "pair_budget_exhausted"),
-        ("standard", False, "missing_trustworthy_pricing"),
+def test_zero_pair_cap_and_missing_pricing_skip_attribution_without_losing_failure() -> (
+    None
+):
+    for settings, priced, reason in (
+        (Settings(attribution_pair_cap=0), True, "pair_budget_exhausted"),
+        (Settings(), False, "missing_trustworthy_pricing"),
     ):
         gateway = AttributionGateway(priced=priced)
-        result = _optimize(gateway, tier=tier)
+        result = _optimize(gateway, settings=settings)
 
         assert gateway.attribution_batches == []
         assert result["report"]["history"][0]["candidate_failures"]
         attribution = result["report"]["failure_attribution"]
         assert attribution["skipped_count"] > 0
         assert {pair["reason"] for pair in attribution["pairs"]} == {reason}
+
+
+def test_attribution_budget_defaults_and_explicit_overrides_are_settings_backed():
+    defaults = AttributionBudget.for_settings(Settings())
+    custom = AttributionBudget.for_settings(Settings(), pair_cap=2, dollar_cap=0.004)
+
+    assert (defaults.pair_cap, defaults.dollar_cap) == (30, 0.03)
+    assert (custom.pair_cap, custom.dollar_cap) == (2, 0.004)
 
 
 def test_pair_cap_applies_across_models_and_samples() -> None:
@@ -275,7 +286,7 @@ def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
         store=RunStore(":memory:"),
         config=settings,
         writer_instruction_version=8,
-    ).optimize(PROMPT, {"tier": "standard", "clarification_allowed": False})
+    ).optimize(PROMPT, {"clarification_allowed": False})
     assert (
         json.loads(path.read_text())["cascade_settings"]["retry_reservation_multiplier"]
         == 4
@@ -287,9 +298,7 @@ def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
     engine = default_engine_factory(path)
     engine.store = RunStore(":memory:")
 
-    replayed = engine.optimize(
-        PROMPT, {"tier": "standard", "clarification_allowed": False}
-    )
+    replayed = engine.optimize(PROMPT, {"clarification_allowed": False})
 
     assert (
         replayed["report"]["history"][0]["evidence"]["failure_attribution"]
@@ -382,13 +391,11 @@ def test_version_eight_attribution_replays_strictly(tmp_path: Path) -> None:
         store=RunStore(":memory:"),
         config=Settings(),
         writer_instruction_version=8,
-    ).optimize(PROMPT, {"tier": "standard", "clarification_allowed": False})
+    ).optimize(PROMPT, {"clarification_allowed": False})
 
     replay = default_engine_factory(path)
     replay.store = RunStore(":memory:")
-    reproduced = replay.optimize(
-        PROMPT, {"tier": "standard", "clarification_allowed": False}
-    )
+    reproduced = replay.optimize(PROMPT, {"clarification_allowed": False})
 
     assert reproduced["final_prompt"] == original["final_prompt"]
     assert (

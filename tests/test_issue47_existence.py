@@ -103,12 +103,18 @@ def _gateway(
 
 
 def _optimize(prompt: str, gateway: ScriptedGateway, **kwargs):
-    return PromptOptimizer(
+    # Diagnosis-only fixtures deliberately have no adequate candidate. An
+    # explicit user budget pauses the uncapped loop after its first round.
+    result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=gateway,
         speculative_diagnosis=False,
         **kwargs,
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    ).optimize(prompt, {"clarification_allowed": False, "time_limit_s": 0})
+    assert result["status"] == "needs_input"
+    assert result["report"]["control_state"] == "awaiting_approval"
+    assert len(result["report"]["history"]) == 1
+    return result
 
 
 def test_confident_pointer_with_low_existence_does_not_report_or_hint_problem() -> None:
@@ -149,7 +155,7 @@ def test_confident_pointer_with_low_existence_does_not_report_or_hint_problem() 
         gateway=ScriptedGateway(
             chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
         ),
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    ).optimize(prompt, {"clarification_allowed": False, "time_limit_s": 0})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["problem_sentences"] == []
@@ -172,7 +178,7 @@ def test_supported_existence_and_confirmation_persist_all_sentence_evidence() ->
         pointers={"vagueness:0": "s0001"},
     )
     result = PromptOptimizer(store=store, gateway=gateway).optimize(
-        prompt, {"tier": "fast", "clarification_allowed": False}
+        prompt, {"clarification_allowed": False, "time_limit_s": 0}
     )
 
     diagnosis = result["report"]["diagnosis"]
@@ -430,7 +436,7 @@ def test_matching_existence_calibration_overrides_the_rubric_cutoff(
     )
 
     result = optimizer.optimize(
-        "A sentence.", {"tier": "fast", "clarification_allowed": False}
+        "A sentence.", {"clarification_allowed": False, "time_limit_s": 0}
     )
 
     assert bool(result["report"]["diagnosis"]["problem_sentences"]) is confirmed

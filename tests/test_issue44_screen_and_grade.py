@@ -93,7 +93,6 @@ def _run_screened_round(
     record_path: Path | None = None,
     writer_instruction_version: int = 5,
     output_screen: Mapping[str, float | None] | None = None,
-    tier: str = "fast",
     grade_pass_probability: float = 1.0,
     confirmation_answers: tuple[float, float, float] | None = None,
     generated_test_count: int = 3,
@@ -278,7 +277,6 @@ def _run_screened_round(
     ).optimize(
         prompt,
         {
-            "tier": tier,
             "clarification_allowed": False,
             **({"time_limit_s": 0} if pause_after_round else {}),
             # The recheck stub admits only restructure_lossless, which lives
@@ -297,7 +295,9 @@ def _run_screened_round(
     return result, batches
 
 
-def test_new_optimizer_screens_three_tests_and_groups_four_outputs() -> None:
+def test_new_optimizer_screens_three_tests_across_five_models_and_three_samples() -> (
+    None
+):
     result, batches = _run_screened_round()
 
     assert result["status"] == "completed"
@@ -315,7 +315,7 @@ def test_new_optimizer_screens_three_tests_and_groups_four_outputs() -> None:
         for batch in batches[:fidelity_index]
         if batch and str(batch[0]["key"]).startswith("grade_")
     ]
-    assert len(grade_batches) == 4
+    assert len(grade_batches) == 30  # original + candidate, 5 models × 3 samples
     assert all(len(batch) == 3 for batch in grade_batches)
     for batch in grade_batches:
         _, envelope = batch_decision_payload(batch, model=gateway_model(batch))
@@ -485,7 +485,6 @@ def test_current_screening_and_grading_protocol_strictly_replays(
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
         {
-            "tier": "fast",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
         },

@@ -13,6 +13,7 @@ from typing import Any
 
 from .catalog import DEFAULT_GO_WRITER
 from .gateway import Gateway, completion_text, writer_messages
+from .styles import validated_style_authorization
 
 # Version 1 is the historical request without diagnosis; version 2 adds it;
 # version 3 adds explicit edit permissions and treats prior fidelity evidence as
@@ -50,6 +51,10 @@ class CandidateWriter:
     def generate_candidates(self, request: Any) -> Mapping[str, str]:
         """Write every selected strategy in one structured model call."""
         state = request.to_dict()
+        if "applied_style" in state or "style_authorization" in state:
+            state["style_authorization"] = validated_style_authorization(
+                state.get("applied_style"), state.get("style_authorization")
+            )
         original_instructions = (
             "Return JSON only: an object mapping each strategy name in state.strategies "
             "to one complete rewritten prompt. Use a distinct strategy for each. "
@@ -102,6 +107,14 @@ class CandidateWriter:
             11: current_instructions,
             12: current_instructions,
         }[self.instruction_version]
+        if state.get("style_authorization"):
+            instructions += (
+                " Apply the resolved state.applied_style using only the bounded "
+                "presentation permission in state.style_authorization. That permission "
+                "allows the stated presentation changes, including tone or organization, "
+                "but never additional task facts, scope, deliverables, or success criteria. "
+                "Preserve exact output, hard literals, and every stated constraint."
+            )
         response = self.gateway.chat(
             self.writer_model, writer_messages(instructions, state), role="writer"
         )

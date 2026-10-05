@@ -23,6 +23,7 @@ from typing import Any, cast
 from .convergence import mean_score
 from .failures import RunCancelled, describe_failure
 from .models import OptimizeResult
+from .outcomes import apply_outcome_fields
 from .repeat import RoundEvidence
 
 TIME_LIMIT_OPTION = "time_limit_s"
@@ -108,8 +109,6 @@ class RoundTracker:
     def record(self, request: Any, outcome: Any) -> None:
         evidence = RoundEvidence.from_outcome(
             round_number=request.round_number,
-            tier_round=request.tier_round,
-            tier=request.tier,
             outcome=outcome,
         )
         self.entries.append(evidence.to_dict())
@@ -327,6 +326,7 @@ def build_cancelled_result(
 def build_stopped_result(
     *,
     paused_result: Mapping[str, Any],
+    original_prompt: str,
     cost: Mapping[str, Any],
     timing: Mapping[str, Any],
 ) -> dict[str, Any]:
@@ -339,7 +339,7 @@ def build_stopped_result(
     spent = float(spent_value) if isinstance(spent_value, (int, float)) else 0.0
     result = dict(paused_result)
     result["status"] = "failed"
-    result["report"] = {
+    stopped_report = {
         **dict(report),
         "status": STOPPED_REPORT_STATUS,
         "summary": (
@@ -356,6 +356,12 @@ def build_stopped_result(
             "message": "stopped by the user",
         },
     }
+    result["report"] = apply_outcome_fields(
+        stopped_report,
+        original_prompt=original_prompt,
+        final_prompt=str(result.get("final_prompt") or original_prompt),
+        control_state="stopped",
+    )
     result["cost"] = dict(cost)
     result["timing"] = dict(timing)
     return result
@@ -363,7 +369,6 @@ def build_stopped_result(
 
 def resume_context(
     *,
-    tier: str,
     options: Mapping[str, Any],
     diagnosis: Mapping[str, Any],
     assumptions: Any,
@@ -372,7 +377,6 @@ def resume_context(
     elapsed_ms: int,
 ) -> dict[str, Any]:
     return {
-        "tier": tier,
         "options": dict(options),
         "diagnosis": dict(diagnosis),
         "assumptions": list(assumptions),

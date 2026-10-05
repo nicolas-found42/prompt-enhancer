@@ -41,7 +41,7 @@ def test_detected_steering_overrides_passing_tests_in_same_output_request() -> N
         for batch in _grading_batches(batches)
         if any(str(item["key"]).startswith("output-screen:") for item in batch)
     ]
-    assert len(grading) == 4
+    assert len(grading) == 30  # every original and candidate output is screened
     assert all(len(batch) == 5 for batch in grading)
     assert all(
         {request["key"].split(":")[-1] for request in batch[3:]}
@@ -55,7 +55,7 @@ def test_detected_steering_overrides_passing_tests_in_same_output_request() -> N
     )
     round_report = result["report"]["history"][0]["evidence"]
     screen = round_report["output_screen"]
-    assert sum(item["status"] == "steering_detected" for item in screen) == 2
+    assert sum(item["status"] == "steering_detected" for item in screen) == 15
     assert all(
         item["reason"] == "evaluator_steering_detected"
         for item in screen
@@ -83,7 +83,7 @@ def test_clear_and_unresolved_screen_have_distinct_promotion_outcomes() -> None:
             item["status"] == "screen_unresolved"
             for item in round_evidence["output_screen"]
         )
-        == 2
+        == 15  # the changed candidate has 5 models × 3 samples
     )
     candidate = next(
         item
@@ -91,7 +91,7 @@ def test_clear_and_unresolved_screen_have_distinct_promotion_outcomes() -> None:
         if item["candidate_id"] != "original"
     )
     assert candidate["grade"]["worst"] == 1.0
-    assert candidate["grade"]["unresolved_screen_outputs"] == 2
+    assert candidate["grade"]["unresolved_screen_outputs"] == 15
 
 
 def test_unresolved_original_screen_prevents_promotion() -> None:
@@ -124,7 +124,6 @@ def test_current_screen_recording_strictly_replays_and_v5_stays_historical(
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
         {
-            "tier": "fast",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
             "time_limit_s": 0,

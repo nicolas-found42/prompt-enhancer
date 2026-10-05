@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from typing import Any
 
@@ -27,9 +28,10 @@ from prompt_enhancer.store import RunStore
 
 
 class TrackingScriptedGateway(ScriptedGateway):
-    def __init__(self, *, decision):
+    def __init__(self, *, decision, chat=None):
         super().__init__(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decision
+            chat=chat or (lambda *_args, **_kwargs: '{"tests":[]}'),
+            decision=decision,
         )
         self.decision_batches: list[list[str]] = []
 
@@ -48,21 +50,54 @@ def _optimizer(
 ) -> tuple[PromptOptimizer, TrackingScriptedGateway]:
     overrides = decisions or {}
 
+    def chat(_model, messages, *, role, **_kwargs):
+        if role != "writer":
+            return "pass"
+        state = json.loads(messages[1]["content"])
+        strategies = state.get("strategies")
+        if isinstance(strategies, list):
+            prompt = str(state.get("prompt", ""))
+            return json.dumps(
+                {
+                    strategy["name"]: f"{prompt} {strategy['name']} rewrite."
+                    for strategy in strategies
+                }
+            )
+        return '{"tests":[]}'
+
     def decide(request, **_kwargs):
         key = str(request.get("key", ""))
         if key in overrides:
             return overrides[key]
         if request.get("type") == "choice":
-            choice = "general" if key == "task_type" else "none"
+            criteria = request.get("criteria", request.get("options", {}))
+            if key == "task_type":
+                choice = "general"
+            elif key.endswith(":verbosity_direction"):
+                choice = "same"
+            elif isinstance(criteria, dict):
+                choice = "none" if "none" in criteria else next(iter(criteria), "none")
+            elif isinstance(criteria, (list, tuple)):
+                choice = "none" if "none" in criteria else next(iter(criteria), "none")
+            else:
+                choice = "none"
             return {
                 "type": "choice",
                 "choice": choice,
                 "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
-        return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
+        if key.startswith("score:"):
+            state = request.get("state", {})
+            baseline = state.get("candidate_prompt") == state.get("original_prompt")
+            probability = 0.99 if baseline else 0.01
+        elif key.startswith(("evaluate:", "fidelity:", "strategy_recheck:")):
+            probability = 0.99
+        else:
+            probability = 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    gateway = TrackingScriptedGateway(decision=decide)
+    gateway = TrackingScriptedGateway(decision=decide, chat=chat)
     return (
         PromptOptimizer(
             store=RunStore(":memory:"),
@@ -78,7 +113,7 @@ def _optimizer(
 def test_task_branch_options_describe_leaf_meaning_and_scope() -> None:
     optimizer, gateway = _optimizer()
 
-    optimizer.optimize("Help me with something.", {"tier": "fast"})
+    result = optimizer.optimize("Help me with something.", {})
 
     root = next(
         entry["question"]
@@ -91,12 +126,22 @@ def test_task_branch_options_describe_leaf_meaning_and_scope() -> None:
     assert "interpret information" in investigation.lower()
     assert "find or synthesize information" in investigation.lower()
     assert "intended scope" in investigation.lower()
+    assert result["status"] == "completed"
+    assert result["report"]["outcome"] == "converged"
+    final_round = result["report"]["history"][-1]
+    assert final_round["convergence"]["source"] == "original_baseline"
+    assert (
+        final_round["evidence"]["evaluation_evidence"]["candidates"]["original"][
+            "accept"
+        ]["accepted"]
+        is True
+    )
 
 
 def test_taxonomy_request_count_distinguishes_shared_prefetch() -> None:
     optimizer, _gateway = _optimizer()
 
-    result = optimizer.optimize("Write a brief note.", {"tier": "fast"})
+    result = optimizer.optimize("Write a brief note.", {})
 
     evidence = result["report"]["diagnosis"]["taxonomy_evidence"]
     assert evidence["provider_requests"] == 1
@@ -105,7 +150,7 @@ def test_taxonomy_request_count_distinguishes_shared_prefetch() -> None:
 
     optimizer, _gateway = _optimizer()
     optimizer.speculative_diagnosis = True
-    prefetched = optimizer.optimize("Write a brief note.", {"tier": "fast"})
+    prefetched = optimizer.optimize("Write a brief note.", {})
     diagnosis = prefetched["report"]["diagnosis"]
     assert diagnosis["taxonomy_evidence"]["provider_requests"] == 0
     assert diagnosis["taxonomy_evidence"]["provider_request_delta_vs_legacy"] == -1
@@ -143,7 +188,7 @@ def test_close_branch_split_batches_both_paths_and_can_choose_second_branch() ->
         }
     )
 
-    result = optimizer.optimize("Investigate this topic.", {"tier": "fast"})
+    result = optimizer.optimize("Investigate this topic.", {})
 
     assert result["report"]["diagnosis"]["task_type"] == "research"
     assert any(
@@ -189,7 +234,7 @@ def test_selected_root_branch_is_explored_even_when_another_has_more_probability
         rubric=rubric,
     )
 
-    result = optimizer.optimize("Investigate this topic.", {"tier": "fast"})
+    result = optimizer.optimize("Investigate this topic.", {})
     diagnosis = result["report"]["diagnosis"]
     leaf_requests = {
         key
@@ -229,7 +274,7 @@ def _execution_decisions(*, leaf_confidence: float) -> dict[str, Any]:
 def test_supported_leaf_uses_its_own_specialized_checklist() -> None:
     optimizer, gateway = _optimizer(_execution_decisions(leaf_confidence=0.8))
 
-    result = optimizer.optimize("Build a small parser.", {"tier": "fast"})
+    result = optimizer.optimize("Build a small parser.", {})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "coding"
@@ -244,7 +289,7 @@ def test_supported_leaf_uses_its_own_specialized_checklist() -> None:
 def test_low_confidence_leaf_uses_parent_intersection_checklist() -> None:
     optimizer, gateway = _optimizer(_execution_decisions(leaf_confidence=0.79))
 
-    result = optimizer.optimize("Build a small parser.", {"tier": "fast"})
+    result = optimizer.optimize("Build a small parser.", {})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "execution"
@@ -298,7 +343,7 @@ def test_unknown_invalid_or_missing_root_uses_general_without_expansion(
 ) -> None:
     optimizer, gateway = _optimizer({"task_type": root_answer})
 
-    result = optimizer.optimize("Help me with something.", {"tier": "fast"})
+    result = optimizer.optimize("Help me with something.", {})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "general"
@@ -323,7 +368,7 @@ def test_rejected_root_reports_general_probability() -> None:
         }
     )
 
-    result = optimizer.optimize("Help me with something.", {"tier": "fast"})
+    result = optimizer.optimize("Help me with something.", {})
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "general"
     assert diagnosis["task_type_confidence"] == 0.1
@@ -353,7 +398,7 @@ def test_partial_beam_answer_keeps_supported_leaf_from_other_branch() -> None:
     }
     optimizer, _gateway = _optimizer(decisions)
 
-    result = optimizer.optimize("Investigate this topic.", {"tier": "fast"})
+    result = optimizer.optimize("Investigate this topic.", {})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "research"
@@ -391,7 +436,7 @@ def test_equal_path_scores_use_taxonomy_order_for_ties() -> None:
     }
     optimizer, _gateway = _optimizer(decisions)
 
-    result = optimizer.optimize("Do a task.", {"tier": "fast"})
+    result = optimizer.optimize("Do a task.", {})
 
     assert result["report"]["diagnosis"]["task_type"] == "writing"
 
@@ -415,7 +460,7 @@ def test_historical_taxonomy_protocol_keeps_recorded_question_shape() -> None:
         task_taxonomy_version=HISTORICAL_TASK_TAXONOMY_PROTOCOL_VERSION,
     )
 
-    result = optimizer.optimize("Research this topic.", {"tier": "fast"})
+    result = optimizer.optimize("Research this topic.", {})
 
     diagnosis = result["report"]["diagnosis"]
     root = next(
@@ -439,7 +484,7 @@ def test_historical_taxonomy_protocol_keeps_recorded_question_shape() -> None:
 def test_task_classification_path_and_checklist_round_trip_in_stored_report() -> None:
     optimizer, _gateway = _optimizer(_execution_decisions(leaf_confidence=0.9))
 
-    result = optimizer.optimize("Build a small parser.", {"tier": "fast"})
+    result = optimizer.optimize("Build a small parser.", {})
     stored = optimizer.store.get_run(result["run_id"])
 
     assert stored is not None
@@ -495,7 +540,7 @@ def test_empty_parent_intersection_uses_general_checklist_with_reason() -> None:
         rubric=rubric,
     )
 
-    result = optimizer.optimize("Do an alpha or beta task.", {"tier": "fast"})
+    result = optimizer.optimize("Do an alpha or beta task.", {})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "parent"
@@ -559,7 +604,7 @@ def test_explicit_parent_checklist_overrides_descendant_intersection() -> None:
         rubric=rubric,
     )
 
-    result = optimizer.optimize("Do an alpha or beta task.", {"tier": "fast"})
+    result = optimizer.optimize("Do an alpha or beta task.", {})
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["task_type"] == "parent"
@@ -595,7 +640,7 @@ def test_matching_task_type_calibration_can_override_default_confidence() -> Non
             },
         }
     )
-    probe.optimize("Build a parser.", {"tier": "fast"})
+    probe.optimize("Build a parser.", {})
     root_entry = next(
         entry
         for entry in gateway.decision_log
@@ -627,7 +672,7 @@ def test_matching_task_type_calibration_can_override_default_confidence() -> Non
         decision_policy=DecisionPolicy.from_artifact(artifact),
     )
 
-    result = optimizer.optimize("Build a parser.", {"tier": "fast"})
+    result = optimizer.optimize("Build a parser.", {})
 
     assert result["report"]["diagnosis"]["task_type"] == "coding"
     assert (
@@ -659,7 +704,7 @@ def test_selected_root_fills_beam_and_is_parent_fallback() -> None:
         rubric=replace(DEFAULT_RUBRIC, task_beam_width=2, task_branch_margin=0.05),
     )
 
-    result = optimizer.optimize("Implement this behavior.", {"tier": "fast"})
+    result = optimizer.optimize("Implement this behavior.", {})
 
     leaf_batches = [
         batch

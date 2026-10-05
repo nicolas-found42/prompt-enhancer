@@ -5,7 +5,6 @@ import {
   cancelJob,
   getActiveJobs,
   getCatalog,
-  getEstimates,
   getJob,
   getProviders,
   getRunResult,
@@ -28,7 +27,6 @@ vi.mock("./api", async (importOriginal) => {
     cancelJob: vi.fn(),
     getActiveJobs: vi.fn(),
     getCatalog: vi.fn(),
-    getEstimates: vi.fn(),
     getJob: vi.fn(),
     getProviders: vi.fn(),
     getRunResult: vi.fn(),
@@ -68,7 +66,7 @@ const runningJob: Job = {
   prompt: "Write a note to my neighbour.",
   state: "running",
   stage: "writing_candidates",
-  round: { round: 2, max_rounds: 3 },
+  round: { round: 2 },
   stages_seen: ["diagnosing"],
   elapsed_ms: 65000,
   cost_total: 0.0621,
@@ -127,7 +125,6 @@ beforeEach(() => {
   });
   vi.mocked(getActiveJobs).mockResolvedValue([]);
   vi.mocked(getCatalog).mockResolvedValue(catalog);
-  vi.mocked(getEstimates).mockResolvedValue({});
   vi.mocked(getProviders).mockResolvedValue(providers);
   vi.mocked(getSettings).mockResolvedValue(settings);
   vi.mocked(getRunResult).mockResolvedValue({ result: null });

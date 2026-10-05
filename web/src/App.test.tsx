@@ -10,7 +10,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getActiveJobs,
   getCatalog,
-  getEstimates,
   getJob,
   getProviders,
   getSettings,
@@ -29,7 +28,6 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     getActiveJobs: vi.fn(),
     getCatalog: vi.fn(),
-    getEstimates: vi.fn(),
     getJob: vi.fn(),
     getProviders: vi.fn(),
     getSettings: vi.fn(),
@@ -91,7 +89,6 @@ beforeEach(() => {
   window.localStorage.clear();
   vi.mocked(getActiveJobs).mockResolvedValue([]);
   vi.mocked(getCatalog).mockResolvedValue(catalog);
-  vi.mocked(getEstimates).mockResolvedValue({});
   vi.mocked(getProviders).mockResolvedValue(providers);
   vi.mocked(getSettings).mockResolvedValue(settings);
 });

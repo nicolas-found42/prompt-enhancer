@@ -59,7 +59,6 @@ EngineFactory = Callable[[Path | None], Engine]
 class HarnessOptions:
     """Configuration sent to the engine and included in the run identity."""
 
-    tier: str = "standard"
     seed: int = 0
     clarification_allowed: bool = False
     model_overrides: Mapping[str, Any] = field(default_factory=dict)
@@ -68,9 +67,6 @@ class HarnessOptions:
     fail_fast: bool = False
 
     def __post_init__(self) -> None:
-        tier = self.tier.strip().lower()
-        if tier not in {"fast", "standard", "deep"}:
-            raise EvaluationError("tier must be fast, standard, or deep")
         if not isinstance(self.seed, int):
             raise EvaluationError("seed must be an integer")
         for name in ("model_overrides", "settings", "extra"):
@@ -81,17 +77,15 @@ class HarnessOptions:
 
     def optimize_options(self) -> dict[str, Any]:
         return {
-            "tier": self.tier,
             "seed": self.seed,
             "clarification_allowed": self.clarification_allowed,
             "model_overrides": dict(self.model_overrides),
-            "settings": dict(self.settings),
+            **({"settings": dict(self.settings)} if self.settings else {}),
             **dict(self.extra),
         }
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "tier": self.tier,
             "seed": self.seed,
             "clarification_allowed": self.clarification_allowed,
             "model_overrides": dict(self.model_overrides),

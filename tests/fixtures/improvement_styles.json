@@ -1,0 +1,143 @@
+{
+  "purpose": "Design-only scripted writer outputs for #172's real engine-to-writer-to-fidelity/Evaluate/report wiring. They do not claim live-model population quality.",
+  "shared_input": "Draft a practical toolkit for a volunter work session at our community garden; put pulling weeds, collecting litter, and returning tools to labeled shed bins in a run sheet, and explain the task order briefly. Include a no-dependency Python command-line tool that builds the plan from the coordinator's date, volunteer count, and available tools; it must ask when any input is missing, reject unusable entries clearly, and never guess values. Include a beginner-friendly use guide, an honest volunteer invitation, and a concise risks-and-assumptions check; keep to those deliverables, invent no site facts or supplies, and flag safety claims that require local verification.",
+  "constraints_to_preserve": [
+    "The run sheet covers pulling weeds, collecting litter, and returning tools to labeled shed bins, with a brief reason for task order.",
+    "A no-dependency Python CLI builds the plan from the coordinator's date, volunteer count, and available tools.",
+    "The tool asks for missing inputs, clearly rejects unusable entries, and never guesses values.",
+    "Include a beginner-friendly use guide, an honest volunteer invitation, and a concise risks-and-assumptions check.",
+    "Add no other deliverables, invented site facts, or invented supplies.",
+    "Flag safety claims that need local verification."
+  ],
+  "named_styles": [
+    {
+      "style": "clearer",
+      "bounded_guidance": "Make instructions direct and explicit about what each requested component must do; connect the named inputs to the CLI's behavior without changing scope.",
+      "candidate_prompt": "Create a practical toolkit for a community-garden volunteer work session. Put the listed jobs—pulling weeds, collecting litter, and returning tools to labeled shed bins—in the run sheet, then give a brief reason for their order; provide a no-dependency Python CLI that uses the coordinator's date, volunteer count, and available tools to build this plan, asks for missing inputs, clearly rejects unusable entries, and never guesses. Include a beginner-friendly use guide, an honest volunteer invitation, and a concise risks-and-assumptions check; add no deliverables, site facts, or supplies, and flag safety claims requiring local verification."
+    },
+    {
+      "style": "shorter",
+      "bounded_guidance": "Make the prompt concise without deleting a task, input, requested material, or constraint.",
+      "candidate_prompt": "Create a practical community-garden volunteer toolkit with an ordered, briefly explained run sheet for weeding, litter pickup, and returning tools to labeled shed bins. Include a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; ask for missing inputs, reject unusable entries, and never guess. Add a beginner-friendly guide, honest invitation, and concise risks-and-assumptions check; add nothing else, invent no site facts or supplies, and flag safety claims for local verification."
+    },
+    {
+      "style": "more_specific",
+      "bounded_guidance": "Name the existing CLI inputs separately and specify how each missing or unusable value is handled; clarify only what the source already requests.",
+      "candidate_prompt": "Prepare a practical community-garden session toolkit with an ordered run sheet for pulling weeds, collecting litter, and returning tools to labeled shed bins, plus a brief reason for the order. Provide a no-dependency Python CLI that builds the plan using the coordinator's date, volunteer count, and available tools as separate inputs; for a missing input, ask for that named value, and when rejecting an unusable entry, identify which entry was rejected without supplying a guess. Include the beginner-friendly guide, honest invitation, and concise risks-and-assumptions check; add no deliverables, site facts, or supplies, and flag safety claims requiring local verification."
+    },
+    {
+      "style": "add_detail",
+      "bounded_guidance": "Clarify the handling of already named tasks and inputs in the requested materials, without adding facts, supplies, deliverables, or fixed quantities.",
+      "candidate_prompt": "Prepare a practical toolkit whose run sheet names the three listed jobs—weeding, litter pickup, and returning tools to labeled shed bins—and gives a short reason for their sequence. Write a no-dependency Python CLI that uses the coordinator's date, volunteer count, and available-tools list to build the plan, asks for each missing value instead of filling it, clearly rejects unusable entries, and never guesses. Make the beginner-friendly guide explain what information each named input supplies to the plan, then include an honest invitation and concise risks-and-assumptions check; invent no site facts or supplies, add no deliverables, and flag safety claims for local verification."
+    },
+    {
+      "style": "structured",
+      "bounded_guidance": "Group the prompt by work sequence, planning tool, and supporting guidance; preserve the same task and boundaries.",
+      "candidate_prompt": "Organize the community-garden toolkit by work sequence, planning tool, and supporting guidance. In the run sheet, order weeding, litter pickup, and returning tools to labeled shed bins and briefly explain the order; provide a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools, asking for missing inputs, rejecting unusable entries clearly, and never guessing. Include a beginner-friendly use guide, an honest invitation, and a concise risks-and-assumptions check; add no deliverables, site facts, or supplies, and flag safety claims that need local verification."
+    },
+    {
+      "style": "creative",
+      "bounded_guidance": "Use fresh, lively language in the requested invitation, using only the stated work as creative material; add no activities or fictional site detail.",
+      "candidate_prompt": "Create a practical toolkit for a community-garden volunteer session, with a run sheet for weeding, litter pickup, and returning tools to labeled shed bins in a briefly explained order. Include a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; ask for missing inputs, reject unusable entries clearly, and never guess. Add a beginner-friendly guide and risks-and-assumptions check, and make the honest invitation vivid by turning the three listed jobs into a playful call to care for the shared garden; do not invent site facts or supplies or add deliverables, and flag safety claims for local verification."
+    },
+    {
+      "style": "decision_ready",
+      "bounded_guidance": "Make the requested explanation of task order useful to a coordinator choosing how to run the session; do not assume local conditions or add criteria.",
+      "candidate_prompt": "Prepare a toolkit that helps the coordinator choose how to run the community-garden session; put weeding, litter pickup, and returning tools to labeled shed bins in the run sheet and place a brief reason beside each position in the sequence. Include a no-dependency Python CLI built from the coordinator's date, volunteer count, and available tools; ask for missing inputs, reject unusable entries, and never guess. Add a beginner-friendly guide, honest invitation, and concise risks-and-assumptions check; invent no site facts or supplies, add no deliverables, and flag safety claims for local verification."
+    },
+    {
+      "style": "research_ready",
+      "bounded_guidance": "In the existing risk check, distinguish facts explicitly stated in the request from assumptions or local details needing confirmation; flag safety claims for local verification, without inventing research or citations.",
+      "candidate_prompt": "Draft a practical toolkit for the community-garden session, with an ordered run sheet for weeding, litter pickup, and returning tools to labeled shed bins, and a brief reason for the order. Provide a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; ask for missing inputs, clearly reject unusable entries, and never guess. In the existing risks-and-assumptions check, distinguish facts explicitly supplied in the request from assumptions or local details needing confirmation, and flag safety claims requiring local verification; include the beginner-friendly guide and honest invitation, invent no research, citations, site facts, or supplies, and add no deliverables."
+    },
+    {
+      "style": "code_ready",
+      "bounded_guidance": "State the already requested Python CLI's implementable interface and input-validation behavior; do not invent flags, fields, dependencies, or outputs.",
+      "candidate_prompt": "Prepare the community-garden toolkit with a run sheet ordering weeding, litter pickup, and returning tools to labeled shed bins, with a brief reason for that order. Define the no-dependency Python CLI contract for implementation: use the coordinator's date, volunteer count, and available tools to build the plan, request absent inputs, identify and reject unusable entries, and never guess; add no flags, fields, or dependencies. Include the beginner-friendly use guide, honest volunteer invitation, and concise risks-and-assumptions check; invent no site facts or supplies, add no deliverables, and flag safety claims requiring local verification."
+    },
+    {
+      "style": "teach_me",
+      "bounded_guidance": "Use the existing beginner-friendly guide to explain how to provide each named input and what to do when the CLI asks for a missing or unusable value; add no separate tutorial.",
+      "candidate_prompt": "Prepare a practical community-garden toolkit with a run sheet ordering weeding, litter pickup, and returning tools to labeled shed bins, with a brief reason for the order. Include the no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; it must ask for missing inputs, clearly reject unusable entries, and never guess. In the beginner-friendly use guide, teach a novice how to enter each named value and respond when the tool requests a missing value or rejects an unusable one; also include the honest invitation and concise risks-and-assumptions check, with no added deliverables, site facts, or supplies and safety claims flagged for local verification."
+    },
+    {
+      "style": "audience_fit",
+      "bounded_guidance": "Address the novice coordinator and volunteer readers in language suited to them: keep the guide accessible and the invitation clear and honest, without assuming personal details.",
+      "candidate_prompt": "Write the community-garden toolkit for a novice coordinator and volunteer readers, using plain language suited to readers new to the task without assuming their age, abilities, or site knowledge. Order weeding, litter pickup, and returning tools to labeled shed bins in the run sheet and briefly explain the order; provide the no-dependency Python CLI using the coordinator's date, volunteer count, and available tools, asking for missing inputs, rejecting unusable entries clearly, and never guessing. Include an accessible beginner-friendly use guide, an honest invitation that tells volunteer readers what work is listed, and a concise risks-and-assumptions check; add no deliverables or supplies, invent no site facts, and flag safety claims requiring local verification."
+    },
+    {
+      "style": "tone_voice",
+      "bounded_guidance": "Use a warm, calm, direct voice for the prose and invitation; tone may change but task facts and requirements may not.",
+      "candidate_prompt": "Write a warm, practical toolkit for a community-garden volunteer session, with a calm, easy-to-follow run sheet for weeding, litter pickup, and returning tools to labeled shed bins, plus a brief reason for the order. Include a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; have it ask for missing inputs, clearly reject unusable entries, and never guess. Add a beginner-friendly guide, a friendly and honest invitation, and a concise risks-and-assumptions check; keep the same deliverables, invent no site facts or supplies, and flag safety claims for local verification."
+    },
+    {
+      "style": "persuasive",
+      "bounded_guidance": "Make the requested invitation motivating and clear about the stated work, without attendance promises or invented garden details.",
+      "candidate_prompt": "Prepare a practical toolkit with an ordered, briefly explained run sheet for the community-garden jobs: weeding, litter pickup, and returning tools to labeled shed bins. Include a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; ask for missing inputs, reject unusable entries clearly, and never guess. Add a beginner-friendly guide, plus a convincing invitation that gives volunteers an honest call to join the listed work without promising outcomes; include the concise risks-and-assumptions check, add no deliverables, invent no site facts or supplies, and flag safety claims for local verification."
+    },
+    {
+      "style": "faithful_transform",
+      "bounded_guidance": "Preserve the source's sentence order and information flow, making only light wording changes for natural phrasing; do not make the instructions more directive or add emphasis.",
+      "candidate_prompt": "Prepare a practical toolkit for a volunteer session at our community garden; put pulling weeds, collecting litter, and returning tools to labeled shed bins in a run sheet, and briefly explain the task order. Include a no-dependency Python command-line tool that builds the plan from the coordinator's date, volunteer count, and available tools; ask when an input is missing, clearly reject unusable entries, and never guess values. Include a beginner-friendly use guide, an honest volunteer invitation, and a concise risks-and-assumptions check; keep to those deliverables, invent no site facts or supplies, and flag safety claims that require local verification."
+    },
+    {
+      "style": "exact_format",
+      "bounded_guidance": "Use a fixed presentation for the five deliverables already requested; formatting may be specified, but add no section or task.",
+      "candidate_prompt": "Return the community-garden toolkit under these headings in this order: Run sheet, Python CLI, Use guide, Volunteer invitation, Risks and assumptions. The run sheet must order weeding, litter pickup, and returning tools to labeled shed bins and briefly explain the order; the no-dependency Python CLI must use the coordinator's date, volunteer count, and available tools, ask for missing inputs, reject unusable entries clearly, and never guess. Keep the guide beginner-friendly and invitation honest; add no sections, deliverables, site facts, or supplies, and flag safety claims needing local verification."
+    },
+    {
+      "style": "proofread_only",
+      "bounded_guidance": "Correct the one real spelling error only; preserve wording and content otherwise.",
+      "candidate_prompt": "Draft a practical toolkit for a volunteer work session at our community garden; put pulling weeds, collecting litter, and returning tools to labeled shed bins in a run sheet, and explain the task order briefly. Include a no-dependency Python command-line tool that builds the plan from the coordinator's date, volunteer count, and available tools; it must ask when any input is missing, reject unusable entries clearly, and never guess values. Include a beginner-friendly use guide, an honest volunteer invitation, and a concise risks-and-assumptions check; keep to those deliverables, invent no site facts or supplies, and flag safety claims that require local verification."
+    },
+    {
+      "style": "ask_me_first",
+      "bounded_guidance": "Ask the coordinator for any missing date, volunteer count, or available tools before finalizing the plan; do not guess and keep the same toolkit deliverables.",
+      "candidate_prompt": "If the coordinator has not provided a date, volunteer count, or available tools, ask for the missing value before finalizing the community-garden plan; do not guess. Once the values are available, give a run sheet ordering weeding, litter pickup, and returning tools to labeled shed bins, with a brief reason for the order, plus a no-dependency Python CLI that also asks for missing inputs and clearly rejects unusable entries. Include the beginner-friendly guide, honest invitation, and concise risks-and-assumptions check; add no deliverables, site facts, or supplies, and flag safety claims for local verification."
+    },
+    {
+      "style": "safety_aware",
+      "bounded_guidance": "Make safety uncertainty visible by explicitly flagging safety claims that require local verification; do not replace that instruction with generic questions or assert unknown procedures/equipment.",
+      "candidate_prompt": "Prepare a practical toolkit with an ordered run sheet for weeding, litter pickup, and returning tools to labeled shed bins, briefly explaining the sequence. Include a no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; ask for missing inputs, reject unusable entries, and never guess. Add a beginner-friendly guide, honest invitation, and concise risks-and-assumptions check that prominently flags safety claims requiring local verification; assert no unknown site procedures or equipment as facts, add no deliverables or supplies, and invent no site facts."
+    },
+    {
+      "style": "challenge_it",
+      "bounded_guidance": "Use the requested risks-and-assumptions check to question whether the stated sequence and inputs are sufficient; when no concern is supported by the prompt, say so rather than inventing one.",
+      "candidate_prompt": "Create the community-garden toolkit and question whether the stated sequence and inputs are enough, without assuming they are; order weeding, litter pickup, and returning tools to labeled shed bins in the run sheet, briefly explain the sequence, and raise only concerns supported by the request. Include the no-dependency Python CLI using the coordinator's date, volunteer count, and available tools; it must ask for missing inputs, reject unusable entries, and never guess. Add the beginner-friendly guide, honest invitation, and concise risks-and-assumptions check; add no other deliverables, site facts, or supplies, and flag safety claims for local verification."
+    },
+    {
+      "style": "red_team",
+      "bounded_guidance": "Stress-test only the stated task sequence and CLI's missing/unusable-input behavior, reporting failure risks in the existing check; do not add a test-suite deliverable.",
+      "candidate_prompt": "Prepare the community-garden toolkit and adversarially inspect the stated task sequence and the tool's handling of missing or unusable values; order weeding, litter pickup, and returning tools to labeled shed bins in the run sheet, with a brief reason for the sequence. The no-dependency Python CLI must build from the coordinator's date, volunteer count, and available tools, ask for missing inputs, clearly reject unusable entries, and never guess; report any observed risk only in the existing risks-and-assumptions check. Include the beginner-friendly guide and honest invitation, add no deliverables, site facts, or supplies, and flag safety claims for local verification."
+    },
+    {
+      "style": "surprise_me",
+      "bounded_guidance": "Use an unexpected but usable pairing layout for the same toolkit; preserve the five requested outputs and every information boundary.",
+      "candidate_prompt": "Lay out the community-garden toolkit as paired prompts and responses, while keeping it practical for the coordinator. Pair each run-sheet task—weed, collect litter, return tools to labeled shed bins—with its position and brief reason, then pair each CLI input with its missing-value question or unusable-entry response; the no-dependency Python tool must build from the coordinator's date, volunteer count, and available tools without guessing. Keep the beginner-friendly guide, honest invitation, and concise risks-and-assumptions check, but add no deliverables, site facts, or supplies and flag safety claims for local verification."
+    }
+  ],
+  "auto_cases": [
+    {
+      "requested_style": "auto",
+      "inference": "creative",
+      "applied_style": "creative",
+      "candidate_is_exactly_named_style_candidate": "creative",
+      "note": "Auto is the request mode; it uses the same style-appropriate output as the resolved style."
+    },
+    {
+      "requested_style": "auto",
+      "inference": "uncertain; fallback clearer",
+      "applied_style": "clearer",
+      "candidate_is_exactly_named_style_candidate": "clearer",
+      "note": "Auto fallback uses the clearer candidate exactly; do not fabricate a distinct Auto-specific rewrite."
+    }
+  ],
+  "fidelity_notes": [
+    "All candidate prompts have three sentences, matching the shared input to avoid the deterministic unequal replacement correspondence failure in sentence_edit_script.",
+    "For a whole-prompt style fixture, test diagnosis must have no diagnosed source spans or confirmed gap slots. This exercises the existing whole_prompt_latitude behavior and must not weaken production confinement.",
+    "A sentence-count-changing rewrite remains rejected by normal correspondence checks unless the existing restructure_lossless path and proof authorize it.",
+    "Exact-output/hard literals stay binding; route incompatibility or impossible is a valid result where applicable.",
+    "Proofread-only intentionally makes the minimal real correction from 'volunter' to 'volunteer'; this single-word correction is meaningful for that style and must not be expanded into a broader rewrite.",
+    "All scripted outputs are design fixtures, not population-quality claims."
+  ]
+}

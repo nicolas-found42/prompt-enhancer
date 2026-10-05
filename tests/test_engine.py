@@ -34,24 +34,48 @@ def test_environment_cannot_change_fixed_jev_model(monkeypatch) -> None:
     assert Settings.from_env().judge_model == "typesafe/jev-1.13-20260917"
 
 
-def _no_test_gateway(*, gaps: tuple[str, ...] = ()) -> ScriptedGateway:
+def _no_test_gateway(
+    *, gaps: tuple[str, ...] = (), healthy_baseline: bool = False
+) -> ScriptedGateway:
     def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
             return {
                 "type": "choice",
                 "choice": choice,
                 "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
-        probability = (
-            0.99 if request.get("key") in {f"gap:{gap}" for gap in gaps} else 0.01
-        )
+        if key.startswith("score:"):
+            state = request.get("state", {})
+            is_baseline = state.get("candidate_prompt") == state.get("original_prompt")
+            probability = 0.99 if healthy_baseline and is_baseline else 0.01
+        elif key.startswith(("evaluate:", "fidelity:", "strategy_recheck:")):
+            probability = 0.99
+        else:
+            probability = 0.99 if key in {f"gap:{gap}" for gap in gaps} else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
-    return ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
-    )
+    def chat(_model, messages, *, role, **_kwargs):
+        if role != "writer":
+            return "pass"
+        state = json.loads(messages[1]["content"])
+        strategies = state.get("strategies")
+        if isinstance(strategies, list):
+            prompt = str(state.get("prompt", ""))
+            return json.dumps(
+                {
+                    strategy["name"]: f"{prompt} {strategy['name']} rewrite."
+                    for strategy in strategies
+                }
+            )
+        return '{"tests":[]}'
+
+    return ScriptedGateway(chat=chat, decision=decide)
 
 
 def test_run_without_qualifying_candidates_reports_attempts_and_persists() -> None:
@@ -59,22 +83,23 @@ def test_run_without_qualifying_candidates_reports_attempts_and_persists() -> No
     store = RunStore(":memory:")
     optimizer = PromptOptimizer(store=store, gateway=_no_test_gateway())
 
-    result = optimizer.optimize(prompt, {"tier": "Fast"})
+    result = optimizer.optimize(prompt, {"time_limit_s": 0})
 
-    # The stub writer returns no candidates, so the always-attempt run ends
-    # with an explicit no-qualified-candidate outcome instead of a silent
-    # no-op.
-    assert result["status"] == "failed"
+    # The writer emits candidates that all fail the quality floor. The run
+    # records that round, then stops only because the explicit time budget is
+    # exhausted.
+    assert result["status"] == "needs_input"
     assert result["final_prompt"] == prompt
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "no_qualified_candidate"
-    assert result["report"]["failure"]["kind"] == "improvement_not_verified"
+    assert result["report"]["status"] == "awaiting_approval"
+    assert result["report"]["pause"]["reason"] == "time_limit"
+    assert result["report"]["history"][0]["status"] == "no_qualified_candidate"
     assert result["run_id"]
 
     record = store.get_run(result["run_id"])
     assert record is not None
     assert record["prompt"] == prompt
-    assert record["options"]["tier"] == "fast"
+    assert "tier" not in record["options"]
     assert record["result"] == result
     assert record["cost"] == result["cost"]
     assert record["timing"] == result["timing"]
@@ -127,7 +152,7 @@ def test_good_unchanged_prompt_converges_from_its_own_baseline_vector() -> None:
         store=RunStore(":memory:"),
         gateway=ScriptedGateway(chat=chat, decision=decide),
         writer_instruction_version=4,
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    ).optimize(prompt, {"clarification_allowed": False})
 
     assert result["status"] == "completed"
     assert result["final_prompt"] == prompt
@@ -187,7 +212,7 @@ def test_judge_provider_failure_stops_the_run_after_one_attempt(failure_prefix) 
         store=store,
         gateway=ScriptedGateway(chat=chat, decision=decide),
         writer_instruction_version=4,
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    ).optimize(prompt, {"clarification_allowed": False})
 
     assert result["status"] == "failed"
     assert result["final_prompt"] == prompt
@@ -231,7 +256,7 @@ def test_unchanged_prompt_without_success_tests_converges_as_unverified() -> Non
         store=RunStore(":memory:"),
         gateway=ScriptedGateway(chat=chat, decision=decide),
         writer_instruction_version=4,
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    ).optimize(prompt, {"clarification_allowed": False})
 
     assert result["status"] == "completed"
     assert result["final_prompt"] == prompt
@@ -348,9 +373,7 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
 
     # more_specific's bundle (add_missing_context, add_done_criteria,
     # specify_output_format) is the routed set the recheck stub admits.
-    result = optimizer.optimize(
-        prompt, {"tier": "fast", "improvement_style": "more_specific"}
-    )
+    result = optimizer.optimize(prompt, {"improvement_style": "more_specific"})
 
     assert result["status"] == "completed"
     assert result["report"]["status"] == "converged"
@@ -523,7 +546,7 @@ def test_confirmed_answer_supports_an_authorized_gap_fill() -> None:
         diagnosis_rubric=rubric,
     )
 
-    paused = optimizer.optimize(prompt, {"tier": "fast"})
+    paused = optimizer.optimize(prompt, {})
     result = optimizer.resume(paused["run_id"], {"language": "French"})
 
     assert paused["status"] == "needs_input"
@@ -563,7 +586,7 @@ def test_confirmed_answer_supports_an_authorized_gap_fill() -> None:
 
 def test_structured_jev_question_keeps_user_prompt_in_state() -> None:
     prompt = "Summarize this article in three concise bullets."
-    gateway = _no_test_gateway()
+    gateway = _no_test_gateway(healthy_baseline=True)
     rubric = DiagnosisRubric(
         task_types=(
             TaskType(
@@ -624,7 +647,7 @@ def test_context_gap_uses_its_calibrated_threshold_without_changing_goal_thresho
         chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
     )
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        "Help me plan.", {"tier": "fast"}
+        "Help me plan.", {}
     )
 
     diagnosis = result.get("diagnosis") or result["report"]["diagnosis"]
@@ -676,16 +699,18 @@ def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(
         chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
     )
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        prompt, {"tier": "fast"}
+        prompt, {"time_limit_s": 0}
     )
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["confirmed_gaps"] == []
     # The always-attempt run still writes candidates without confirmed gaps
-    # or faithful tests; this stub writes none, so the run ends with an
-    # explicit no-qualified-candidate outcome.
-    assert result["status"] == "failed"
-    assert result["report"]["status"] == "no_qualified_candidate"
+    # or faithful tests; this stub writes none. The explicit time budget then
+    # pauses the run after its recorded no-qualified-candidate round.
+    assert result["status"] == "needs_input"
+    assert result["report"]["status"] == "awaiting_approval"
+    assert result["report"]["pause"]["reason"] == "time_limit"
+    assert result["report"]["history"][0]["status"] == "no_qualified_candidate"
     if hinted:
         assert diagnosis["possible_gaps"] == [
             {
@@ -733,7 +758,7 @@ def test_recalibrated_gap_cutoffs_confirm_at_their_boundary(
     )
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
         "Tell the team about the new rules.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
 
     keys = [gap["key"] for gap in result["report"]["diagnosis"]["confirmed_gaps"]]
@@ -768,9 +793,12 @@ def test_possible_gaps_never_reach_model_requests() -> None:
     gateway = ScriptedGateway(chat=chat, decision=decide)
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
         "Tell the team about the new rules.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
 
+    assert result["status"] == "needs_input"
+    assert result["report"]["status"] == "awaiting_approval"
+    assert result["report"]["pause"]["reason"] == "time_limit"
     assert [gap["key"] for gap in result["report"]["diagnosis"]["possible_gaps"]] == [
         "outside_reference"
     ]
@@ -1108,7 +1136,7 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
     store = RunStore(":memory:")
     result = PromptOptimizer(
         store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
-    ).optimize("Answer my question.", {"tier": "fast", "clarification_allowed": False})
+    ).optimize("Answer my question.", {"clarification_allowed": False})
 
     assert result["status"] == "completed", result["report"]
     record = store.get_run(result["run_id"])
@@ -1233,7 +1261,7 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
         store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
     ).optimize(
         "Answer my question.",
-        {"tier": "fast", "clarification_allowed": False, "time_limit_s": 0},
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
 
     # Score-mass parsing is the subject. When the reversed judgment rejects
@@ -1283,9 +1311,11 @@ def test_task_taxonomy_descends_to_a_research_leaf() -> None:
         chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
     )
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        "Research the history of this topic."
+        "Research the history of this topic.", {"time_limit_s": 0}
     )
 
+    assert result["status"] == "needs_input"
+    assert result["report"]["pause"]["reason"] == "time_limit"
     assert result["report"]["diagnosis"]["task_type"] == "research"
 
 
@@ -1463,7 +1493,24 @@ def test_assumption_edit_rejects_repeated_or_reworded_values() -> None:
 def _clarification_gateway(
     meaning_score: float | None, initial_cost: float = 0.0
 ) -> ScriptedGateway:
-    def chat(_model, _messages, **_kwargs):
+    def chat(_model, messages, *, role, **_kwargs):
+        if role != "writer":
+            return "pass"
+        state = json.loads(messages[1]["content"])
+        strategies = state.get("strategies")
+        if isinstance(strategies, list):
+            prompt = str(state.get("prompt", ""))
+            assumptions = state.get("assumptions", [])
+            goal = next(
+                (
+                    str(item.get("value"))
+                    for item in assumptions
+                    if isinstance(item, Mapping) and item.get("key") == "goal"
+                ),
+                "summarize",
+            )
+            candidate = f"{prompt} Goal: {goal}."
+            return json.dumps({strategy["name"]: candidate for strategy in strategies})
         return '{"gaps":{"goal":{"question":"What should the assistant do?","options":[{"value":"summarize","label":"Summarize"},{"value":"analyze","label":"Analyze"}]}},"tests":[]}'
 
     def decide(request, **_kwargs):
@@ -1507,6 +1554,8 @@ def _clarification_gateway(
             if meaning_score is None:
                 raise RuntimeError("judge unavailable")
             probability = meaning_score
+        elif key.startswith(("score:", "evaluate:", "fidelity:", "strategy_recheck:")):
+            probability = 0.99
         else:
             probability = 0.99 if key == "gap:goal" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -1516,16 +1565,17 @@ def _clarification_gateway(
 
 
 def test_run_model_overrides_are_reported_without_changing_defaults() -> None:
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=_no_test_gateway(healthy_baseline=True)
+    )
 
     result = optimizer.optimize(
         "Write a concise report.",
         {
-            "tier": "fast",
             "model_overrides": {
                 "writer": "one-run-writer",
                 "strong": "one-run-strong",
-                "weak": ["weak-a", "weak-b"],
+                "weak": ["weak-a", "weak-b", "weak-c", "weak-d", "weak-e"],
             },
         },
     )
@@ -1534,25 +1584,54 @@ def test_run_model_overrides_are_reported_without_changing_defaults() -> None:
         "judge": "typesafe/jev-1.13-20260917",
         "writer": "one-run-writer",
         "strong": "one-run-strong",
-        "weak": ["weak-a", "weak-b"],
+        "weak": ["weak-a", "weak-b", "weak-c", "weak-d", "weak-e"],
     }
-    next_result = optimizer.optimize("Summarize this report.", {"tier": "fast"})
+    next_result = optimizer.optimize("Summarize this report.")
     assert next_result["report"]["models"]["writer"] == "space-bunny-free"
+
+
+def test_model_settings_reject_three_or_four_weak_models_before_save(tmp_path) -> None:
+    database = tmp_path / "runs.sqlite3"
+    optimizer = PromptOptimizer(
+        store=RunStore(database), gateway=_no_test_gateway(), config=Settings()
+    )
+    before = optimizer.get_model_settings()
+
+    for weak in (["one", "two", "three"], ["one", "two", "three", "four"]):
+        with pytest.raises(
+            ValueError, match="weak_models must contain at least 5 distinct model IDs"
+        ):
+            optimizer.update_model_settings({"weak_models": weak})
+        assert optimizer.get_model_settings() == before
+        optimizer.store.close()
+        optimizer = PromptOptimizer(
+            store=RunStore(database), gateway=_no_test_gateway(), config=Settings()
+        )
+        assert optimizer.get_model_settings() == before
 
 
 def test_engine_model_defaults_persist_and_apply_after_restart(tmp_path) -> None:
     database = tmp_path / "runs.sqlite3"
-    first = PromptOptimizer(store=RunStore(database), gateway=_no_test_gateway())
+    first = PromptOptimizer(
+        store=RunStore(database), gateway=_no_test_gateway(healthy_baseline=True)
+    )
 
-    saved = first.update_model_settings({"writer_model": "writer-v2"})
+    selected_weak = ["weak-a", "weak-b", "weak-c", "weak-d", "weak-e"]
+    saved = first.update_model_settings(
+        {"writer_model": "writer-v2", "weak_models": selected_weak}
+    )
     assert saved["writer_model"] == "writer-v2"
+    assert saved["weak_models"] == selected_weak
     assert (
         first.optimize("Write a report.")["report"]["models"]["writer"] == "writer-v2"
     )
     first.store.close()
 
-    reopened = PromptOptimizer(store=RunStore(database), gateway=_no_test_gateway())
+    reopened = PromptOptimizer(
+        store=RunStore(database), gateway=_no_test_gateway(healthy_baseline=True)
+    )
     assert reopened.get_model_settings()["writer_model"] == "writer-v2"
+    assert reopened.get_model_settings()["weak_models"] == selected_weak
     assert (
         reopened.optimize("Write another report.")["report"]["models"]["writer"]
         == "writer-v2"
@@ -1560,20 +1639,18 @@ def test_engine_model_defaults_persist_and_apply_after_restart(tmp_path) -> None
 
 
 @pytest.mark.parametrize(
-    "tier,weak",
+    "weak",
     [
-        ("fast", ["one"]),
-        ("standard", ["one", "two"]),
-        ("fast", ["one", "one"]),
+        ["one", "two", "three"],
+        ["one", "two", "three", "four"],
+        ["one", "two", "three", "four", "four"],
     ],
 )
-def test_run_rejects_weak_panels_below_tier_budget(tier: str, weak: list[str]) -> None:
+def test_run_rejects_weak_panels_below_fixed_minimum(weak: list[str]) -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
 
-    with pytest.raises(ValueError, match="weak panel"):
-        optimizer.optimize(
-            "Write a release note.", {"tier": tier, "model_overrides": {"weak": weak}}
-        )
+    with pytest.raises(ValueError, match="weak panel requires 5 distinct models"):
+        optimizer.optimize("Write a release note.", {"model_overrides": {"weak": weak}})
 
 
 @pytest.mark.parametrize("failing_gate", ["no_invention", "meaning"])
@@ -1676,9 +1753,7 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it(
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
     )
-    result = optimizer.optimize(
-        "Original request.", {"tier": "fast", "clarification_allowed": False}
-    )
+    result = optimizer.optimize("Original request.", {"clarification_allowed": False})
 
     assert result["final_prompt"] == "Safe rewrite"
     rejection_reasons = result["report"]["selection_evidence"]["rejection_reasons"][
@@ -1702,51 +1777,6 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it(
     assert record["jev_answers"]
     assert record["original_weak_panel"]["mean_pass_rate"] == 0.0
     assert record["score_summaries"]["original"]["mean_pass_rate"] == 0.0
-
-
-def test_run_without_confirmed_gaps_does_not_offer_deep() -> None:
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
-    result = optimizer.optimize("Write a clear report.", {"tier": "fast"})
-
-    assert result["report"]["diagnosis"]["confirmed_gaps"] == []
-    assert result["report"]["offer_deep"] is None
-
-
-def test_deep_pass_executes_again_under_same_run_id() -> None:
-    optimizer = PromptOptimizer(
-        store=RunStore(":memory:"), gateway=_no_test_gateway(gaps=("goal",))
-    )
-    first = optimizer.optimize(
-        "Write a clear report.", {"tier": "fast", "clarification_allowed": False}
-    )
-
-    assert first["report"]["offer_deep"]["to_tier"] == "deep"
-    deep = optimizer.start_deep_pass(first["run_id"])
-
-    assert deep["run_id"] == first["run_id"]
-    assert deep["report"]["escalation"]["status"] == "completed"
-    assert [entry["tier"] for entry in deep["report"]["history"]] == ["fast", "deep"]
-    assert optimizer.store.get_run(first["run_id"])["tier"] == "deep"
-    assert optimizer.history.list_runs(None)[0]["escalated_from"] == "fast"
-
-
-def test_deep_pass_expands_a_fast_run_weak_panel_to_deep_budget() -> None:
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
-    first = optimizer.optimize(
-        "Write a clear report.",
-        {
-            "tier": "fast",
-            "model_overrides": {"weak": ["chosen-one", "chosen-two"]},
-        },
-    )
-
-    deep = optimizer.start_deep_pass(first["run_id"])
-
-    assert deep["run_id"] == first["run_id"]
-    assert deep["report"]["models"]["weak"][:2] == ["chosen-one", "chosen-two"]
-    assert len(deep["report"]["models"]["weak"]) == 5
-    assert "muse-spark-1.3-contributor" in deep["report"]["models"]["weak"]
-    assert "qwen3.8-flash" not in deep["report"]["models"]["weak"]
 
 
 def test_provider_failure_preserves_original_prompt_and_run_record() -> None:
@@ -1777,9 +1807,7 @@ def test_provider_failure_preserves_original_prompt_and_run_record() -> None:
     optimizer = PromptOptimizer(
         store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
     )
-    result = optimizer.optimize(
-        "Explain recursion.", {"tier": "fast", "clarification_allowed": False}
-    )
+    result = optimizer.optimize("Explain recursion.", {"clarification_allowed": False})
 
     assert result["status"] == "failed"
     assert result["final_prompt"] == "Explain recursion."
@@ -1817,7 +1845,7 @@ def test_failed_strong_reference_never_approves_a_candidate() -> None:
     store = RunStore(":memory:")
     result = PromptOptimizer(
         store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
-    ).optimize("Original request", {"tier": "fast", "clarification_allowed": False})
+    ).optimize("Original request", {"clarification_allowed": False})
 
     assert result["status"] == "failed"
     assert result["final_prompt"] == "Original request"

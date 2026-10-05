@@ -11,7 +11,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import Tier, TierBudget
+from .config import MAX_CANDIDATES, Settings
+from .models import WorkloadBudget
 
 StrategyKind = Literal["safe", "crutch"]
 
@@ -145,6 +146,8 @@ class CandidateBatchRequest:
     strategies: tuple[RewriteStrategy, ...]
     previous_failures: tuple[str, ...] = ()
     diagnosis: Mapping[str, Any] = field(default_factory=dict)
+    applied_style: str | None = None
+    style_authorization: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +155,12 @@ class CandidateBatchRequest:
             "strategies": [strategy.to_dict() for strategy in self.strategies],
             "previous_failures": list(self.previous_failures),
             "diagnosis": dict(self.diagnosis),
+            **({"applied_style": self.applied_style} if self.applied_style else {}),
+            **(
+                {"style_authorization": dict(self.style_authorization)}
+                if self.style_authorization
+                else {}
+            ),
         }
 
 
@@ -209,7 +218,7 @@ class StrategySearchResult:
     candidates: tuple[CandidateDraft, ...]
     selected_strategies: tuple[RewriteStrategy, ...]
     rejections: tuple[StrategyRejection, ...]
-    budget: TierBudget
+    budget: WorkloadBudget
     previous_failures: tuple[str, ...] = ()
 
     def __iter__(self):
@@ -388,9 +397,8 @@ def _writer_texts(
 def search_strategies(
     prompt: str,
     diagnosis: Any = None,
-    tier: Tier | str = "standard",
     *,
-    budget: TierBudget | None = None,
+    settings: Settings | None = None,
     strategies: Iterable[RewriteStrategy] = STRATEGY_LIBRARY,
     writer: Any = None,
     previous_failures: Sequence[str] | None = None,
@@ -398,15 +406,32 @@ def search_strategies(
     include_crutch: bool = True,
     recheck: Callable[[RewriteStrategy], Any] | None = None,
     priority_strategy: str | None = None,
+    applied_style: str | None = None,
+    style_authorization: Mapping[str, str] | None = None,
 ) -> StrategySearchResult:
-    """Rank strategies, apply the budget, and generate one candidate each.
+    """Rank strategies, apply the fixed workload, and generate candidates.
 
     ``previous_round_failures`` is an alias accepted for repeat-round callers.
     Rejected strategies are retained in the result for the report rather than
     disappearing silently.
     """
 
-    selected_budget = budget or Tier.parse(tier).budget
+    workload = settings or Settings()
+    selected_budget = WorkloadBudget(
+        candidates=min(workload.candidate_count, MAX_CANDIDATES),
+        models=workload.weak_model_count,
+        samples=workload.weak_samples,
+    )
+    counts = (
+        selected_budget.candidates,
+        selected_budget.models,
+        selected_budget.samples,
+    )
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 1
+        for value in counts
+    ):
+        raise ValueError("fixed workload counts must be positive integers")
     failures = tuple(
         str(item)
         for item in (
@@ -449,7 +474,9 @@ def search_strategies(
                 continue
         if len(eligible) >= selected_budget.candidates:
             rejected.append(
-                StrategyRejection(strategy.name, "outside tier candidate budget", score)
+                StrategyRejection(
+                    strategy.name, "outside fixed candidate budget", score
+                )
             )
             continue
         eligible.append(strategy)
@@ -462,6 +489,8 @@ def search_strategies(
         tuple(eligible),
         failures,
         diagnosis=diagnosis if isinstance(diagnosis, Mapping) else {},
+        applied_style=applied_style,
+        style_authorization=dict(style_authorization or {}),
     )
     generated: list[str] | None = None
     if writer is not None:

@@ -1,12 +1,17 @@
 """Public behavior tests for strategy search, weak-panel evaluation, and ranking."""
 
+import pytest
+
+from prompt_enhancer.config import Settings
+from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.grading import GradeReport
+from prompt_enhancer.runner import run_candidates
 from prompt_enhancer.selector import RankingCandidate, rank_candidates
 from prompt_enhancer.strategies import search_strategies
 from prompt_enhancer.strong_check import StrongCheckOutcome, StrongCheckReport
 
 
-def test_search_strategies_returns_multiple_named_candidates_and_tier_budgets():
+def test_search_strategies_uses_settings_backed_fixed_candidate_workload():
     calls = []
 
     def writer(request):
@@ -16,27 +21,36 @@ def test_search_strategies_returns_multiple_named_candidates_and_tier_budgets():
             for strategy in request.strategies
         }
 
-    fast = search_strategies("Explain the result", tier="fast", writer=writer)
-    deep = search_strategies("Explain the result", tier="deep", writer=writer)
-
-    assert len(fast.candidates) == 3
-    assert len(deep.candidates) == 6
-    assert len(calls) == 2
-    assert len({candidate.strategy_kind for candidate in deep.candidates}) == 2
-    assert any(candidate.is_crutch for candidate in deep.candidates)
-    assert all(
-        candidate.candidate_id.startswith("candidate-") for candidate in deep.candidates
+    default = search_strategies("Explain the result", writer=writer)
+    smaller = search_strategies(
+        "Explain the result", settings=Settings(candidate_count=3), writer=writer
     )
-    assert deep.budget.models == 5
-    assert deep.budget.samples == 3
-    assert deep.budget.max_rounds == 3
+    oversized = search_strategies(
+        "Explain the result", settings=Settings(candidate_count=20), writer=writer
+    )
+
+    assert len(default.candidates) == 6
+    assert len(smaller.candidates) == 3
+    assert len(oversized.candidates) == 6
+    assert len(calls) == 3
+    assert len(Settings().weak_models) == 5
+    assert len(set(Settings().weak_models)) == 5
+    assert "muse-spark-1.3-contributor" not in Settings().weak_models
+    assert len({candidate.strategy_kind for candidate in default.candidates}) == 2
+    assert any(candidate.is_crutch for candidate in default.candidates)
+    assert all(
+        candidate.candidate_id.startswith("candidate-")
+        for candidate in default.candidates
+    )
+    assert default.budget.candidates == 6
+    assert default.budget.models == 5
+    assert default.budget.samples == 3
 
 
 def test_search_strategies_uses_previous_failures_to_target_a_strategy():
     result = search_strategies(
         "Make a plan",
         diagnosis={"gaps": ["planning"]},
-        tier="deep",
         previous_round_failures=["split_into_steps did not help"],
     )
 
@@ -57,9 +71,56 @@ def test_candidate_writer_receives_confirmed_diagnosis():
         captured.append(request.to_dict())
         return {strategy.name: request.prompt for strategy in request.strategies}
 
-    search_strategies("Plan the trip", diagnosis=diagnosis, tier="fast", writer=writer)
+    search_strategies("Plan the trip", diagnosis=diagnosis, writer=writer)
 
     assert captured[0]["diagnosis"] == diagnosis
+
+
+def test_run_candidates_uses_five_settings_models_and_three_samples_by_default():
+    calls = []
+    gateway = ScriptedGateway(
+        chat=lambda _model, messages, *, role, **_kwargs: (
+            calls.append((role, messages[0]["content"])) or "answer"
+        )
+    )
+    search = search_strategies("Explain the result")
+
+    result = run_candidates(
+        search.candidates[:1], Settings().weak_models, gateway, original="original"
+    )
+
+    assert result.models == Settings().weak_models[:5]
+    assert len(result.models) == 5
+    assert result.samples == 3
+    assert len(result.results) == 30  # Original plus one candidate, 5 × 3 each.
+    assert len(calls) == 30
+
+    overridden = run_candidates(
+        search.candidates[:1],
+        Settings().weak_models,
+        gateway,
+        original="original",
+        samples=2,
+    )
+    assert overridden.samples == 2
+    assert len(overridden.results) == 20
+
+
+def test_run_candidates_rejects_short_or_duplicate_panels_before_gateway_calls():
+    calls = []
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: calls.append("called") or "answer"
+    )
+    candidates = search_strategies("Explain the result").candidates[:1]
+
+    for models in (
+        ("one", "two", "three", "four"),
+        ("one", "two", "two", "four", "five"),
+    ):
+        with pytest.raises(ValueError):
+            run_candidates(candidates, models, gateway)
+
+    assert calls == []
 
 
 def _grade(worst: float, mean: float = 0.0, spread: float = 0.0) -> GradeReport:

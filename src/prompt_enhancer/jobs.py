@@ -113,7 +113,7 @@ class RunJobs:
             job.round = {
                 str(key): int(value)
                 for key, value in info.items()
-                if str(key) in {"round", "max_rounds"}
+                if str(key) == "round"
             }
             if isinstance(elapsed, bool):
                 pass

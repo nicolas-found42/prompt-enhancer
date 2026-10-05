@@ -240,8 +240,13 @@ def test_only_explicit_adoption_changes_runtime_rubric_and_records_evidence(
         rubric_store=SQLiteRubricStore(tmp_path / "adoption.sqlite3"),
     )
     diagnosed = optimizer.optimize(
-        "Write a release note.", {"clarification_allowed": False}
+        "Write a release note.",
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
+    assert diagnosed["status"] == "needs_input"
+    assert diagnosed["report"]["status"] == "awaiting_approval"
+    assert diagnosed["report"]["pause"]["reason"] == "time_limit"
+    assert len(diagnosed["report"]["history"]) == 1
     assert (
         diagnosed["report"]["diagnosis"]["rubric_version"] == runtime_rubric.version_id
     )

@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
@@ -15,6 +16,16 @@ from prompt_enhancer.styles import (
 
 def _decide(request, **_kwargs):
     if request.get("type") == "choice":
+        if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+            request.get("key", "")
+        ).endswith(":verbosity_direction"):
+            choice = "same"
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
         choice = "general" if request.get("key") == "task_type" else "none"
         return {
             "type": "choice",
@@ -22,7 +33,9 @@ def _decide(request, **_kwargs):
             "probabilities": {choice: 1.0},
             "confidence": 1.0,
         }
-    return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
+    key = str(request.get("key", ""))
+    probability = 1.0 if key.startswith(("score:", "evaluate:")) else 0.01
+    return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
 
 def _client(store=None):
@@ -63,30 +76,35 @@ def test_parse_rejects_unknown_style_with_valid_values() -> None:
     assert "auto" in message and "clearer" in message
 
 
-def test_legacy_tier_input_is_ignored_and_deep_workload_runs() -> None:
-    client, _, store = _client()
+def test_legacy_tier_option_does_not_enter_the_run_contract() -> None:
+    store = RunStore(":memory:")
+    client, _, _ = _client(store)
     response = client.post(
         "/api/optimize",
         json={
             "prompt": "Explain recursion to a beginner in one paragraph.",
-            # Legacy tier input, top-level and smuggled via options: ignored.
             "tier": "fast",
-            "options": {"tier": "fast"},
             "improvement_style": "shorter",
         },
     )
+
     assert response.status_code == 200
     result = response.json()
     saved = store.get_run(result["run_id"])
     assert saved is not None
-    assert saved["tier"] == "deep"
-    assert saved["options"]["tier"] == "deep"
     assert saved["options"]["improvement_style"] == "shorter"
-    assert result["report"]["status"] in {
-        "no_qualified_candidate",
-        "improved_unverified",
-        "improved",
-    }
+    assert "tier" not in saved and "tier" not in saved["options"]
+    assert result["report"]["applied_style"] == "shorter"
+    assert result["report"]["outcome"] == "converged"
+    assert result["report"]["outcome_reason"]
+    last_round = result["report"]["history"][-1]
+    assert last_round["convergence"]["passed"] is True
+    assert (
+        last_round["evidence"]["evaluation_evidence"]["candidates"]["original"][
+            "accept"
+        ]["accepted"]
+        is True
+    )
 
 
 def test_each_named_style_is_accepted_and_recorded() -> None:
@@ -103,7 +121,7 @@ def test_each_named_style_is_accepted_and_recorded() -> None:
         record = store.get_run(run_id)
         assert record is not None, style
         assert record["options"]["improvement_style"] == style, style
-        assert record["tier"] == "deep", style
+        assert "tier" not in record and "tier" not in record["options"], style
 
 
 def test_unknown_style_is_rejected_with_a_clear_error() -> None:
@@ -116,20 +134,50 @@ def test_unknown_style_is_rejected_with_a_clear_error() -> None:
         assert "improvement_style must be one of" in str(response.json()["detail"])
 
 
-def test_deep_run_tops_up_a_short_explicit_weak_panel_from_defaults() -> None:
-    client, _, _ = _client()
-    picks = ["alpha-weak", "beta-weak", "gamma-weak"]
-    response = client.post(
-        "/api/optimize",
-        json={
-            "prompt": "Explain recursion to a beginner in one paragraph.",
+def test_five_explicit_weak_models_keep_order_and_do_not_change_defaults() -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+
+    picks = ["alpha-weak", "beta-weak", "gamma-weak", "delta-weak", "epsilon-weak"]
+    settings = Settings()
+    defaults = settings.weak_models
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(
+            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=_decide
+        ),
+        config=settings,
+    )
+    result = optimizer.optimize(
+        "Explain recursion to a beginner in one paragraph.",
+        {
             "improvement_style": "auto",
             "model_overrides": {"weak": picks},
         },
     )
-    assert response.status_code == 200
-    models = response.json()["report"]["models"]
-    assert models["weak"][:3] == picks
-    assert len(models["weak"]) == 5
-    assert len(set(models["weak"])) == 5
-    assert set(Settings().weak_models) | set(picks) >= set(models["weak"])
+
+    assert result["report"]["models"]["weak"] == picks
+    assert settings.weak_models == defaults
+
+
+@pytest.mark.parametrize("count", [3, 4])
+def test_short_explicit_weak_panel_is_rejected_before_gateway_calls(count: int) -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+
+    calls: list[str] = []
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: calls.append("chat") or '{"tests":[]}',
+        decision=lambda *_args, **_kwargs: (
+            calls.append("decision")
+            or {
+                "type": "noul",
+                "probability_true": 0.0,
+                "confidence": 1.0,
+            }
+        ),
+    )
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway)
+    picks = [f"weak-{index}" for index in range(count)]
+
+    with pytest.raises(ValueError, match="weak panel requires 5 distinct models"):
+        optimizer.optimize("Explain recursion.", {"model_overrides": {"weak": picks}})
+    assert calls == []
