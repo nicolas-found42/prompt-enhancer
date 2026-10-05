@@ -48,6 +48,9 @@ jobs:
       - name: Install Chromium
         run: npm --prefix web exec -- playwright install --with-deps chromium
       - name: Run all checks
+        env:
+          # Push runs on main after a PR merges; the guard is for local commits.
+          SKIP: no-commit-to-branch
         run: uv run --locked pre-commit run --all-files
       - name: Test optional CatBoost training path
         run: uv run --locked --extra training pytest -q tests/test_failure_prediction.py

@@ -20,6 +20,9 @@ the engine's single route to model providers.
 
 ## Change and verify
 
+- `main` is protected: never commit or push to it. Work on a feature branch, open
+  a PR from the template, merge by squash, then remove the local and remote
+  branch. Follow the [branch and PR workflow](docs/agents/branch-workflow.md).
 - When creating a branch, use a short lowercase kebab-case name. Prefix Codex
   task branches with `codex/`; otherwise use a conventional type prefix. Preserve
   a branch name supplied by the user.
