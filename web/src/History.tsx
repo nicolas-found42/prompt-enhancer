@@ -39,10 +39,11 @@ type HistoryProps = {
   refreshKey?: string;
 };
 
-/** The six status labels `badgeFor` can return. */
+/** The seven status labels `badgeFor` can return. */
 export type BadgeLabel =
   | "Cancelled"
   | "Failed"
+  | "Paused"
   | "Waiting for answers"
   | "Not tested"
   | "Improved"
@@ -63,6 +64,8 @@ export const BADGE_EXPLANATIONS: Record<BadgeLabel, string> = {
   Cancelled: "You cancelled this run, so your prompt was left unchanged.",
   Failed:
     "The run stopped before finishing. The reason is shown on this row; open it for the full failure card.",
+  Paused:
+    "This run paused at your time or spend limit. Continue it from the paused panel above History, or stop it.",
   "Waiting for answers":
     "This run is paused until you answer its questions in the clarification panel above History.",
   "Not tested":
@@ -82,6 +85,11 @@ export function badgeFor(run: RunSummary | RunDetail): Badge {
   );
   if (run.outcome === "cancelled" || reportStatus === "cancelled")
     return { label: "Cancelled", tone: "neutral" };
+  if (
+    run.outcome === "awaiting_approval" ||
+    reportStatus === "awaiting_approval"
+  )
+    return { label: "Paused", tone: "warn" };
   if (run.status === "failed") return { label: "Failed", tone: "bad" };
   if (run.status === "needs_input")
     return { label: "Waiting for answers", tone: "warn" };

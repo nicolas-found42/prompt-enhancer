@@ -128,6 +128,9 @@ def _normalise_record(
     failure_kind = failure.get("kind") if isinstance(failure, Mapping) else None
     if report_map.get("status") == "cancelled" or failure_kind == "cancelled":
         outcome = "cancelled"
+    elif report_map.get("status") == "awaiting_approval":
+        # A budget pause waits for the user's approval to continue or stop.
+        outcome = "awaiting_approval"
     elif str(status) == "completed" and report_map.get("status") in (
         "unverified",
         "improved_unverified",

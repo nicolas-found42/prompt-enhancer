@@ -12,7 +12,13 @@ const kindTitles: Record<Job["kind"], string> = {
   resume: "Continuing with your answers",
   skip: "Continuing without answers",
   deep: "Running a Deep pass",
+  continue: "Continuing after your approval",
 };
+
+function spentText(costTotal: number | undefined): string | null {
+  if (typeof costTotal !== "number" || !Number.isFinite(costTotal)) return null;
+  return `$${costTotal.toFixed(4)} spent`;
+}
 
 export default function RunProgress({ job, estimate, onCancel }: Props) {
   const current = job.stage ? stageOrder.indexOf(job.stage) : -1;
@@ -20,6 +26,7 @@ export default function RunProgress({ job, estimate, onCancel }: Props) {
     job.round.round && job.round.max_rounds && job.round.max_rounds > 1
       ? ` · round ${job.round.round} of ${job.round.max_rounds}`
       : "";
+  const spent = spentText(job.cost_total);
 
   return (
     <section
@@ -37,6 +44,7 @@ export default function RunProgress({ job, estimate, onCancel }: Props) {
             <span className="elapsed">
               {elapsedText(job.elapsed_ms)} elapsed
             </span>
+            {spent && <span className="spent"> · {spent}</span>}
             {round} · {estimate}
           </p>
         </div>
