@@ -333,6 +333,8 @@ def check_candidate_fidelity(
     support_prompt: str | None = None,
     preservation_proof: Mapping[str, Any] | None = None,
     legacy_protocol: bool = False,
+    candidate_id: str | None = None,
+    round_number: int | None = None,
 ) -> FidelityResult:
     """Check deterministic edit confinement, then semantic support and meaning.
 
@@ -354,6 +356,8 @@ def check_candidate_fidelity(
             "candidate_prompt": candidate_prompt,
             "diagnosis": stable_diagnosis,
             "strategy": str(getattr(strategy, "name", strategy)),
+            **({"candidate_id": candidate_id} if candidate_id is not None else {}),
+            **({"round_number": round_number} if round_number is not None else {}),
         }
         requests = [
             {
@@ -466,6 +470,8 @@ def check_candidate_fidelity(
             }
             for change_id, edit in changed_sentences.items()
         },
+        **({"candidate_id": candidate_id} if candidate_id is not None else {}),
+        **({"round_number": round_number} if round_number is not None else {}),
     }
     requests: list[dict[str, Any]] = []
     support_edit_by_key: dict[str, Mapping[str, Any]] = {}

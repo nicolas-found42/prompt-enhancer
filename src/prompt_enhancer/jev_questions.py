@@ -255,6 +255,15 @@ UNDERSTAND_STYLE_QUESTION = (
     "the single best fit for the task type; answer with low confidence when "
     "the prompt does not clearly favor one style."
 )
+UNDERSTAND_EXTRACT_QUESTION = (
+    "Does state.extracted_span express a literal response requirement that the "
+    "user intends to preserve verbatim, rather than an example, quoted content, "
+    "or data being discussed? Choose keep only for an actual literal requirement."
+)
+UNDERSTAND_EXTRACT_CRITERIA = {
+    "keep": "The exact span is a literal requirement the response must preserve.",
+    "ignore": "The span is an example, embedded data, or otherwise not a literal requirement.",
+}
 UNDERSTAND_PROBE_AMBIGUITY_QUESTION = (
     "Is the request in state.prompt ambiguous in a way that materially "
     "changes what a good rewrite would say?"

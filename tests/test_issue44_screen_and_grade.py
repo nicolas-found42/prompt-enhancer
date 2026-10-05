@@ -142,7 +142,11 @@ def _run_screened_round(
     def decide(request: Mapping[str, Any], **_kwargs: Any) -> dict[str, Any]:
         key = str(request.get("key", ""))
         if request.get("type") == "choice":
-            if key == "strategy_choice":
+            if key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                choice = "same"
+            elif key == "strategy_choice":
                 choice = "restructure_lossless"
             elif key.startswith("restructure_lossless:role:"):
                 choice = (
@@ -201,6 +205,8 @@ def _run_screened_round(
             probability = 1.0
         elif key.startswith("score:"):
             probability = score_probability
+        elif key.startswith("evaluate:"):
+            probability = 0.99
         else:
             probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -314,7 +320,13 @@ def test_new_optimizer_screens_three_tests_and_groups_four_outputs() -> None:
     for batch in grade_batches:
         _, envelope = batch_decision_payload(batch, model=gateway_model(batch))
         assert "items" not in envelope["state"]
-        assert list(envelope["state"]) == ["prompt", "output", "success_tests"]
+        assert list(envelope["state"]) == [
+            "prompt",
+            "output",
+            "candidate_id",
+            "round_number",
+            "success_tests",
+        ]
         assert len(envelope["state"]["success_tests"]) == 3
         assert all(question["state"] == envelope["state"] for question in batch)
         assert all(

@@ -146,6 +146,8 @@ def score_candidate(
     floors: Mapping[str, float],
     judge_model: str,
     run_id: str,
+    candidate_id: str | None = None,
+    round_number: int | None = None,
 ) -> ScoreVector:
     """Judge the five non-fidelity dimensions in one batch; fail closed.
 
@@ -161,6 +163,8 @@ def score_candidate(
         "candidate_prompt": candidate_prompt,
         "applied_style": applied_style,
         "style_bundle": list(style_bundle),
+        **({"candidate_id": candidate_id} if candidate_id is not None else {}),
+        **({"round_number": round_number} if round_number is not None else {}),
     }
     requests: list[dict[str, Any]] = []
     for dimension in JUDGED_DIMENSIONS:

@@ -20,6 +20,7 @@ def test_deep_run_retries_until_a_changed_candidate_passes_then_plateaus() -> No
     writer_rounds = 0
     candidate_score_vectors: list[tuple[str, dict[str, float]]] = []
     baseline_score_vector: dict[str, float] = {}
+    verbosity_requests: list[str] = []
 
     def chat(_model, messages, *, role, **_kwargs):
         nonlocal writer_rounds
@@ -46,6 +47,9 @@ def test_deep_run_retries_until_a_changed_candidate_passes_then_plateaus() -> No
                 selected = "general"
             elif key == "strategy_choice":
                 selected = next(option for option in criteria if option != "none")
+            elif key.endswith(":verbosity_direction"):
+                selected = "same"
+                verbosity_requests.append(key)
             elif key.startswith("fidelity:sentence:"):
                 selected = "supported_by_original"
             elif key == "route:find" and "none" in criteria:
@@ -109,6 +113,8 @@ def test_deep_run_retries_until_a_changed_candidate_passes_then_plateaus() -> No
     assert report["convergence"]["status"] == "converged"
     assert report["convergence"]["gain"] <= report["convergence"]["epsilon"]
     assert report["convergence"]["selected_candidate_id"]
+    assert verbosity_requests
+    assert all(key.startswith("evaluate:compare:") for key in verbosity_requests)
 
     for round_result, candidate_text in zip(history[:4], early_candidates, strict=True):
         selection = round_result["evidence"]["selection_evidence"]

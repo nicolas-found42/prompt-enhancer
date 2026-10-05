@@ -198,3 +198,59 @@ def test_selector_prefers_shorter_prompt_when_grades_are_equal():
     )
 
     assert result.selected_candidate_id == "candidate"
+
+
+def test_semantic_order_applies_only_after_binding_eligibility_gates():
+    baseline = _original("original prompt", _grade(0.0, 0.0))
+    zero_pass = _candidate("zero", "rewrite with zero passes", _grade(0.0, 0.0))
+    fidelity_rejected = _candidate(
+        "fidelity",
+        "rewrite failing fidelity",
+        _grade(0.9, 0.9),
+        eligible=False,
+        reasons=("candidate failed fidelity checks",),
+    )
+    semantic_winner = _candidate(
+        "semantic", "eligible semantic winner", _grade(0.6, 0.6)
+    )
+    robust_winner = _candidate("robust", "eligible robust winner", _grade(0.8, 0.7))
+
+    result = rank_candidates(
+        baseline,
+        [zero_pass, fidelity_rejected, semantic_winner, robust_winner],
+        candidate_order={
+            "zero": 1.0,
+            "fidelity": 0.99,
+            "semantic": 0.95,
+            "robust": 0.8,
+        },
+    )
+
+    assert result.selected_candidate_id == "semantic"
+    assert [item.candidate.candidate_id for item in result.ranked if item.rank] == [
+        "semantic",
+        "robust",
+    ]
+    assert "zero pass" in result.rejection_reasons["zero"][0]
+    assert result.rejection_reasons["fidelity"] == ("candidate failed fidelity checks",)
+
+
+def test_semantic_order_ties_use_existing_robust_then_stable_id_order():
+    baseline = _original("original prompt", _grade(0.2, 0.2))
+    candidates = [
+        _candidate("z-short", "short rewrite", _grade(0.8, 0.7)),
+        _candidate("a-long", "a much longer rewrite", _grade(0.9, 0.7)),
+        _candidate("m-long", "another longer rewrite", _grade(0.9, 0.7)),
+    ]
+
+    result = rank_candidates(
+        baseline,
+        candidates,
+        candidate_order={candidate.candidate_id: 0.8 for candidate in candidates},
+    )
+
+    assert [item.candidate.candidate_id for item in result.ranked if item.rank] == [
+        "a-long",
+        "m-long",
+        "z-short",
+    ]

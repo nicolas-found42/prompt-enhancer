@@ -99,7 +99,11 @@ class AttributionGateway(ScriptedGateway):
         if self.malformed_attribution and key.startswith("failure-attribution:"):
             return {"unexpected": "answer"}
         if request.get("type") == "choice":
-            if key == "task_type":
+            if key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                choice = "same"
+            elif key == "task_type":
                 choice = "general"
             elif key == "strategy_choice":
                 choice = "specify_output_format"
@@ -147,6 +151,8 @@ class AttributionGateway(ScriptedGateway):
                 )
             else:
                 probability = 0.01
+        elif key.startswith("evaluate:"):
+            probability = 0.99
         else:
             probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}

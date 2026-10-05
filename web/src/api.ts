@@ -99,7 +99,11 @@ export type OptimizeResult = {
   final_prompt?: string;
   original_kept?: boolean;
   questions?: ClarificationQuestion[];
-  report: Record<string, unknown>;
+  report: Record<string, unknown> & {
+    evaluation_evidence?: EvaluationEvidence;
+    judgment_provenance?: JudgmentProvenance[];
+    capabilities_fired?: CapabilitySummary;
+  };
   cost: {
     total: number;
     by_role?: Record<
@@ -142,6 +146,73 @@ export type ProviderState = {
 export type ProviderReport = {
   providers: Record<string, ProviderState>;
   fallback: { writer: string; strong: string };
+};
+
+export type JudgmentCapability =
+  | "verify"
+  | "screen"
+  | "noul"
+  | "find"
+  | "rerank"
+  | "classify"
+  | "decide"
+  | "compare"
+  | "extract"
+  | "audit"
+  | "review"
+  | "gate";
+
+export type JudgmentProvenance = {
+  capability: JudgmentCapability | null;
+  stage: string;
+  candidate_id: string | null;
+  round_number: number | null;
+  source_round: number | null;
+  question_key: string;
+  model: string | null;
+  raw_answer: unknown;
+  usable: boolean;
+  probability?: number;
+  selected?: string;
+};
+
+export type CapabilitySummary = Record<
+  JudgmentCapability,
+  { count: number; ran: boolean; stages: Record<string, number> }
+>;
+
+export type JudgmentEvidence = {
+  raw_answer: unknown;
+  usable: boolean;
+  probability?: number;
+  selected?: string;
+};
+
+export type EvaluationCandidateEvidence = {
+  candidate_id: string;
+  round_number: number;
+  comparison: Record<string, JudgmentEvidence>;
+  verification: Record<string, JudgmentEvidence>;
+  audit: Record<string, JudgmentEvidence>;
+  rerank: JudgmentEvidence;
+  review: JudgmentEvidence;
+  score_vector: unknown;
+  fidelity: unknown;
+  strong_check: unknown;
+  downstream_verification: "verified" | "unverified";
+  success_tests: unknown[];
+  success_test_outputs: unknown[];
+  success_test_grade: unknown;
+  accept: JudgmentEvidence & {
+    threshold: number;
+    accepted: boolean;
+  };
+  eligible: boolean;
+  rejection_reasons: string[];
+};
+
+export type EvaluationEvidence = {
+  candidates: Record<string, EvaluationCandidateEvidence>;
 };
 
 export type TierEstimate = {

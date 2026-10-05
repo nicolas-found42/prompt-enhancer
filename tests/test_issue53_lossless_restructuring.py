@@ -246,7 +246,12 @@ def _run_lossless_round(
             text = request["state"]["target_unit_text"]
             choice = "context" if "background" in text else "task"
         elif request.get("type") == "choice":
-            choice = "general" if key == "task_type" else "none"
+            if key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
         else:
             probability = (
                 1.0
@@ -260,6 +265,7 @@ def _run_lossless_round(
                 )
                 or (key.startswith("grade_") and request["state"]["output"] == "pass")
                 or key.startswith("score:")
+                or key.startswith("evaluate:")
                 else 0.0
             )
             if key == "fidelity:meaning":

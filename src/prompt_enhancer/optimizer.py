@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from hashlib import sha256
@@ -19,6 +19,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 from . import jev_questions
+from .candidate_evaluation import round_judgment_provenance, summarize_capabilities
 from .catalog import DEFAULT_DEEP_WEAK_PANEL, DEFAULT_WEAK_PANEL, LiveModelCatalog
 from .clarification import (
     ClarificationService,
@@ -126,6 +127,8 @@ STAGES = (
     "grading",
     "checking_fidelity",
     "strong_check",
+    "evaluating_candidates",
+    "accepting_candidates",
 )
 
 
@@ -138,6 +141,8 @@ class _RunContext:
     settings: Settings
     seed: int
     improvement_style: str = "auto"
+    understand: UnderstandResult | None = None
+    route: RouteResult | None = None
 
 
 class PromptOptimizer:
@@ -246,6 +251,7 @@ class PromptOptimizer:
         self.gateway: Gateway = (
             gateway if gateway is not None else self._default_gateway()
         )
+        self._run_log_start = len(self.gateway.decision_log)
         from .evaluation.order_bias import OrderBiasPolicy
 
         if grading_policy is None and grading_policy_from_env:
@@ -548,6 +554,7 @@ class PromptOptimizer:
         started_perf = perf_counter()
         started_at = utc_now()
         self.gateway.new_run(run_id)
+        self._run_log_start = len(self.gateway.decision_log)
 
         try:
             with self._progress_scope(progress, started_perf=started_perf):
@@ -583,7 +590,7 @@ class PromptOptimizer:
         """Build the public result for a run that stopped before finishing."""
         failure = describe_failure(exc)
         cancelled = failure["kind"] == "cancelled"
-        return OptimizeResult(
+        payload = OptimizeResult(
             status="failed",
             run_id=run_id,
             final_prompt=prompt,
@@ -605,6 +612,25 @@ class PromptOptimizer:
                 "finished_at": utc_now(),
             },
         )
+        self._attach_current_run_jev(payload)
+        return payload
+
+    def _attach_current_run_jev(
+        self,
+        payload: OptimizeResult,
+        previous: Sequence[Mapping[str, Any]] = (),
+    ) -> None:
+        """Retain all answered raw judgments when a run stops mid-pipeline."""
+        records = [dict(item) for item in previous] + [
+            dict(item)
+            for item in round_judgment_provenance(
+                self.gateway, self._run_log_start, {}, None
+            )
+        ]
+        report = dict(payload.get("report", {}))
+        report["judgment_provenance"] = records
+        report["capabilities_fired"] = summarize_capabilities(records)
+        payload["report"] = report
 
     def _optimize_started(
         self,
@@ -618,17 +644,25 @@ class PromptOptimizer:
         started_perf: float,
     ) -> OptimizeResult:
         self._stage("diagnosing")
+        diagnosis_log_start = len(self.gateway.decision_log)
         diagnosis = self._diagnose(prompt)
         diagnosis_payload = (
             diagnosis.as_dict()
             if diagnosis is not None
             else {"confirmed_gaps": [], "problem_sentences": []}
         )
+        diagnosis_payload["judgment_provenance"] = [
+            dict(item)
+            for item in round_judgment_provenance(
+                self.gateway, diagnosis_log_start, {}, None
+            )
+        ]
         request_evidence = diagnosis_payload.get("request_evidence", {})
         if (
             isinstance(request_evidence, Mapping)
             and request_evidence.get("complete") is False
         ):
+            diagnosis_records = diagnosis_payload["judgment_provenance"]
             return OptimizeResult(
                 status="completed",
                 run_id=run_id,
@@ -642,6 +676,8 @@ class PromptOptimizer:
                     "offer_deep": False,
                     "history": [],
                     "models": run_settings.model_roles(),
+                    "judgment_provenance": diagnosis_records,
+                    "capabilities_fired": summarize_capabilities(diagnosis_records),
                 },
                 cost=self._usage_cost(),
                 timing={
@@ -717,11 +753,13 @@ class PromptOptimizer:
                 writer_instruction_version=self.writer_instruction_version,
                 prior_failures=tuple(request.prior_failures),
                 prior_vector=request.prior_vector,
+                round_number=request.round_number,
                 grading_policy=self.grading_policy,
                 screen_cache=self.success_test_screen_cache,
                 decision_policy=self.decision_policy,
                 applied_style=route.applied_style,
                 hard_constraints=tuple(understand.hard_constraints),
+                exact_output=understand.exact_output,
                 route_strategies=tuple(route.strategies),
             )
             return run_round(self.gateway, plan, on_stage=self._stage)
@@ -732,6 +770,7 @@ class PromptOptimizer:
         self, context: _RunContext
     ) -> tuple[UnderstandResult, RouteResult]:
         """Run the Understand and Route stages for a round context."""
+        provenance_start = len(self.gateway.decision_log)
         understand = run_understand(
             self.gateway,
             context.prompt,
@@ -749,6 +788,16 @@ class PromptOptimizer:
             judge_model=context.settings.judge_model,
             run_id=context.run_id,
         )
+        stage_judgments = round_judgment_provenance(
+            self.gateway, provenance_start, {}, None
+        )
+        understand = replace(
+            understand,
+            provenance={
+                **understand.provenance,
+                "judgment_provenance": [dict(item) for item in stage_judgments],
+            },
+        )
         return understand, route
 
     @staticmethod
@@ -761,6 +810,35 @@ class PromptOptimizer:
         report["applied_style"] = understand.applied_style
         report["understand"] = understand.to_dict()
         report["route"] = route.to_dict()
+        understand_judgments = understand.provenance.get("judgment_provenance", ())
+        diagnosis_report = report.get("diagnosis", {})
+        diagnosis_judgments = (
+            diagnosis_report.get("judgment_provenance", ())
+            if isinstance(diagnosis_report, Mapping)
+            else ()
+        )
+        records = [
+            dict(item) for item in diagnosis_judgments if isinstance(item, Mapping)
+        ] + [dict(item) for item in understand_judgments if isinstance(item, Mapping)]
+        history = report.get("history", ())
+        if isinstance(history, list):
+            for round_item in history:
+                if not isinstance(round_item, Mapping):
+                    continue
+                evidence = round_item.get("evidence", {})
+                round_records = (
+                    evidence.get("judgment_provenance", ())
+                    if isinstance(evidence, Mapping)
+                    else ()
+                )
+                if isinstance(round_records, list):
+                    records.extend(
+                        dict(item)
+                        for item in round_records
+                        if isinstance(item, Mapping)
+                    )
+        report["judgment_provenance"] = records
+        report["capabilities_fired"] = summarize_capabilities(records)
         payload["report"] = report
 
     def _run_rounds(
@@ -778,7 +856,11 @@ class PromptOptimizer:
         cost_base: float = 0.0,
         elapsed_base_ms: int = 0,
     ) -> OptimizeResult:
-        understand, route = self._understand_and_route(context)
+        if context.understand is not None and context.route is not None:
+            understand, route = context.understand, context.route
+        else:
+            understand, route = self._understand_and_route(context)
+            context = replace(context, understand=understand, route=route)
         if route.impossible_reason is not None:
             return self._impossible_result(context, tier, understand, route)
         active = tracker if tracker is not None else RoundTracker()
@@ -811,7 +893,7 @@ class PromptOptimizer:
                 context, tier, state, paused, options, started_at
             )
         except RunCancelled:
-            return as_optimize_result(
+            cancelled = as_optimize_result(
                 build_cancelled_result(
                     run_id=context.run_id,
                     prompt=context.prompt,
@@ -824,6 +906,8 @@ class PromptOptimizer:
                     },
                 )
             )
+            self._attach_current_run_jev(cancelled)
+            return cancelled
         payload = cast(OptimizeResult, repeated.as_payload())
         self._attach_understand_route(payload, understand, route)
         return payload
@@ -839,6 +923,20 @@ class PromptOptimizer:
         failure = failure_impossible(
             understand.applied_style, understand.hard_constraints
         )
+        diagnosis_report = context.diagnosis
+        diagnosis_records = (
+            diagnosis_report.get("judgment_provenance", ())
+            if isinstance(diagnosis_report, Mapping)
+            else ()
+        )
+        records = [
+            dict(item)
+            for item in (
+                *diagnosis_records,
+                *understand.provenance.get("judgment_provenance", ()),
+            )
+            if isinstance(item, Mapping)
+        ]
         return OptimizeResult(
             status="failed",
             run_id=context.run_id,
@@ -860,6 +958,8 @@ class PromptOptimizer:
                 },
                 "history": [],
                 "models": context.settings.model_roles(),
+                "judgment_provenance": records,
+                "capabilities_fired": summarize_capabilities(records),
             },
             cost=self._usage_cost(),
             timing={
@@ -903,6 +1003,21 @@ class PromptOptimizer:
             spent_usd=paused.spent_usd,
             elapsed_ms=paused.elapsed_ms,
         )
+        saved_context = payload[RESUME_CONTEXT_KEY]
+        if context.understand is not None:
+            saved_context["understand"] = context.understand.to_dict()
+        if context.route is not None:
+            saved_context["route"] = context.route.to_dict()
+        saved_context["improvement_style"] = context.improvement_style
+        paused_report = dict(payload.get("report", {}))
+        paused_report["improvement_style"] = context.improvement_style
+        if context.understand is not None:
+            paused_report["applied_style"] = context.understand.applied_style
+            paused_report["understand"] = context.understand.to_dict()
+        if context.route is not None:
+            paused_report["route"] = context.route.to_dict()
+        payload["report"] = paused_report
+        self._attach_current_run_jev(cast(OptimizeResult, payload))
         return as_optimize_result(payload)
 
     def _diagnose(self, prompt: str) -> DiagnosisReport | None:
@@ -1115,6 +1230,7 @@ class PromptOptimizer:
             response = self.gateway.decide(
                 {
                     "model": self.config.judge_model,
+                    "key": "assumption_meaning",
                     "state": {
                         "original_prompt": original_prompt,
                         "updated_prompt": updated_prompt,
@@ -1249,6 +1365,7 @@ class PromptOptimizer:
         pause again at the very next boundary.
         """
         record, paused_result, saved = self._paused_record(run_id)
+        self._run_log_start = len(self.gateway.decision_log)
         control = RunControl.from_options(
             {"time_limit_s": time_limit_s, "spend_limit_usd": spend_limit_usd}
         )
@@ -1268,8 +1385,21 @@ class PromptOptimizer:
         )
         raw_seed = saved.get("seed")
         seed = raw_seed if isinstance(raw_seed, int) else _run_seed(prompt, None)
+        requested_style = str(
+            options.get("improvement_style") or saved.get("improvement_style") or "auto"
+        )
+        understand = _understand_result_from_saved(saved.get("understand"))
+        route = _route_result_from_saved(saved.get("route"))
         context = _RunContext(
-            prompt, run_id, diagnosis, assumptions, run_settings, seed
+            prompt,
+            run_id,
+            diagnosis,
+            assumptions,
+            run_settings,
+            seed,
+            requested_style,
+            understand,
+            route,
         )
         prior_history = _history_from_run(paused_result)
         tracker = RoundTracker.preload(
@@ -1307,6 +1437,16 @@ class PromptOptimizer:
         result["timing"] = timing
         result["cost"] = _add_usage_delta(
             dict(record.get("cost") or {}), usage_before, self._usage_cost()
+        )
+        previous_report = paused_result.get("report", {})
+        previous_judgments = (
+            previous_report.get("judgment_provenance", ())
+            if isinstance(previous_report, Mapping)
+            else ()
+        )
+        self._attach_current_run_jev(
+            cast(OptimizeResult, result),
+            [item for item in previous_judgments if isinstance(item, Mapping)],
         )
         return self._save_continued_run(record, cast(OptimizeResult, result))
 
@@ -1500,6 +1640,7 @@ class PromptOptimizer:
         detail = self.history.get_run(run_id)
         assert detail is not None
         self.gateway.new_run(run_id)
+        self._run_log_start = len(self.gateway.decision_log)
         prior_cost = dict(record.get("cost") or {})
         deep_options = dict(record.get("options") or {})
         overrides = dict(deep_options.get("model_overrides") or {})
@@ -1774,6 +1915,72 @@ def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
     if not lines:
         return prompt
     return prompt.rstrip() + "\n\nClarifications:\n" + "\n".join(lines)
+
+
+def _understand_result_from_saved(value: Any) -> UnderstandResult | None:
+    if not isinstance(value, Mapping):
+        return None
+    requested = value.get("requested_style")
+    applied = value.get("applied_style")
+    task_type = value.get("task_type")
+    if not all(isinstance(item, str) for item in (requested, applied, task_type)):
+        return None
+    raw_constraints = value.get("hard_constraints", ())
+    constraints = (
+        tuple(item for item in raw_constraints if isinstance(item, str))
+        if isinstance(raw_constraints, list)
+        else ()
+    )
+    raw_probes = value.get("probes", ())
+    probes = (
+        tuple(dict(item) for item in raw_probes if isinstance(item, Mapping))
+        if isinstance(raw_probes, list)
+        else ()
+    )
+    raw_provenance = value.get("provenance", {})
+    provenance = dict(raw_provenance) if isinstance(raw_provenance, Mapping) else {}
+    inferred = value.get("inferred_style")
+    screen = value.get("screen_embedded")
+    return UnderstandResult(
+        requested_style=requested,
+        applied_style=applied,
+        inferred_style=inferred if isinstance(inferred, str) else None,
+        task_type=task_type,
+        hard_constraints=constraints,
+        exact_output=value.get("exact_output") is True,
+        screen_embedded=screen if isinstance(screen, bool) else None,
+        probes=probes,
+        provenance=provenance,
+    )
+
+
+def _route_result_from_saved(value: Any) -> RouteResult | None:
+    if not isinstance(value, Mapping):
+        return None
+    applied = value.get("applied_style")
+    bundle = value.get("bundle")
+    if not isinstance(applied, str) or not isinstance(bundle, str):
+        return None
+    raw_strategies = value.get("strategies", ())
+    strategies = (
+        tuple(item for item in raw_strategies if isinstance(item, str))
+        if isinstance(raw_strategies, list)
+        else ()
+    )
+    raw_provenance = value.get("provenance", {})
+    provenance = dict(raw_provenance) if isinstance(raw_provenance, Mapping) else {}
+    find = value.get("find_selection")
+    compatible = value.get("decide_compatible")
+    impossible = value.get("impossible_reason")
+    return RouteResult(
+        applied_style=applied,
+        bundle=bundle,
+        strategies=strategies,
+        find_selection=find if isinstance(find, str) else None,
+        decide_compatible=compatible if isinstance(compatible, bool) else None,
+        impossible_reason=impossible if isinstance(impossible, str) else None,
+        provenance=provenance,
+    )
 
 
 def _mapping_total(report: Any) -> float:

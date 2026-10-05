@@ -108,8 +108,12 @@ def test_good_unchanged_prompt_converges_from_its_own_baseline_vector() -> None:
     def decide(request, **_kwargs):
         request_keys.append(request.get("key"))
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
-            if request.get("key") == "strategy_choice":
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
+            if key == "strategy_choice":
                 choice = "specify_output_format"
             return {
                 "type": "choice",
@@ -206,9 +210,15 @@ def test_unchanged_prompt_without_success_tests_converges_as_unverified() -> Non
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
-            if request.get("key") == "strategy_choice":
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            elif key == "task_type":
+                choice = "general"
+            elif key == "strategy_choice":
                 choice = "specify_output_format"
+            else:
+                choice = "none"
             return {
                 "type": "choice",
                 "choice": choice,
@@ -267,6 +277,8 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
         if request.get("type") == "choice":
             if key == "strategy_choice":
                 selected = "specify_output_format"
+            elif key.endswith(":verbosity_direction"):
+                selected = "same"
             elif key.startswith("fidelity:sentence:"):
                 selected = "new_requirement"
                 return {
@@ -302,6 +314,8 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
         elif key.startswith("score:"):
             probability = float(request["state"]["candidate_prompt"] == prompt)
         elif key == "fidelity:meaning":
+            probability = 0.99
+        elif key.startswith("evaluate:"):
             probability = 0.99
         else:
             probability = 0.01
@@ -449,6 +463,8 @@ def test_confirmed_answer_supports_an_authorized_gap_fill() -> None:
                 selected = "general"
             elif key == "strategy_choice":
                 selected = "add_missing_context"
+            elif key.endswith(":verbosity_direction"):
+                selected = "same"
             elif key == "infer:language":
                 selected = "unknown"
             elif key.startswith("fidelity:sentence:"):
@@ -485,6 +501,8 @@ def test_confirmed_answer_supports_an_authorized_gap_fill() -> None:
             probability = float(key.endswith("add_missing_context"))
         elif key.startswith("grade_"):
             probability = 0.99 if request["state"]["output"] == "pass" else 0.01
+        elif key.startswith("evaluate:"):
+            probability = 0.99
         else:
             probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -785,8 +803,12 @@ def test_clear_prompt_with_success_tests_is_still_rewritten() -> None:
                     },
                     "confidence": 0.99,
                 }
-            choice = "general" if request.get("key") == "task_type" else "none"
-            if request.get("key") == "strategy_choice":
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
+            if key == "strategy_choice":
                 choice = "add_missing_context"
             return {
                 "type": "choice",
@@ -801,6 +823,7 @@ def test_clear_prompt_with_success_tests_is_still_rewritten() -> None:
             1.0
             if key.startswith(("faithful:", "fidelity:", "grade_", "score:"))
             or (key == "strategy_recheck:add_missing_context")
+            or key.startswith("evaluate:")
             else 0.01
         )
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -834,50 +857,47 @@ def test_writer_choice_test_without_unknown_does_not_fail_run() -> None:
             )
         return "pass"
 
-    gateway = ScriptedGateway(
-        chat=chat,
-        decision=lambda request, **_kwargs: (
-            {
-                "type": "choice",
-                "choice": "supported_by_original",
-                "probabilities": {
+    def decide(request, **_kwargs):
+        key = str(request.get("key", ""))
+        if request.get("type") == "choice":
+            if key.startswith("fidelity:sentence:"):
+                selected = "supported_by_original"
+                probabilities = {
                     "supported_by_original": 0.99,
                     "supported_by_assumption": 0.0,
                     "new_requirement": 0.0,
                     "unknown": 0.01,
-                },
-                "confidence": 0.99,
-            }
-            if str(request.get("key", "")).startswith("fidelity:sentence:")
-            else {
-                "type": "choice",
-                "choice": "Asks for context",
-                "probabilities": {
+                }
+            elif key.startswith("grade_"):
+                selected = "Asks for context"
+                probabilities = {
                     "Asks for context": 0.99,
                     "Guesses": 0.0,
                     "unknown": 0.01,
-                },
+                }
+            elif key.endswith(":verbosity_direction"):
+                selected = "same"
+                probabilities = {selected: 1.0}
+            else:
+                selected = "general"
+                probabilities = {selected: 1.0}
+            return {
+                "type": "choice",
+                "choice": selected,
+                "probabilities": probabilities,
                 "confidence": 0.99,
             }
-            if str(request.get("key", "")).startswith("grade_")
-            else {
-                "type": "choice",
-                "choice": "general",
-                "probabilities": {"general": 1.0},
-                "confidence": 1.0,
-            }
-            if request.get("type") == "choice"
-            else {
-                "type": "noul",
-                "probability_true": 1.0
-                if str(request.get("key", "")).startswith(
-                    ("faithful:", "fidelity:", "strategy_recheck:", "score:")
-                )
-                else 0.01,
-                "confidence": 1.0,
-            }
-        ),
-    )
+        return {
+            "type": "noul",
+            "probability_true": 0.99
+            if key.startswith(
+                ("faithful:", "fidelity:", "strategy_recheck:", "score:", "evaluate:")
+            )
+            else 0.01,
+            "confidence": 1.0,
+        }
+
+    gateway = ScriptedGateway(chat=chat, decision=decide)
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
         "Summarize the supplied article in three bullets."
     )
@@ -901,6 +921,13 @@ def test_writer_missing_final_json_delimiters_does_not_fail_run() -> None:
                     },
                     "confidence": 0.99,
                 }
+            if str(request.get("key", "")).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             return {
                 "type": "choice",
                 "choice": "general",
@@ -910,7 +937,14 @@ def test_writer_missing_final_json_delimiters_does_not_fail_run() -> None:
         probability = (
             1.0
             if str(request.get("key", "")).startswith(
-                ("faithful:", "fidelity:", "strategy_recheck:", "grade_", "score:")
+                (
+                    "faithful:",
+                    "fidelity:",
+                    "strategy_recheck:",
+                    "grade_",
+                    "score:",
+                    "evaluate:",
+                )
             )
             else 0.01
         )
@@ -925,7 +959,7 @@ def test_writer_missing_final_json_delimiters_does_not_fail_run() -> None:
                 }
             )
             if "state.strategies" in messages[0]["content"]
-            else '{"tests":[{"question":"Does it summarize the article?","kind":"noul","expected":"yes"}]}'
+            else '{"tests":[{"question":"Does it summarize the article?","kind":"noul","expected":"yes"}'
         ),
         decision=decide,
     )
@@ -953,6 +987,13 @@ def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> N
                     },
                     "confidence": 0.99,
                 }
+            if str(request.get("key", "")).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             return {
                 "type": "choice",
                 "choice": "general",
@@ -962,7 +1003,14 @@ def test_writer_invalid_score_test_is_discarded_without_losing_valid_test() -> N
         probability = (
             1.0
             if str(request.get("key", "")).startswith(
-                ("faithful:", "fidelity:", "strategy_recheck:", "grade_", "score:")
+                (
+                    "faithful:",
+                    "fidelity:",
+                    "strategy_recheck:",
+                    "grade_",
+                    "score:",
+                    "evaluate:",
+                )
             )
             else 0.01
         )
@@ -1026,6 +1074,13 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
                     },
                     "confidence": 0.99,
                 }
+            if key.endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             choice = (
                 "general"
                 if key == "task_type"
@@ -1037,7 +1092,14 @@ def test_optimize_grades_noul_from_direct_answer_only() -> None:
         probability = (
             1.0
             if key.startswith(
-                ("gap:goal", "faithful:", "strategy_recheck:", "fidelity:", "score:")
+                (
+                    "gap:goal",
+                    "faithful:",
+                    "strategy_recheck:",
+                    "fidelity:",
+                    "score:",
+                    "evaluate:",
+                )
             )
             else 0.01
         )
@@ -1130,6 +1192,13 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
                     },
                     "confidence": 0.99,
                 }
+            if key.endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             choice = (
                 "general"
                 if key == "task_type"
@@ -1146,7 +1215,14 @@ def test_optimize_grades_score_test_from_probability_mass_and_sends_plain_levels
         probability = (
             1.0
             if key.startswith(
-                ("gap:goal", "faithful:", "strategy_recheck:", "fidelity:", "score:")
+                (
+                    "gap:goal",
+                    "faithful:",
+                    "strategy_recheck:",
+                    "fidelity:",
+                    "score:",
+                    "evaluate:",
+                )
             )
             else 0.01
         )
@@ -1414,6 +1490,13 @@ def _clarification_gateway(
                 "confidence": 1.0,
             }
         if request.get("type") == "choice":
+            if key.endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             return {
                 "type": "choice",
                 "choice": "none",
@@ -1548,6 +1631,8 @@ def test_engine_rejects_unfaithful_candidate_even_when_weak_models_prefer_it(
                     if failing_gate == "no_invention" and sentence == rejected_prompt
                     else "supported_by_original"
                 )
+            elif key.endswith(":verbosity_direction"):
+                choice = "same"
             else:
                 choice = "none"
             probabilities = {
@@ -1672,7 +1757,11 @@ def test_provider_failure_preserves_original_prompt_and_run_record() -> None:
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
             return {
                 "type": "choice",
                 "choice": choice,
@@ -1707,7 +1796,11 @@ def test_failed_strong_reference_never_approves_a_candidate() -> None:
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
             return {
                 "type": "choice",
                 "choice": choice,

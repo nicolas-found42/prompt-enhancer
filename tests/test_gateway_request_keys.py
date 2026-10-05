@@ -66,6 +66,16 @@ def _pipeline_gateway() -> ScriptedGateway:
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+                request.get("key", "")
+            ).endswith(":verbosity_direction"):
+                choice = "same"
+                return {
+                    "type": "choice",
+                    "choice": choice,
+                    "probabilities": {choice: 1.0},
+                    "confidence": 1.0,
+                }
             choice = "general" if request.get("key") == "task_type" else "none"
             return {
                 "type": "choice",

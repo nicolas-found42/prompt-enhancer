@@ -358,7 +358,11 @@ def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
             return {
                 "type": "choice",
                 "choice": choice,
@@ -400,7 +404,11 @@ def test_disabled_default_question_stays_disabled_after_store_reopens(
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
+            key = str(request.get("key", ""))
+            if key.endswith(":verbosity_direction"):
+                choice = "same"
+            else:
+                choice = "general" if key == "task_type" else "none"
             return {
                 "type": "choice",
                 "choice": choice,
@@ -461,6 +469,13 @@ def test_historical_calibration_loads_but_cannot_gate_current_jev(
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            if str(request.get("key", "")).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             return {
                 "type": "choice",
                 "choice": "none",

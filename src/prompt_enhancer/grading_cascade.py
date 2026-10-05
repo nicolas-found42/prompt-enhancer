@@ -354,6 +354,7 @@ def resolve_uncertain_grades(
     ineligible_pairs: Mapping[tuple[int, int], Mapping[str, Any]] | None = None,
     uncertainty_bands: Mapping[tuple[int, int], tuple[float, float]] | None = None,
     read_criteria: bool = False,
+    round_number: int | None = None,
 ) -> tuple[
     dict[tuple[int, int], float], set[int], list[dict[str, Any]], dict[str, Any]
 ]:
@@ -448,6 +449,8 @@ def resolve_uncertain_grades(
         state = {
             "prompt": run.prompt,
             "output": run.output,
+            **({"candidate_id": run.candidate_id} if round_number is not None else {}),
+            **({"round_number": round_number} if round_number is not None else {}),
             "criterion": test.get("question", ""),
             "prompt_spans": _source_spans(run.prompt),
             "output_spans": _source_spans(run.output),
@@ -575,6 +578,16 @@ def resolve_uncertain_grades(
                     evidence_state = {
                         "prompt": run.prompt,
                         "output": run.output,
+                        **(
+                            {"candidate_id": run.candidate_id}
+                            if round_number is not None
+                            else {}
+                        ),
+                        **(
+                            {"round_number": round_number}
+                            if round_number is not None
+                            else {}
+                        ),
                         "criterion": str(test.get("question", "")),
                         "prompt_spans": _source_spans(run.prompt),
                         "output_spans": _source_spans(run.output),
