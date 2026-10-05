@@ -445,10 +445,10 @@ def test_conflict_rule_rejects_strong_evidence_that_contradicts_the_count() -> N
 # --- Acceptance: pre-version-12 recordings reproduce -------------------------
 
 
-def test_reading_gate_matches_the_writer_version_constants() -> None:
+def test_reading_gate_version_is_supported_by_the_current_writer() -> None:
     assert CRITERION_READING_MIN_VERSION == 12
     assert CRITERION_READING_MIN_VERSION in WRITER_INSTRUCTION_VERSIONS
-    assert CURRENT_WRITER_INSTRUCTION_VERSION == CRITERION_READING_MIN_VERSION
+    assert CURRENT_WRITER_INSTRUCTION_VERSION >= CRITERION_READING_MIN_VERSION
 
 
 @pytest.mark.parametrize("version", [7, 11])
