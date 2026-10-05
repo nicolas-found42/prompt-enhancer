@@ -497,6 +497,17 @@ it("explains all six badgeFor labels in words, not by colour", () => {
   }
 });
 
+it("pills an improved-but-untested run as Not tested", () => {
+  expect(
+    badgeFor({
+      run_id: "u",
+      prompt: "Case improved without tests.",
+      original_kept: false,
+      report: { status: "improved_unverified" },
+    } as RunSummary).label
+  ).toBe("Not tested");
+});
+
 it("gives every list pill a title for the pointer and a description for the keyboard", async () => {
   const cancelled: RunSummary = {
     run_id: "c",

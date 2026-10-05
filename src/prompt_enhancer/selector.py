@@ -185,6 +185,7 @@ def rank_candidates(
     candidates: Sequence[RankingCandidate],
     *,
     strong_check: StrongCheckReport | None = None,
+    allow_unverified_selection: bool = False,
 ) -> RankingResult:
     """Rank changed candidates by worst, mean, spread, then prompt length.
 
@@ -197,6 +198,10 @@ def rank_candidates(
     that passes nothing is not an improvement.
     ``strong_check`` is the strong check's report; this function only consumes
     each candidate's verdict and never repeats the strong-model comparison.
+    ``allow_unverified_selection`` covers runs with no success tests: pass
+    rates do not exist (they are not zero), so the best fidelity-eligible
+    changed candidate wins and the unverified evidence status — recorded by
+    the caller — carries the uncertainty instead of the selection floor.
     """
 
     baseline = original
@@ -226,12 +231,18 @@ def rank_candidates(
     eligible.sort(key=lambda candidate: (_key(candidate), candidate.candidate_id))
     # A changed candidate wins ties with the original only when it actually
     # passes something: a zero-pass-rate rewrite is indistinguishable from a
-    # broken prompt, so it never displaces the original.
+    # broken prompt, so it never displaces the original. Runs without success
+    # tests have no pass rates at all, so the floor cannot apply there; the
+    # caller opts into selecting the best eligible candidate instead.
     best = eligible[0] if eligible else None
     selected = (
         best
         if best is not None
-        and (best.grade is None or (best.grade.worst > 0 or baseline.grade is None))
+        and (
+            allow_unverified_selection
+            or best.grade is None
+            or (best.grade.worst > 0 or baseline.grade is None)
+        )
         else None
     )
     selected_id = selected.candidate_id if selected else None

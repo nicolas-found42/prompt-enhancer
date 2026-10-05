@@ -305,14 +305,16 @@ def gateway_model(batch: Sequence[Mapping[str, Any]]) -> str:
     return str(batch[0]["model"])
 
 
-def test_screened_out_or_unknown_tests_cannot_claim_an_improvement() -> None:
+def test_screened_out_or_unknown_tests_yield_unverified_improvement_only() -> None:
     for options, expected_reason in (
         ({"evaluator_hazard": True}, "evaluator_instructions"),
         ({"incomplete_screen": True}, "incomplete_screening"),
         ({"screen_provider_error": True}, "screen_provider_error"),
     ):
         result, batches = _run_screened_round(**options)
-        assert result["original_kept"] is True
+        # Uncertain tests never force a no-op: the fidelity-passing rewrite
+        # is returned, but the run cannot claim a verified improvement.
+        assert result["report"]["status"] == "improved_unverified"
         assert result["report"]["tests"] == []
         assert all(
             check["reason"] == expected_reason

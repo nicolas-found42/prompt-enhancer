@@ -54,21 +54,21 @@ def _no_test_gateway(*, gaps: tuple[str, ...] = ()) -> ScriptedGateway:
     )
 
 
-def test_run_without_faithful_tests_reports_failure_and_persists() -> None:
+def test_run_without_qualifying_candidates_reports_attempts_and_persists() -> None:
     prompt = "Summarize this article in three concise bullets for a busy reader."
     store = RunStore(":memory:")
     optimizer = PromptOptimizer(store=store, gateway=_no_test_gateway())
 
     result = optimizer.optimize(prompt, {"tier": "Fast"})
 
-    # No faithful success tests means no rewrite can be verified; the
-    # always-improve run reports that instead of claiming completed success.
+    # The stub writer returns no candidates, so the always-attempt run ends
+    # with an explicit no-qualified-candidate outcome instead of a silent
+    # no-op.
     assert result["status"] == "failed"
     assert result["final_prompt"] == prompt
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "unverified"
-    assert "no faithful success tests" in result["report"]["summary"].casefold()
-    assert result["failure"]["kind"] == "improvement_not_verified"
+    assert result["report"]["status"] == "no_qualified_candidate"
+    assert result["report"]["failure"]["kind"] == "improvement_not_verified"
     assert result["run_id"]
 
     record = store.get_run(result["run_id"])
@@ -492,10 +492,11 @@ def test_near_miss_outside_reference_is_hinted_without_confirming_a_gap(
 
     diagnosis = result["report"]["diagnosis"]
     assert diagnosis["confirmed_gaps"] == []
-    # The always-improve run rewrites even without confirmed gaps; with no
-    # faithful success tests here (the writer returns none) it reports that.
+    # The always-attempt run still writes candidates without confirmed gaps
+    # or faithful tests; this stub writes none, so the run ends with an
+    # explicit no-qualified-candidate outcome.
     assert result["status"] == "failed"
-    assert result["report"]["status"] == "unverified"
+    assert result["report"]["status"] == "no_qualified_candidate"
     if hinted:
         assert diagnosis["possible_gaps"] == [
             {

@@ -40,7 +40,7 @@ def test_optimize_endpoint_returns_result_and_lists_local_run() -> None:
     assert response.status_code == 200
     result = response.json()
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "unverified"
+    assert result["report"]["status"] == "no_qualified_candidate"
     assert result["cost"]["total"] == 0.0
 
     runs = client.get("/api/runs")

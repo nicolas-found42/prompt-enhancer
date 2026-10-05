@@ -297,7 +297,7 @@ def test_noul_expected_requires_explicit_yes_or_no_polarity() -> None:
     assert yes[0].expected == "yes"
 
 
-def test_choice_with_missing_description_after_repair_is_unverified() -> None:
+def test_choice_with_missing_description_after_repair_has_no_tests() -> None:
     writer_replies = iter(
         [
             '{"tests":[{"id":"helpful","question":"Which helps?","kind":"choice",'
@@ -328,7 +328,7 @@ def test_choice_with_missing_description_after_repair_is_unverified() -> None:
     )
 
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "unverified"
+    assert result["report"]["status"] == "no_qualified_candidate"
     assert len(result["report"]["tests"]) == 0
 
 

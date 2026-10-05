@@ -28,9 +28,13 @@ from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
 from .grading_cascade import CascadeBudget
 from .improve import (
+    failure_no_candidate_written,
     failure_no_confirmed_improvement,
+    failure_no_qualified_candidate,
     failure_unverified,
+    improved_unverified_summary,
     improvement_unverified_summary,
+    no_candidate_written_summary,
     no_confirmed_improvement_reason,
     prompts_differ_meaningfully,
 )
@@ -307,8 +311,8 @@ class RoundOutcome:
             return report
         assert (
             self.panel is not None
-            and self.strong_check is not None
             and self.strategies is not None
+            and (self.strong_check is not None or not self.tests)
         )
         return {
             "status": self.status,
@@ -326,7 +330,9 @@ class RoundOutcome:
             "assumptions": list(plan.assumptions),
             "diff": prompt_diff(plan.prompt, self.final_prompt),
             "selection_evidence": self.ranking.to_dict(),
-            "strong_check": self.strong_check.to_dict(),
+            "strong_check": self.strong_check.to_dict()
+            if self.strong_check is not None
+            else None,
             "strategies": self.strategies.to_dict(),
             **(
                 {"test_screening": dict(self.test_screening)}
@@ -468,13 +474,11 @@ def run_round(
         screening_evidence = compiled.as_dict()
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
-    if not tests:
-        summary = (
-            "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
-            if not no_gaps
-            else "No faithful success tests were established and no confirmed gaps were found; the original request was returned unchanged."
-        )
-        return ended("unverified", summary, tests)
+    # Always-attempt policy (#165): missing or uncertain success tests never
+    # force a no-op. The round always proceeds to strategy search and
+    # candidate writing; fidelity gates (meaning preserved, no invention,
+    # edits confined) decide below whether a rewrite may be returned, and
+    # the evidence status (tested vs unverified) records what was measured.
     # Always-improve policy: a prompt with no confirmed gaps is still rewritten.
     # Writers get whole-prompt latitude here because edit confinement would
     # otherwise authorize no edits at all (no diagnosed spans, no gap slots).
@@ -630,10 +634,40 @@ def run_round(
         )
     candidates = list(search.candidates)
     if not candidates:
+        rejections = len(search.rejections)
+        if not tests and working_prompt != plan.prompt:
+            # Confirmed clarifications changed the prompt even though no
+            # rewrite could be written; report them, not a failure.
+            return replace(
+                ended(
+                    "clarified",
+                    "Clarifications were included; no changed prompt was produced.",
+                    tests,
+                ),
+                strategies=search,
+                lossless_restructuring=lossless_build.evidence
+                if lossless_build is not None
+                else None,
+                test_screening=screening_evidence,
+            )
+        if tests:
+            return replace(
+                ended(
+                    "improvement_not_verified",
+                    improvement_unverified_summary(),
+                    tests,
+                ),
+                strategies=search,
+                lossless_restructuring=lossless_build.evidence
+                if lossless_build is not None
+                else None,
+                test_screening=screening_evidence,
+                reported_failure=failure_unverified(),
+            )
         return replace(
             ended(
-                "improvement_not_verified",
-                improvement_unverified_summary(),
+                "no_qualified_candidate",
+                no_candidate_written_summary(rejections),
                 tests,
             ),
             strategies=search,
@@ -641,7 +675,7 @@ def run_round(
             if lossless_build is not None
             else None,
             test_screening=screening_evidence,
-            reported_failure=failure_unverified(),
+            reported_failure=failure_no_candidate_written(rejections),
         )
 
     stage("running_weak_models")
@@ -768,13 +802,20 @@ def run_round(
         for candidate in candidates
     ]
     stage("strong_check")
-    strong = StrongCheckPolicy(settings.strong_check_model).check(
-        working_prompt,
-        [candidate for candidate in ranking_candidates if candidate.eligible],
-        list(tests),
-        lambda candidate_prompt, _tests: _strong_score(
-            gateway, candidate_prompt, _tests, plan
-        ),
+    # Without success tests there is nothing to check answers against, so
+    # the strong check cannot run; fidelity gates already passed above, and
+    # the unverified evidence status records the missing measurement.
+    strong = (
+        StrongCheckPolicy(settings.strong_check_model).check(
+            working_prompt,
+            [candidate for candidate in ranking_candidates if candidate.eligible],
+            list(tests),
+            lambda candidate_prompt, _tests: _strong_score(
+                gateway, candidate_prompt, _tests, plan
+            ),
+        )
+        if tests
+        else None
     )
     ranking = rank_candidates(
         RankingCandidate(
@@ -782,6 +823,7 @@ def run_round(
         ),
         ranking_candidates,
         strong_check=strong,
+        allow_unverified_selection=not tests,
     )
     final_prompt = ranking.final_prompt
     original_kept = final_prompt == plan.prompt
@@ -809,35 +851,59 @@ def run_round(
             decision_policy=plan.decision_policy,
         )
     # Always-improve policy: keeping the original after verified rounds is a
-    # reported failure, not a success outcome.
+    # reported failure, not a success outcome. Without success tests the
+    # evidence differs: a fidelity-gated rewrite is an unproven improvement,
+    # and total rejection is an explicit no-qualified-candidate outcome.
     reported_failure: Mapping[str, str] | None = None
     changed_attempts = False
-    if original_kept:
-        changed_attempts = any(
-            prompts_differ_meaningfully(working_prompt, item.candidate.text)
-            for item in ranking.ranked
-        )
-        reported_failure = (
-            failure_no_confirmed_improvement()
-            if changed_attempts
-            else failure_unverified()
-        )
+    if not tests and ranking.selected is not None:
+        status = "improved_unverified"
+        summary = improved_unverified_summary(ranking.selected.strategy)
+    elif original_kept:
+        if not tests:
+            attempts = len(ranking.ranked)
+            status = "no_qualified_candidate"
+            summary = failure_no_qualified_candidate(attempts)["message"]
+            reported_failure = failure_no_qualified_candidate(attempts)
+        else:
+            changed_attempts = any(
+                prompts_differ_meaningfully(working_prompt, item.candidate.text)
+                for item in ranking.ranked
+            )
+            reported_failure = (
+                failure_no_confirmed_improvement()
+                if changed_attempts
+                else failure_unverified()
+            )
+            status = "improvement_not_verified"
+            summary = (
+                no_confirmed_improvement_reason()
+                if changed_attempts
+                else improvement_unverified_summary()
+            )
+    else:
+        status = "improvement_not_verified"
+        summary = no_confirmed_improvement_reason()
+        changed_attempts = True
+        reported_failure = failure_no_confirmed_improvement()
+        if tests:
+            status = "clarified" if ranking.original_kept else "improved"
+            summary = (
+                "Clarifications were included; no verified changed prompt was produced."
+                if ranking.original_kept
+                else "Candidate selected after verification."
+            )
+            reported_failure = None
+        else:
+            # ranking.selected is None here — a selection would have taken
+            # the improved_unverified branch above — so only confirmed
+            # clarifications changed the prompt.
+            status = "clarified"
+            summary = "Clarifications were included; no changed prompt was produced."
     return RoundOutcome(
         plan=plan,
-        status="improvement_not_verified"
-        if original_kept
-        else ("clarified" if ranking.original_kept else "improved"),
-        summary=(
-            no_confirmed_improvement_reason()
-            if changed_attempts
-            else improvement_unverified_summary()
-        )
-        if original_kept
-        else (
-            "Clarifications were included; no verified changed prompt was produced."
-            if ranking.original_kept
-            else "Candidate selected after verification."
-        ),
+        status=status,
+        summary=summary,
         final_prompt=final_prompt,
         original_kept=original_kept,
         tests=tests,

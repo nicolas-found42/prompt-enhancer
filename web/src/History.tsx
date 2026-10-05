@@ -86,8 +86,15 @@ export function badgeFor(run: RunSummary | RunDetail): Badge {
   if (run.status === "needs_input")
     return { label: "Waiting for answers", tone: "warn" };
   if (run.original_kept === false) {
+    const untestedOutcome =
+      run.outcome === "unverified" ||
+      run.outcome === "improved_unverified" ||
+      run.outcome === "clarified";
     const untested =
-      run.outcome === "unverified" || reportStatus === "unverified";
+      untestedOutcome ||
+      reportStatus === "unverified" ||
+      reportStatus === "improved_unverified" ||
+      reportStatus === "clarified";
     return untested
       ? { label: "Not tested", tone: "neutral" }
       : { label: "Improved", tone: "good" };

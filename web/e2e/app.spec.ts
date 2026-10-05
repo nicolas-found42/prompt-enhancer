@@ -702,9 +702,10 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(page.getByText("What should the assistant do?")).toBeVisible();
   await page.getByRole("button", { name: "Use my answers" }).click();
-  // No success test was established, so the confirmed answer is not an improvement.
+  // No success test was established and no rewrite could be written, so the
+  // confirmed answer is reported as details, not as an improvement.
   await expect(
-    page.getByRole("heading", { name: "We couldn't test this prompt" })
+    page.getByRole("heading", { name: "Updated with your details" })
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Optimized prompt" })

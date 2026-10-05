@@ -238,8 +238,8 @@ class RepeatResult:
         if self.original_kept:
             # The always-improve run did not produce a changed prompt; label
             # the run failed, not completed-with-original. The round report
-            # keeps its "unverified"/"improvement_not_verified" status so the
-            # history outcome mapping still reads it as untested.
+            # keeps its "no_qualified_candidate"/"improvement_not_verified"
+            # status so the history outcome mapping still reads the evidence.
             payload["status"] = "failed"
             if not _mapping_or_empty(
                 _mapping_or_empty(payload.get("report")).get("failure")

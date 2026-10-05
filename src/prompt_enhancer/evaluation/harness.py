@@ -610,7 +610,7 @@ class EvaluationHarness:
             restructuring = report.get("lossless_restructuring")
             if isinstance(restructuring, Mapping):
                 observation.lossless_restructuring = dict(restructuring)
-            strong = _as_mapping(report.get("strong_check", {}))
+            strong = _as_mapping(report.get("strong_check") or {})
             strong_candidates = strong.get("candidates")
             if isinstance(strong_candidates, list):
                 for candidate in strong_candidates:
