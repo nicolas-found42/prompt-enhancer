@@ -12,6 +12,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from worktree_hooks import hook_repair
+
 
 class CleanupError(Exception):
     """A safety check failed before cleanup could finish."""
@@ -84,7 +86,14 @@ def branch_tip(repo: Path, ref: str) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def finish(repo: Path, number: int, *, discard_ignored: bool = False) -> None:
+def finish(
+    repo: Path,
+    number: int,
+    *,
+    discard_ignored: bool = False,
+    cleanup_only: bool = False,
+    hook_python: Path | None = None,
+) -> dict[str, object]:
     pr = checked_pr(repo, number)
     branch = pr["headRefName"]
     expected = pr["headRefOid"]
@@ -94,7 +103,10 @@ def finish(repo: Path, number: int, *, discard_ignored: bool = False) -> None:
     main = checked_out.get("refs/heads/main")
     if main is None:
         raise CleanupError("No local main worktree is checked out")
-    if git("status", "--porcelain", "--untracked-files=no", cwd=main).strip():
+    if (
+        not cleanup_only
+        and git("status", "--porcelain", "--untracked-files=no", cwd=main).strip()
+    ):
         raise CleanupError(f"Main worktree has tracked changes: {main}")
 
     local_ref = f"refs/heads/{branch}"
@@ -133,15 +145,35 @@ def finish(repo: Path, number: int, *, discard_ignored: bool = False) -> None:
                 "rerun with --discard-ignored if disposable"
             )
 
-    if subprocess.run(
-        ["git", "merge-base", "--is-ancestor", "main", "origin/main"],
-        cwd=repo,
-        check=False,
-    ).returncode:
+    repair = None
+    if branch_worktree is not None:
+        try:
+            repair = hook_repair(repo, branch_worktree, main, hook_python)
+        except ValueError as exc:
+            raise CleanupError(str(exc)) from exc
+
+    if (
+        not cleanup_only
+        and subprocess.run(
+            ["git", "merge-base", "--is-ancestor", "main", "origin/main"],
+            cwd=repo,
+            check=False,
+        ).returncode
+    ):
         raise CleanupError("Local main has diverged from origin/main")
 
-    git("merge", "--ff-only", "origin/main", cwd=main)
-    print(f"Updated main to {branch_tip(repo, 'refs/heads/main')}")
+    before_main = branch_tip(repo, "refs/heads/main")
+    if not cleanup_only:
+        git("merge", "--ff-only", "origin/main", cwd=main)
+        print(f"Updated main to {branch_tip(repo, 'refs/heads/main')}")
+    if repair is not None:
+        hook, original, content = repair
+        if hook.read_text() != original:
+            raise CleanupError(
+                "Shared hook changed after preflight; worktree preserved"
+            )
+        hook.write_text(content)
+        print(f"Repaired shared hook: {hook}")
 
     if remote_tip is not None:
         git(
@@ -153,6 +185,25 @@ def finish(repo: Path, number: int, *, discard_ignored: bool = False) -> None:
         )
         print(f"Deleted remote branch {branch}")
     if branch_worktree is not None:
+        if branch_tip(main, local_ref) != expected:
+            raise CleanupError(f"Local {branch} changed before worktree removal")
+        if git(
+            "status", "--porcelain", "--untracked-files=all", cwd=branch_worktree
+        ).strip():
+            raise CleanupError("Branch worktree changed before removal")
+        if (
+            not discard_ignored
+            and git(
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                cwd=branch_worktree,
+            ).strip()
+        ):
+            raise CleanupError(
+                "Ignored data appeared before removal; worktree preserved"
+            )
         os.chdir(main)
         git("worktree", "remove", "--", str(branch_worktree), cwd=main)
         print(f"Removed worktree {branch_worktree}")
@@ -162,6 +213,17 @@ def finish(repo: Path, number: int, *, discard_ignored: bool = False) -> None:
         git("branch", "-D", "--", branch, cwd=main)
         print(f"Deleted local branch {branch}")
     git("fetch", "origin", "--prune", cwd=main)
+    return {
+        "pr": number,
+        "branch": branch,
+        "pr_head": expected,
+        "synchronization": "deferred" if cleanup_only else "complete",
+        "synchronization_reason": "cleanup-only requested" if cleanup_only else None,
+        "main_before": before_main,
+        "main_after": branch_tip(main, "refs/heads/main"),
+        "cleanup": "complete",
+        "hook_repaired": repair is not None,
+    }
 
 
 def main() -> int:
@@ -172,10 +234,34 @@ def main() -> int:
         action="store_true",
         help="also remove ignored files in the branch worktree",
     )
+    parser.add_argument(
+        "--cleanup-only",
+        action="store_true",
+        help="Preserve primary main and its WIP; only clean the verified merged branch",
+    )
+    parser.add_argument(
+        "--hook-python",
+        type=Path,
+        help="Replacement interpreter for a shared pre-commit hook",
+    )
+    parser.add_argument(
+        "--receipt",
+        type=Path,
+        help="Write independent synchronization and cleanup results",
+    )
     args = parser.parse_args()
     try:
         repo = Path(git("rev-parse", "--show-toplevel", cwd=Path.cwd()).strip())
-        finish(repo, args.number, discard_ignored=args.discard_ignored)
+        receipt = finish(
+            repo,
+            args.number,
+            discard_ignored=args.discard_ignored,
+            cleanup_only=args.cleanup_only,
+            hook_python=args.hook_python,
+        )
+        if args.receipt:
+            args.receipt.parent.mkdir(parents=True, exist_ok=True)
+            args.receipt.write_text(json.dumps(receipt, indent=2) + "\n")
     except CleanupError as exc:
         print(f"Cleanup stopped: {exc}", file=sys.stderr)
         return 1

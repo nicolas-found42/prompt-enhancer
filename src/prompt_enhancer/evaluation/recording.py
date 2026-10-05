@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import threading
+import uuid
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -16,6 +18,7 @@ from ..diagnosis import (
     checklist_keys,
 )
 from ..gateway import Gateway, ReplayGateway
+from .capture_audit import validate_capture
 
 
 class RecordingGateway:
@@ -23,6 +26,8 @@ class RecordingGateway:
         self.gateway = gateway
         self.path = path
         self.responses: dict[str, Any] = {}
+        self.request_captures: list[dict[str, Any]] = []
+        self.expected_request_keys: list[str] = []
         self.decision_provenance: dict[str, dict[str, Any]] = {}
         self.case_latency_ms: dict[str, float] = {}
         self.case_costs: dict[str, dict[str, Any]] = {}
@@ -50,17 +55,37 @@ class RecordingGateway:
         self._lock = threading.RLock()
 
     def _record(
-        self, operation: str, model: str, payload: Any, role: str, answer: Any
+        self,
+        operation: str,
+        model: str,
+        payload: Any,
+        role: str,
+        answer: Any,
+        *,
+        persist: bool = True,
     ) -> Any:
         key = ReplayGateway.request_key(operation, model, payload, role)
         with self._lock:
             previous = self.responses.get(key)
-            if previous is not None and previous != answer:
+            if key in self.responses and previous != answer:
                 raise ValueError(
                     "identical gateway request produced different responses; strict replay cannot represent it"
                 )
-            self.responses[key] = answer
-            self.save()
+            self.responses[key] = deepcopy(answer)
+            self.expected_request_keys.append(key)
+            self.request_captures.append(
+                {
+                    "correlation_id": uuid.uuid4().hex,
+                    "request_key": key,
+                    "operation": operation,
+                    "model": model,
+                    "role": role,
+                    "payload": deepcopy(payload),
+                    "answer": deepcopy(answer),
+                }
+            )
+            if persist:
+                self.save()
         return answer
 
     def save(self) -> None:
@@ -70,7 +95,13 @@ class RecordingGateway:
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(self.path.suffix + ".tmp")
+        capture_audit = validate_capture(
+            self.request_captures, self.expected_request_keys, self.responses
+        )
         bundle: dict[str, Any] = {
+            "request_captures": self.request_captures,
+            "expected_request_keys": self.expected_request_keys,
+            "capture_audit": capture_audit,
             "responses": self.responses,
             "decision_provenance": self.decision_provenance,
             "jev_model": self.gateway.jev_model,
@@ -140,11 +171,12 @@ class RecordingGateway:
             if not isinstance(messages, str)
             else [{"role": "user", "content": messages}]
         )
+        captured = deepcopy({"model": model, "messages": normalized, **params})
         answer = self.gateway.chat(model, messages, role=role, run_id=run_id, **params)
         return self._record(
             "chat",
             model,
-            {"model": model, "messages": normalized, **params},
+            captured,
             role,
             answer,
         )
@@ -156,12 +188,15 @@ class RecordingGateway:
         role: str = "judge",
         run_id: str | None = None,
     ) -> Any:
-        request = dict(payload)
+        request = deepcopy(dict(payload))
         if "state" not in request and "prompt" in request:
             request["state"] = request.pop("prompt")
-        answer = self.gateway.decide(payload, role=role, run_id=run_id)
-        self._record_provenance(request, role)
-        return self._record("decide", self.gateway.jev_model, request, role, answer)
+        with self._lock:
+            offset = len(self.gateway.decision_log)
+            answer = self.gateway.decide(payload, role=role, run_id=run_id)
+            self._check_decisions([request], [answer], offset)
+            self._record_provenance(request, role)
+            return self._record("decide", self.gateway.jev_model, request, role, answer)
 
     def decide_batch(
         self,
@@ -170,29 +205,52 @@ class RecordingGateway:
         role: str = "judge",
         run_id: str | None = None,
     ) -> list[Any]:
-        answers = self.gateway.decide_batch(requests, role=role, run_id=run_id)
-        for request, answer in zip(requests, answers, strict=True):
-            self._record_provenance(request, role)
-            self._record("decide", self.gateway.jev_model, dict(request), role, answer)
-        return answers
+        captured = deepcopy([dict(request) for request in requests])
+        with self._lock:
+            offset = len(self.gateway.decision_log)
+            answers = self.gateway.decide_batch(requests, role=role, run_id=run_id)
+            self._check_decisions(captured, answers, offset)
+            for request, answer in zip(captured, answers, strict=True):
+                self._record_provenance(request, role)
+                self._record(
+                    "decide",
+                    self.gateway.jev_model,
+                    request,
+                    role,
+                    answer,
+                    persist=False,
+                )
+            self.save()
+            return answers
+
+    def _check_decisions(
+        self, requests: list[dict[str, Any]], answers: list[Any], offset: int
+    ) -> None:
+        entries = self.gateway.decision_log[offset:]
+        if len(entries) != len(requests) or len(answers) != len(requests):
+            raise ValueError(
+                "decision capture request/answer/record counts do not reconcile"
+            )
+        for request, answer, entry in zip(requests, answers, entries, strict=True):
+            if entry.get("question") != request or entry.get("answer") != answer:
+                raise ValueError(
+                    "decision capture does not match its per-request association"
+                )
+            if not entry.get("answered_by"):
+                raise ValueError("Jev decision has no answering snapshot")
 
     def _record_provenance(self, request: Mapping[str, Any], role: str) -> None:
         entry = next(
-            (
-                item
-                for item in reversed(self.gateway.decision_log)
-                if item["question"] == dict(request)
-            ),
-            None,
+            item
+            for item in reversed(self.gateway.decision_log)
+            if item["question"] == dict(request)
         )
-        if entry is None or not entry.get("answered_by"):
-            raise ValueError("Jev decision has no answering snapshot")
         key = ReplayGateway.request_key(
             "decide", self.gateway.jev_model, dict(request), role
         )
         self.decision_provenance[key] = {
             "answered_by": entry["answered_by"],
-            "usage": entry.get("usage", {}),
+            "usage": deepcopy(entry.get("usage", {})),
         }
 
     def list_models(self, *, refresh: bool = False) -> Any:

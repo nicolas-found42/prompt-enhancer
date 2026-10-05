@@ -202,3 +202,11 @@ never posts comments, and never uses `pull_request_target`.
 Results are retained for seven days. Do not make this optional advisory workflow a
 required branch-protection check. The standard Checks workflow installs the pinned
 linter to exercise its offline integration test and audits its dependencies.
+
+## Gateway audit evidence
+
+Before using request capture to support an audit claim, follow the
+[Gateway capture integrity procedure](agents/capture-audits.md). A batch handler's
+shared snapshot is not per-request evidence. Capture validation must reconcile
+record counts, correlation identifiers, exact hashes, and answer associations
+against the actual expected request sequence before reporting success.
