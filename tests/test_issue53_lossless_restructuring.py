@@ -258,6 +258,7 @@ def _run_lossless_round(
                     )
                 )
                 or (key.startswith("grade_") and request["state"]["output"] == "pass")
+                or key.startswith("score:")
                 else 0.0
             )
             if key == "fidelity:meaning":

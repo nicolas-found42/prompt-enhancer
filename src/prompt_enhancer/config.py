@@ -35,6 +35,37 @@ class Settings:
     grading_confirmation_reservation_usd: float = 0.001
     attribution_pair_cap: int | None = None
     attribution_dollar_cap: float | None = None
+    # Quality score-vector floors (#168): per-dimension minima on the 0-1
+    # scale. Any dimension below its floor rejects the candidate outright
+    # (max-gate: a breach is never averaged away by strong siblings). These
+    # ship conservative — high enough to reject degenerate rewrites — and
+    # recalibrate from keep/reject feedback (#170), which is why they live on
+    # Settings instead of as module constants.
+    #
+    # Rationale: fidelity mirrors the fidelity gate threshold (0.80), so any
+    # fidelity failure breaches; safety matches it because an unsafe rewrite
+    # is as costly as an unfaithful one; clarity/specificity/coherence sit at
+    # 0.60 so genuine rewrites pass while muddled ones fail; style fit is
+    # lowest (0.50) because the style applies only where compatible with the
+    # user's explicit constraints.
+    score_floor_fidelity: float = 0.8
+    score_floor_style_fit: float = 0.5
+    score_floor_clarity: float = 0.6
+    score_floor_specificity: float = 0.6
+    score_floor_coherence: float = 0.6
+    score_floor_safety: float = 0.8
+
+    @property
+    def score_floors(self) -> dict[str, float]:
+        """Per-dimension floors keyed by score-vector dimension name."""
+        return {
+            "fidelity": self.score_floor_fidelity,
+            "style_fit": self.score_floor_style_fit,
+            "clarity": self.score_floor_clarity,
+            "specificity": self.score_floor_specificity,
+            "coherence": self.score_floor_coherence,
+            "safety": self.score_floor_safety,
+        }
 
     @classmethod
     def from_env(cls) -> Settings:

@@ -43,10 +43,12 @@ from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import Tier, utc_now
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
+from .score_vector import score_candidate
 from .selector import RankingCandidate, RankingResult, rank_candidates
 from .strategies import (
     CURRENT_STRATEGY_LIBRARY,
     STRATEGY_LIBRARY,
+    STYLE_STRATEGY_BUNDLES,
     CandidateBatchRequest,
     CandidateDraft,
     RewriteStrategy,
@@ -430,6 +432,119 @@ class RoundOutcome:
         }
 
 
+def _style_bundle(plan: RoundPlan) -> tuple[str, ...]:
+    """Strategy names feeding the style-fit dimension (#166 style criteria)."""
+    if plan.route_strategies:
+        return tuple(plan.route_strategies)
+    return STYLE_STRATEGY_BUNDLES.get(plan.applied_style, ())
+
+
+def _ranking_candidate(
+    gateway: Gateway,
+    plan: RoundPlan,
+    settings: Settings,
+    working_prompt: str,
+    candidate: CandidateDraft,
+    panel_grades: Mapping[str, Any],
+    original_grade: Any,
+) -> RankingCandidate:
+    """Eligibility with the fidelity hard gate and the score-vector max-gate."""
+    fidelity = check_candidate_fidelity(
+        gateway,
+        working_prompt,
+        candidate.text,
+        plan.diagnosis,
+        candidate.strategy,
+        run_id=plan.run_id,
+        judge_model=settings.judge_model,
+        assumptions=plan.assumptions,
+        support_prompt=plan.prompt,
+        preservation_proof=candidate.metadata.get("lossless_proof"),
+        legacy_protocol=plan.writer_instruction_version < 4,
+    )
+    vector = score_candidate(
+        gateway,
+        working_prompt,
+        candidate.text,
+        fidelity=fidelity,
+        applied_style=plan.applied_style,
+        style_bundle=_style_bundle(plan),
+        floors=settings.score_floors,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
+    )
+    grade = panel_grades[candidate.candidate_id]
+    hard_violated = tuple(
+        literal for literal in plan.hard_constraints if literal not in candidate.text
+    )
+    eligible = (
+        fidelity.passed
+        and vector.passed
+        and grade.ungradable_outputs == 0
+        and original_grade.ungradable_outputs == 0
+        and grade.unresolved_screen_outputs == 0
+        and original_grade.unresolved_screen_outputs == 0
+        and grade.unresolved_grade_outputs == 0
+        and original_grade.unresolved_grade_outputs == 0
+        and grade.detected_outputs == 0
+        and not hard_violated
+    )
+    return RankingCandidate(
+        candidate_id=candidate.candidate_id,
+        text=candidate.text,
+        strategy=candidate.strategy.name,
+        strategy_kind=candidate.strategy.kind,
+        grade=grade,
+        eligible=eligible,
+        rejection_reasons=(
+            (
+                ()
+                if fidelity.passed
+                else (
+                    "candidate failed fidelity checks",
+                    *fidelity.rejection_reasons,
+                )
+            )
+            + vector.judged_breach_reasons
+            + tuple(
+                f"hard requirement violated: {literal!r} must be preserved verbatim"
+                for literal in hard_violated
+            )
+            + (
+                ("weak-panel grading was incomplete or oversized",)
+                if grade.ungradable_outputs or original_grade.ungradable_outputs
+                else ()
+            )
+            + (
+                ("weak-panel output screen was unresolved",)
+                if grade.unresolved_screen_outputs
+                or original_grade.unresolved_screen_outputs
+                else ()
+            )
+            + (
+                ("weak-panel grade confirmation was unresolved",)
+                if grade.unresolved_grade_outputs
+                or original_grade.unresolved_grade_outputs
+                else ()
+            )
+            + (
+                ("weak-panel output screen detected steering",)
+                if grade.detected_outputs
+                else ()
+            )
+        ),
+        metadata={
+            "fidelity": fidelity.to_dict(),
+            "score_vector": vector.to_dict(),
+            **(
+                {"lossless_restructuring": candidate.metadata["lossless_restructuring"]}
+                if "lossless_restructuring" in candidate.metadata
+                else {}
+            ),
+        },
+    )
+
+
 def run_round(
     gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | None = None
 ) -> RoundOutcome:
@@ -736,93 +851,15 @@ def run_round(
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
-    hard_violations = {
-        candidate.candidate_id: tuple(
-            literal
-            for literal in plan.hard_constraints
-            if literal not in candidate.text
-        )
-        for candidate in candidates
-    }
     ranking_candidates = [
-        RankingCandidate(
-            candidate_id=candidate.candidate_id,
-            text=candidate.text,
-            strategy=candidate.strategy.name,
-            strategy_kind=candidate.strategy.kind,
-            grade=panel_grades[candidate.candidate_id],
-            eligible=(
-                fidelity := check_candidate_fidelity(
-                    gateway,
-                    working_prompt,
-                    candidate.text,
-                    plan.diagnosis,
-                    candidate.strategy,
-                    run_id=plan.run_id,
-                    judge_model=settings.judge_model,
-                    assumptions=plan.assumptions,
-                    support_prompt=plan.prompt,
-                    preservation_proof=candidate.metadata.get("lossless_proof"),
-                    legacy_protocol=plan.writer_instruction_version < 4,
-                )
-            ).passed
-            and panel_grades[candidate.candidate_id].ungradable_outputs == 0
-            and original_grade.ungradable_outputs == 0
-            and panel_grades[candidate.candidate_id].unresolved_screen_outputs == 0
-            and original_grade.unresolved_screen_outputs == 0
-            and panel_grades[candidate.candidate_id].unresolved_grade_outputs == 0
-            and original_grade.unresolved_grade_outputs == 0
-            and panel_grades[candidate.candidate_id].detected_outputs == 0
-            and not hard_violations[candidate.candidate_id],
-            rejection_reasons=(
-                (
-                    ()
-                    if fidelity.passed
-                    else (
-                        "candidate failed fidelity checks",
-                        *fidelity.rejection_reasons,
-                    )
-                )
-                + tuple(
-                    f"hard requirement violated: {literal!r} must be preserved verbatim"
-                    for literal in hard_violations[candidate.candidate_id]
-                )
-                + (
-                    ("weak-panel grading was incomplete or oversized",)
-                    if panel_grades[candidate.candidate_id].ungradable_outputs
-                    or original_grade.ungradable_outputs
-                    else ()
-                )
-                + (
-                    ("weak-panel output screen was unresolved",)
-                    if panel_grades[candidate.candidate_id].unresolved_screen_outputs
-                    or original_grade.unresolved_screen_outputs
-                    else ()
-                )
-                + (
-                    ("weak-panel grade confirmation was unresolved",)
-                    if panel_grades[candidate.candidate_id].unresolved_grade_outputs
-                    or original_grade.unresolved_grade_outputs
-                    else ()
-                )
-                + (
-                    ("weak-panel output screen detected steering",)
-                    if panel_grades[candidate.candidate_id].detected_outputs
-                    else ()
-                )
-            ),
-            metadata={
-                "fidelity": fidelity.to_dict(),
-                **(
-                    {
-                        "lossless_restructuring": candidate.metadata[
-                            "lossless_restructuring"
-                        ]
-                    }
-                    if "lossless_restructuring" in candidate.metadata
-                    else {}
-                ),
-            },
+        _ranking_candidate(
+            gateway,
+            plan,
+            settings,
+            working_prompt,
+            candidate,
+            panel_grades,
+            original_grade,
         )
         for candidate in candidates
     ]

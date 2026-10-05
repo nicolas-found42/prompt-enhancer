@@ -24,6 +24,7 @@ def _gateway(
     support: str = "supported_by_original",
     meaning_probability: float = 0.99,
     recheck_probability: float = 0.99,
+    score_probability: float = 0.99,
     weak_output: str = "4",
     with_test: bool = False,
 ):
@@ -85,6 +86,8 @@ def _gateway(
             probability = 0.99 if with_test else 0.01
         elif key.startswith("grade_"):
             probability = float(request["state"]["output"] == "pass")
+        elif key.startswith("score:"):
+            probability = score_probability
         else:
             probability = 0.01
         return {
