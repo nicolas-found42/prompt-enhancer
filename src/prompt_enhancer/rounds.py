@@ -18,12 +18,18 @@ from typing import Any
 
 from . import jev_questions
 from .config import Settings
+from .convergence import (
+    CONVERGED_STATUS,
+    best_candidate_vector,
+    convergence_decision,
+    convergence_summary,
+)
 from .criterion_reading import CRITERION_READING_MIN_VERSION
 from .diagnosis import model_diagnosis
 from .evaluation.calibration import DecisionPolicy
 from .evaluation.order_bias import OrderBiasPolicy
 from .failure_attribution import AttributionBudget, attribute_failed_pairs
-from .fidelity import check_candidate_fidelity
+from .fidelity import FidelityResult, check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
 from .grading_cascade import CascadeBudget
@@ -227,6 +233,8 @@ class RoundPlan:
     """Audited literal requirements every candidate must preserve verbatim."""
     route_strategies: tuple[str, ...] = ()
     """The Route bundle's strategy names; empty means the full library."""
+    prior_vector: Mapping[str, Any] | None = None
+    """The previous round's best score vector, for the convergence comparison."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,19 +265,48 @@ class RoundOutcome:
     failure_attribution: Mapping[str, Any] | None = None
     reported_failure: Mapping[str, str] | None = None
     """Set when always-improve kept the input; the reason the change failed."""
+    convergence: Mapping[str, Any] | None = None
+    """The convergence decision (#169), recorded for the report and history."""
+    restored_evidence: Mapping[str, Any] | None = None
+    """Actual persisted winning evidence when a resumed terminal round regresses."""
+
+    @property
+    def converged(self) -> bool:
+        """True when the round met every floor and stopped buying improvement."""
+        return (
+            isinstance(self.convergence, Mapping)
+            and self.convergence.get("status") == CONVERGED_STATUS
+        )
 
     @property
     def continue_rounds(self) -> bool:
-        """Another round can try to beat the prompt using these failures."""
+        """Whether the convergence evidence requires another round.
+
+        A selected candidate does not end a healthy run while it still has
+        quality to gain. The losing candidates continue to seed strategy
+        variation; an empty loss set leaves the route's ordinary strategy
+        bundle available. External stops are raised by run control or the
+        optimizer's provider/Route boundary and therefore do not become
+        retries here.
+        """
+        if self.convergence is not None:
+            return not self.converged
         return bool(self.failures) and self.original_kept
 
     @property
     def selected_candidate_id(self) -> str | None:
+        if self.restored_evidence is not None:
+            selection = self.restored_evidence.get("selection_evidence", {})
+            return selection.get("selected_candidate_id")
         return self.ranking.selected_candidate_id if self.ranking is not None else None
 
     @property
     def selected_strategy(self) -> str | None:
         """The rewrite strategy of the winning candidate, if one was selected."""
+        if self.restored_evidence is not None:
+            selection = self.restored_evidence.get("selection_evidence", {})
+            candidate = selection.get("selected_candidate") or {}
+            return candidate.get("strategy")
         selected = self.ranking.selected if self.ranking is not None else None
         return selected.strategy if selected is not None else None
 
@@ -277,6 +314,18 @@ class RoundOutcome:
         """The run report for this round, in the shape the web app and history read."""
         plan = self.plan
         models = plan.settings.model_roles()
+        if self.restored_evidence is not None:
+            return {
+                **self.restored_evidence,
+                "status": self.status,
+                "models": models,
+                "summary": self.summary,
+                "assumptions": list(plan.assumptions),
+                "diff": prompt_diff(plan.prompt, self.final_prompt),
+                "convergence": dict(self.convergence or {}),
+                "offer_deep": False,
+                "history": [],
+            }
         grading_policies: list[dict[str, Any]] = []
         for answer in self.grading_answers:
             policy = answer.get("grading_policy")
@@ -300,6 +349,8 @@ class RoundOutcome:
                 and bool(plan.diagnosis.get("confirmed_gaps")),
                 "history": [],
             }
+            if self.convergence is not None:
+                report["convergence"] = dict(self.convergence)
             if self.strategies is not None and self.lossless_restructuring is not None:
                 report["strategies"] = self.strategies.to_dict()
             if self.lossless_restructuring is not None:
@@ -338,6 +389,11 @@ class RoundOutcome:
             "assumptions": list(plan.assumptions),
             "diff": prompt_diff(plan.prompt, self.final_prompt),
             "selection_evidence": self.ranking.to_dict(),
+            **(
+                {"convergence": dict(self.convergence)}
+                if self.convergence is not None
+                else {}
+            ),
             "strong_check": self.strong_check.to_dict()
             if self.strong_check is not None
             else None,
@@ -424,7 +480,12 @@ class RoundOutcome:
                 "per_model",
                 "strong_check",
                 "selection_evidence",
+                "output_screen",
                 "grading_policy",
+                "test_screening",
+                "grading_observation",
+                "grading_cascade",
+                "lossless_restructuring",
                 "strategies",
                 "failure_attribution",
             )
@@ -887,6 +948,44 @@ def run_round(
         strong_check=strong,
         allow_unverified_selection=not tests,
     )
+    if ranking.selected is None:
+        # If no changed prompt won, measure the prompt we will actually return.
+        # A rejected rewrite's high score must never stand in for the original.
+        baseline_vector = score_candidate(
+            gateway,
+            working_prompt,
+            working_prompt,
+            fidelity=FidelityResult(True, True, True, {"identity": True}),
+            applied_style=plan.applied_style,
+            style_bundle=_style_bundle(plan),
+            floors=settings.score_floors,
+            judge_model=settings.judge_model,
+            run_id=plan.run_id,
+        )
+        baseline_graded = not tests or (
+            original_grade is not None
+            and original_grade.worst > 0
+            and original_grade.ungradable_outputs == 0
+            and original_grade.unresolved_screen_outputs == 0
+            and original_grade.unresolved_grade_outputs == 0
+            and original_grade.detected_outputs == 0
+        )
+        original = replace(
+            ranking.original,
+            metadata={
+                **ranking.original.metadata,
+                "score_vector": {
+                    **baseline_vector.to_dict(),
+                    "source": "original_baseline",
+                },
+                "convergence_source": "original_baseline",
+            },
+        )
+        ranking = replace(ranking, original=original)
+        if baseline_vector.passed and baseline_graded:
+            # The unchanged input is the candidate actually kept. Give it a
+            # stable identity so reports and future feedback can cite it.
+            ranking = replace(ranking, selected=original, original_kept=True)
     final_prompt = ranking.final_prompt
     original_kept = final_prompt == plan.prompt
     attribution_by_candidate: dict[str, tuple[dict[str, Any], ...]] = {}
@@ -962,6 +1061,32 @@ def run_round(
             # clarifications changed the prompt.
             status = "clarified"
             summary = "Clarifications were included; no changed prompt was produced."
+    # Convergence gate (#169): compare the best candidate's score vector to the
+    # previous round's best. When every dimension has met its floor and the
+    # marginal gain has fallen to or below epsilon, the loop stops as converged
+    # — a success outcome, not a failure. Below-floor or still-gaining rounds
+    # keep retrying, informed by this round's losing candidates.
+    vector = (
+        best_candidate_vector({"selection_evidence": ranking.to_dict()})
+        if ranking is not None
+        else None
+    )
+    decision = convergence_decision(
+        vector,
+        previous_vector=plan.prior_vector,
+        epsilon=settings.convergence_epsilon,
+    )
+    convergence = decision.to_dict()
+    if vector is not None:
+        convergence["selected"] = bool(vector.get("selected"))
+        convergence["source"] = vector.get("source", "selected_candidate")
+        convergence["selected_candidate_id"] = vector.get("candidate_id")
+        if not tests:
+            convergence["verification"] = "unverified"
+    if decision.converged:
+        status = CONVERGED_STATUS
+        summary = convergence_summary(decision.scores, decision.floors)
+        reported_failure = None
     return RoundOutcome(
         plan=plan,
         status=status,
@@ -1020,6 +1145,7 @@ def run_round(
             if not item.selected
         ),
         reported_failure=reported_failure,
+        convergence=convergence,
         **_spent(gateway),
     )
 

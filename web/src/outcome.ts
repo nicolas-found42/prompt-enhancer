@@ -146,6 +146,13 @@ export function outcomeOf(result: OptimizeResult): Outcome {
         "Your confirmed answers were added to the prompt. No rewrite improved on it further.",
     };
   }
+  if (status === "converged") {
+    return {
+      headline: "Converged",
+      reason:
+        "Every quality dimension reached its floor and further rounds stopped buying improvement, so the loop stopped on purpose. The final scores and the floors they met are in the report below.",
+    };
+  }
   if (status === "improved_unverified") {
     return {
       headline: "Improved (unverified)",

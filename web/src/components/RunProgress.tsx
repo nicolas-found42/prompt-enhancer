@@ -22,10 +22,7 @@ function spentText(costTotal: number | undefined): string | null {
 
 export default function RunProgress({ job, estimate, onCancel }: Props) {
   const current = job.stage ? stageOrder.indexOf(job.stage) : -1;
-  const round =
-    job.round.round && job.round.max_rounds && job.round.max_rounds > 1
-      ? ` · round ${job.round.round} of ${job.round.max_rounds}`
-      : "";
+  const round = job.round.round ? ` · round ${job.round.round}` : "";
   const spent = spentText(job.cost_total);
 
   return (

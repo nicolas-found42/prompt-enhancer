@@ -372,7 +372,9 @@ def check_candidate_fidelity(
                 not isinstance(answer, NoulDecision) for answer in decisions
             ):
                 raise JevResponseError("incomplete fidelity response")
-        except (ProviderError, JevResponseError) as exc:
+        except ProviderError:
+            raise
+        except JevResponseError as exc:
             return FidelityResult(False, False, False, {"error": type(exc).__name__})
         probabilities = {
             name: decision.probability
@@ -509,7 +511,11 @@ def check_candidate_fidelity(
             raw_answers.extend(batch_answers)
         if len(raw_answers) != len(requests):
             raise JevResponseError("incomplete fidelity response")
-    except (ProviderError, JevResponseError) as exc:
+    except ProviderError:
+        # A provider outage is an operational stop, not candidate-quality
+        # evidence for another iteration of the uncapped convergence loop.
+        raise
+    except JevResponseError as exc:
         reason = f"fidelity checks unavailable or incomplete ({type(exc).__name__})"
         evidence["reasons"] = [reason]
         evidence["request_count"] = len(requests)

@@ -126,10 +126,11 @@ def _candidates(outcome) -> dict[str, dict]:
     return {candidate["candidate_id"]: candidate for candidate in outcome.candidates}
 
 
-def test_round_without_faithful_tests_is_improved_unverified() -> None:
+def test_round_without_faithful_tests_converges_with_unverified_evidence() -> None:
     outcome = run_round(_gateway(tests='{"tests":[]}'), _plan())
 
-    assert outcome.status == "improved_unverified"
+    assert outcome.status == "converged"
+    assert outcome.convergence["verification"] == "unverified"
     assert outcome.original_kept is False
     assert outcome.final_prompt != PROMPT
     assert outcome.ranking is not None
@@ -142,7 +143,7 @@ def test_round_without_confirmed_gaps_still_rewrites_the_prompt() -> None:
         _gateway(), _plan(diagnosis={"confirmed_gaps": [], "problem_sentences": []})
     )
 
-    assert outcome.status == "improved"
+    assert outcome.status == "converged"
     assert outcome.original_kept is False
     assert outcome.selected_candidate_id is not None
     assert outcome.report()["offer_deep"] is False
@@ -182,7 +183,7 @@ def test_round_with_no_eligible_strategy_reports_an_unverified_improvement() -> 
 def test_round_picks_a_verified_winner_and_reports_the_losers() -> None:
     outcome = run_round(_gateway(), _plan())
 
-    assert outcome.status == "improved"
+    assert outcome.status == "converged"
     assert outcome.original_kept is False
     assert outcome.final_prompt.startswith("Rewrite ")
     assert outcome.selected_candidate_id is not None
@@ -243,19 +244,20 @@ def test_round_marks_and_blocks_a_crutch_strategy_that_regresses() -> None:
     assert outcome.final_prompt.removeprefix("Rewrite ") not in crutches
 
 
-def test_round_reports_failure_when_no_candidate_beats_the_original() -> None:
+def test_round_converges_on_its_measured_baseline_when_rewrites_are_worse() -> None:
     outcome = run_round(
         _gateway(weak_passes=lambda _model, prompt: prompt == PROMPT), _plan()
     )
 
     assert outcome.original_kept is True
-    assert outcome.status == "improvement_not_verified"
-    assert outcome.selected_strategy is None
-    assert outcome.failures and outcome.continue_rounds is True
+    assert outcome.status == "converged"
+    assert outcome.selected_strategy == "original"
+    assert outcome.failures and outcome.continue_rounds is False
     assert all("weak pass rates" in failure.summary for failure in outcome.failures)
     report = outcome.report()
-    assert report["failure"]["kind"] == "improvement_not_verified"
-    assert "robust ranking" in report["summary"]
+    assert "failure" not in report
+    assert report["convergence"]["source"] == "original_baseline"
+    assert report["selection_evidence"]["selected_candidate_id"] == "original"
 
 
 def test_round_grades_each_weak_model_separately() -> None:

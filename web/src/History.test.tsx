@@ -463,8 +463,8 @@ it("shows cancelled runs with neutral status in the list and opened details", as
 });
 
 /**
- * The seven labels `badgeFor` can produce, and a run that produces each one.
- * Kept as a literal table so an eighth label added to `badgeFor` without an
+ * The eight labels `badgeFor` can produce, and a run that produces each one.
+ * Kept as a literal table so a new label added to `badgeFor` without an
  * explanation fails the completeness test below.
  */
 const labelCases: { label: BadgeLabel; run: RunSummary }[] = [
@@ -494,6 +494,14 @@ const labelCases: { label: BadgeLabel; run: RunSummary }[] = [
     },
   },
   {
+    label: "Converged",
+    run: {
+      run_id: "cv",
+      prompt: "Case converged.",
+      outcome: "converged",
+    },
+  },
+  {
     label: "Improved",
     run: { run_id: "i", prompt: "Case improved.", original_kept: false },
   },
@@ -503,7 +511,7 @@ const labelCases: { label: BadgeLabel; run: RunSummary }[] = [
   },
 ];
 
-it("explains all seven badgeFor labels in words, not by colour", () => {
+it("explains all badgeFor labels in words, not by colour", () => {
   expect(Object.keys(BADGE_EXPLANATIONS).sort()).toEqual(
     labelCases.map((entry) => entry.label).sort()
   );

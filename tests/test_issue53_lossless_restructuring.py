@@ -210,6 +210,7 @@ def _run_lossless_round(
     strong_passes: bool = True,
     mixed_strategies: bool = False,
     invalid_role_id: bool = False,
+    pause_after_round: bool = False,
 ):
     writer_requests: list[dict] = []
     decision_keys: list[str] = []
@@ -289,6 +290,7 @@ def _run_lossless_round(
             # The recheck stub admits restructure_lossless, which lives in
             # the faithful_transform bundle.
             "improvement_style": "faithful_transform",
+            **({"time_limit_s": 0} if pause_after_round else {}),
         },
     )
 
@@ -343,13 +345,16 @@ def test_invalid_role_id_declines_and_reports_reason_without_running_candidate()
 
 
 def test_meaning_rejection_keeps_original_after_lossless_proof() -> None:
-    result, _writers, keys = _run_lossless_round(meaning_probability=0.1)
+    result, _writers, keys = _run_lossless_round(
+        meaning_probability=0.1, pause_after_round=True
+    )
 
     assert result["original_kept"] is True
     assert "fidelity:meaning" in keys
+    round_report = result["report"]["history"][0]["evidence"]
     candidate = next(
         item
-        for item in result["report"]["candidates"]
+        for item in round_report["candidates"]
         if item["strategy"] == "restructure_lossless"
     )
     assert (
@@ -360,11 +365,13 @@ def test_meaning_rejection_keeps_original_after_lossless_proof() -> None:
 
 
 def test_strong_regression_keeps_original_after_lossless_proof_and_weak_win() -> None:
-    result, _writers, keys = _run_lossless_round(strong_passes=False)
+    result, _writers, keys = _run_lossless_round(
+        strong_passes=False, pause_after_round=True
+    )
 
     assert result["original_kept"] is True
     assert "fidelity:meaning" in keys
-    assert result["report"]["strong_check"]["candidates"]
+    assert result["report"]["history"][0]["evidence"]["strong_check"]["candidates"]
 
 
 def test_harness_counts_structural_selection_win_and_strong_rejection() -> None:
@@ -396,7 +403,15 @@ def test_harness_counts_structural_selection_win_and_strong_rejection() -> None:
     assert selected_summary["strong_checked"] == 1
     assert selected_summary["strong_rejection_rate"] == 0.0
 
-    rejected, _, _ = _run_lossless_round(strong_passes=False)
+    rejected, _, _ = _run_lossless_round(strong_passes=False, pause_after_round=True)
+    # The paused run stores completed-round report evidence under history. The
+    # harness evaluates a single result payload, so expose that same round as
+    # its report without changing its recorded outcome.
+    rejected_round = rejected["report"]["history"][0]["evidence"]
+    rejected = {
+        **rejected,
+        "report": {"status": "improvement_not_verified", **rejected_round},
+    }
     rejected_summary = (
         EvaluationHarness(ResultEngine(rejected))
         .run(dataset)

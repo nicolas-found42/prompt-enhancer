@@ -33,6 +33,7 @@ class AttributionGateway(ScriptedGateway):
         fail_attribution: bool = False,
         malformed_attribution: bool = False,
         retry_count: int = 0,
+        original_score_attempts_before_pass: int = 5,
     ) -> None:
         self.pointer = pointer
         self.kind = kind
@@ -42,6 +43,8 @@ class AttributionGateway(ScriptedGateway):
         self.malformed_attribution = malformed_attribution
         self.writer_states: list[dict[str, Any]] = []
         self.attribution_batches: list[list[dict[str, Any]]] = []
+        self.original_score_attempts = 0
+        self.original_score_attempts_before_pass = original_score_attempts_before_pass
         catalog = (
             StaticModelCatalog(
                 (),
@@ -130,6 +133,20 @@ class AttributionGateway(ScriptedGateway):
             probability = 0.99
         elif key.startswith(("strategy_recheck:", "fidelity:")):
             probability = 0.99
+        elif key.startswith("score:"):
+            state = request["state"]
+            if state["candidate_prompt"] == state["original_prompt"]:
+                self.original_score_attempts += 1
+                # Fail one actual baseline sample, then let the original's own
+                # floor-passing second-round vector provide a healthy stop.
+                probability = (
+                    0.99
+                    if self.original_score_attempts
+                    > self.original_score_attempts_before_pass
+                    else 0.01
+                )
+            else:
+                probability = 0.01
         else:
             probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -150,7 +167,7 @@ def test_supported_source_attribution_reaches_next_round_writer() -> None:
     result = _optimize(gateway)
 
     assert result["original_kept"] is True
-    assert len(gateway.writer_states) == 2
+    assert len(gateway.writer_states) >= 2
     previous = gateway.writer_states[1]["previous_failures"]
     assert any(
         "s0002" in item
@@ -181,7 +198,7 @@ def test_low_confidence_none_unknown_and_provider_failure_stay_auditable() -> No
         gateway = AttributionGateway(**options)
         result = _optimize(gateway)
 
-        assert len(gateway.writer_states) == 2
+        assert len(gateway.writer_states) >= 2
         assert not any(
             "attribution hypothesis" in item
             for item in gateway.writer_states[1]["previous_failures"]
@@ -218,7 +235,9 @@ def test_pair_cap_applies_across_models_and_samples() -> None:
     attribution = result["report"]["failure_attribution"]
     assert attribution["requested_pair_count"] == 1
     assert attribution["skipped_count"] > 0
-    assert len(gateway.attribution_batches) == 2  # One per Round.
+    assert len(gateway.attribution_batches) == len(
+        result["report"]["history"]
+    )  # One per round.
 
 
 def test_dollar_cap_skips_attribution_without_erasing_failures() -> None:
@@ -230,17 +249,20 @@ def test_dollar_cap_skips_attribution_without_erasing_failures() -> None:
 
     assert gateway.attribution_batches == []
     assert result["report"]["history"][0]["candidate_failures"]
-    assert result["report"]["failure_attribution"]["requested_pair_count"] == 0
-    assert {
-        pair["reason"] for pair in result["report"]["failure_attribution"]["pairs"]
-    } == {"dollar_budget_exhausted"}
+    attribution = result["report"]["history"][0]["evidence"]["failure_attribution"]
+    assert attribution["requested_pair_count"] == 0
+    assert {pair["reason"] for pair in attribution["pairs"]} == {
+        "dollar_budget_exhausted"
+    }
 
 
 def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "attribution-retry-budget.json"
-    gateway = RecordingGateway(AttributionGateway(retry_count=3), path)
+    gateway = RecordingGateway(
+        AttributionGateway(retry_count=3, original_score_attempts_before_pass=0), path
+    )
     settings = Settings(attribution_dollar_cap=0.0003)
     original = PromptOptimizer(
         gateway=gateway,
@@ -252,7 +274,10 @@ def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
         json.loads(path.read_text())["cascade_settings"]["retry_reservation_multiplier"]
         == 4
     )
-    assert original["report"]["failure_attribution"]["requested_pair_count"] == 0
+    original_attribution = original["report"]["history"][0]["evidence"][
+        "failure_attribution"
+    ]
+    assert original_attribution["requested_pair_count"] == 0
     engine = default_engine_factory(path)
     engine.store = RunStore(":memory:")
 
@@ -261,8 +286,8 @@ def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
     )
 
     assert (
-        replayed["report"]["failure_attribution"]
-        == original["report"]["failure_attribution"]
+        replayed["report"]["history"][0]["evidence"]["failure_attribution"]
+        == original_attribution
     )
 
 
@@ -341,7 +366,9 @@ def test_harness_counts_attributions_and_only_scores_independent_labels() -> Non
 
 def test_version_eight_attribution_replays_strictly(tmp_path: Path) -> None:
     path = tmp_path / "attribution.json"
-    gateway = RecordingGateway(AttributionGateway(), path)
+    gateway = RecordingGateway(
+        AttributionGateway(original_score_attempts_before_pass=0), path
+    )
     gateway.writer_instruction_version = 8
     gateway.faithfulness_threshold = 0.8
     original = PromptOptimizer(

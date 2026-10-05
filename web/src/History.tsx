@@ -43,13 +43,14 @@ type HistoryProps = {
   refreshKey?: string;
 };
 
-/** The seven status labels `badgeFor` can return. */
+/** The status labels `badgeFor` can return. */
 export type BadgeLabel =
   | "Cancelled"
   | "Failed"
   | "Paused"
   | "Waiting for answers"
   | "Not tested"
+  | "Converged"
   | "Improved"
   | "Unchanged";
 
@@ -74,6 +75,8 @@ export const BADGE_EXPLANATIONS: Record<BadgeLabel, string> = {
     "This run is paused until you answer its questions in the clarification panel above History.",
   "Not tested":
     "Your prompt changed, but no reliable test confirmed the change is better, so treat it as unproven.",
+  Converged:
+    "Every quality dimension met its floor and further rounds stopped buying improvement, so the run stopped on purpose.",
   Improved:
     "A rewrite passed its checks and scored better than your original prompt.",
   Unchanged:
@@ -97,6 +100,10 @@ export function badgeFor(run: RunSummary | RunDetail): Badge {
   if (run.status === "failed") return { label: "Failed", tone: "bad" };
   if (run.status === "needs_input")
     return { label: "Waiting for answers", tone: "warn" };
+  if (run.outcome === "converged" || reportStatus === "converged")
+    // A converged run met every quality floor and stopped buying improvement:
+    // a success outcome, distinct from a merely untested rewrite.
+    return { label: "Converged", tone: "good" };
   if (run.original_kept === false) {
     const untestedOutcome =
       run.outcome === "unverified" ||

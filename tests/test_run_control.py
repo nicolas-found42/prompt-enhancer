@@ -12,13 +12,16 @@ from __future__ import annotations
 import json
 import threading
 from functools import partial
+from types import SimpleNamespace
 from typing import Any
 
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
 from prompt_enhancer.gateway import ScriptedGateway
+from prompt_enhancer.models import Tier
 from prompt_enhancer.optimizer import PromptOptimizer
+from prompt_enhancer.run_control import RoundTracker
 from prompt_enhancer.store import RunStore
 
 PromptOptimizer = partial(PromptOptimizer, writer_instruction_version=4)
@@ -74,7 +77,10 @@ def _gateway(
             return '{"tests":[]}'
         return "4"
 
+    baseline_score_attempts = 0
+
     def decide(request: Any, **_kwargs: Any) -> Any:
+        nonlocal baseline_score_attempts
         key = str(request.get("key", ""))
         if request.get("type") == "choice":
             if key == "task_type":
@@ -113,6 +119,16 @@ def _gateway(
             probability = recheck_probability
         elif key.startswith("faithful:"):
             probability = 0.01
+        elif key.startswith("score:"):
+            state = request["state"]
+            if state["candidate_prompt"] == state["original_prompt"]:
+                baseline_score_attempts += 1
+                # The first baseline is deliberately below floor so control
+                # tests reach their round boundary; the next baseline passes
+                # and terminates a continued run without an artificial cap.
+                probability = 0.99 if baseline_score_attempts > 5 else 0.01
+            else:
+                probability = 0.01
         elif key.startswith("grade_"):
             probability = float(request["state"]["output"] == "pass")
         else:
@@ -165,7 +181,7 @@ def test_spend_limit_pauses_run_at_round_boundary() -> None:
     assert pause["spent_usd"] > 0.0
     history = result["report"]["history"]
     assert len(history) == 1
-    assert history[0]["status"] == "completed"
+    assert history[0]["status"] == "no_qualified_candidate"
 
     stored = client.get(f"/api/runs/{run_id}").json()
     assert stored["status"] == "needs_input"
@@ -189,7 +205,7 @@ def test_time_limit_pause_then_stop_then_continue_rejected() -> None:
     stopped = client.post(f"/api/runs/{run_id}/stop").json()
     assert stopped["report"]["status"] == "stopped"
     assert len(stopped["report"]["history"]) == 1
-    assert stopped["report"]["history"][0]["status"] == "completed"
+    assert stopped["report"]["history"][0]["status"] == "no_qualified_candidate"
 
     # Stopping is permanent: approval to continue is gone.
     continued = client.post(f"/api/jobs/{run_id}/continue", json={})
@@ -213,9 +229,9 @@ def test_approval_continue_resumes_from_pause_boundary() -> None:
     finished = jobs.wait(run_id, timeout=30)["result"]
 
     assert finished["run_id"] == run_id
-    assert finished["status"] == "failed"
-    assert finished["report"]["status"] == "no_qualified_candidate"
-    assert len(finished["report"]["history"]) == 3
+    assert finished["status"] == "completed"
+    assert finished["report"]["status"] == "converged"
+    assert len(finished["report"]["history"]) >= 2
     assert finished["report"]["history"][0] == paused["report"]["history"][0]
     assert float(finished["cost"]["total"]) >= paused_spent
 
@@ -259,8 +275,8 @@ def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
             break
         _time.sleep(0.01)
     finished = restarted.get(f"/api/runs/{run_id}").json()["result"]
-    assert finished["report"]["status"] == "no_qualified_candidate"
-    assert len(finished["report"]["history"]) == 3
+    assert finished["report"]["status"] == "converged"
+    assert len(finished["report"]["history"]) >= 2
 
 
 def test_cancel_mid_run_preserves_completed_rounds() -> None:
@@ -295,11 +311,55 @@ def test_cancel_mid_run_preserves_completed_rounds() -> None:
     assert result["report"]["failure"]["kind"] == "cancelled"
     history = result["report"]["history"]
     assert len(history) >= 1
-    assert all(entry["status"] == "completed" for entry in history)
+    assert all(
+        entry["status"] in {"no_qualified_candidate", "converged"} for entry in history
+    )
 
     stored = client.get(f"/api/runs/{run_id}").json()
     assert stored["outcome"] == "cancelled"
     assert stored["result"]["report"]["history"] == history
+
+
+def test_round_tracker_keeps_best_selected_prompt_across_regression_and_resume() -> (
+    None
+):
+    tracker = RoundTracker()
+    prompts = ("first", "best", "terminal regression")
+    scores = (0.8, 0.95, 0.9)
+    for index, (prompt, score) in enumerate(zip(prompts, scores, strict=True), start=1):
+        evidence = {
+            "selection_evidence": {
+                "selected_candidate": {
+                    "candidate_id": f"candidate-{index}",
+                    "text": prompt,
+                }
+            }
+        }
+        outcome = SimpleNamespace(
+            status="completed",
+            final_prompt=prompt,
+            original_kept=False,
+            selected_candidate_id=f"candidate-{index}",
+            selected_strategy="specify_output_format",
+            failures=(),
+            cost={},
+            timing={},
+            convergence={
+                "selected": True,
+                "passed": True,
+                "scores": {"clarity": score},
+            },
+            continue_rounds=True,
+            evidence=lambda evidence=evidence: evidence,
+        )
+        tracker.record(
+            SimpleNamespace(round_number=index, tier_round=index, tier=Tier.FAST),
+            outcome,
+        )
+
+    assert tracker.final_prompt == "best"
+    resumed = RoundTracker.preload(tracker.history, "terminal regression", False)
+    assert resumed.final_prompt == "best"
 
 
 def test_progress_snapshot_carries_elapsed_time_and_cost() -> None:
@@ -328,7 +388,7 @@ def test_progress_snapshot_carries_elapsed_time_and_cost() -> None:
 
     release.set()
     finished = jobs.wait(run_id, timeout=30)["result"]
-    assert finished["status"] == "failed"
+    assert finished["status"] == "completed"
 
 
 def test_invalid_run_limits_rejected() -> None:

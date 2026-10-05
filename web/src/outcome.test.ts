@@ -25,6 +25,16 @@ describe("outcomeOf", () => {
     expect(outcome.reason).toContain("retrying");
   });
 
+  it("reports a floor-passing prompt that stopped improving as converged", () => {
+    const outcome = outcomeOf(
+      result({ status: "converged", convergence: { passed: true, gain: 0 } })
+    );
+    expect(outcome.headline).toBe("Converged");
+    expect(outcome.reason).toContain(
+      "Every quality dimension reached its floor"
+    );
+  });
+
   it("reports an unproven improvement without claiming tested quality", () => {
     const outcome = outcomeOf(
       result({

@@ -8,9 +8,10 @@ callbacks so the workflow can be replayed deterministically without provider key
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, cast
 
+from .convergence import convergence_summary, mean_score
 from .improve import failure_unverified
 from .models import Tier
 from .rounds import CandidateFailure, RoundOutcome
@@ -77,6 +78,11 @@ class RoundRequest:
     prior_failures: tuple[str, ...] = ()
     history: tuple[RoundEvidence, ...] = ()
 
+    @property
+    def prior_vector(self) -> Mapping[str, Any] | None:
+        """The previous completed round's best score vector, for convergence."""
+        return self.history[-1].score_vector if self.history else None
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -110,6 +116,9 @@ class RoundEvidence:
     cost: Mapping[str, Any] = field(default_factory=dict)
     timing: Mapping[str, Any] = field(default_factory=dict)
     continuation_requested: bool = False
+    final_prompt: str | None = None
+    score_vector: Mapping[str, Any] | None = None
+    """The round's best candidate score vector, read by the next round's loop."""
 
     @classmethod
     def from_outcome(
@@ -127,7 +136,8 @@ class RoundEvidence:
             max_rounds=tier.max_rounds,
             original_kept=outcome.original_kept,
             # A round that returns an outcome has completed.
-            status="completed",
+            status=outcome.status,
+            final_prompt=outcome.final_prompt,
             selected_candidate_id=outcome.selected_candidate_id,
             selected_strategy=outcome.selected_strategy,
             candidate_failures=outcome.failures,
@@ -135,6 +145,9 @@ class RoundEvidence:
             cost=_public_mapping(outcome.cost),
             timing=_public_mapping(outcome.timing),
             continuation_requested=outcome.continue_rounds,
+            score_vector=(
+                dict(outcome.convergence) if outcome.convergence is not None else None
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -145,6 +158,7 @@ class RoundEvidence:
             "max_rounds": self.max_rounds,
             "original_kept": self.original_kept,
             "status": self.status,
+            "final_prompt": self.final_prompt,
             "selected_candidate_id": self.selected_candidate_id,
             "selected_strategy": self.selected_strategy,
             "candidate_failures": [
@@ -154,6 +168,7 @@ class RoundEvidence:
             "cost": dict(self.cost),
             "timing": dict(self.timing),
             "continuation_requested": self.continuation_requested,
+            "convergence": dict(self.score_vector) if self.score_vector else None,
         }
 
 
@@ -235,7 +250,7 @@ class RepeatResult:
         payload["final_prompt"] = self.final_prompt
         payload["original_kept"] = self.original_kept
         payload["tier"] = self.tier.value
-        if self.original_kept:
+        if self.original_kept and not self.outcome.converged:
             # The always-improve run did not produce a changed prompt; label
             # the run failed, not completed-with-original. The round report
             # keeps its "no_qualified_candidate"/"improvement_not_verified"
@@ -253,6 +268,11 @@ class RepeatResult:
         report["offer_deep"] = self.offer_deep.to_dict() if self.offer_deep else None
         report["escalation"] = self.escalation.to_dict() if self.escalation else None
         payload["report"] = report
+        if self.outcome.converged:
+            # Convergence is a success event (#169): the run met every floor and
+            # stopped buying improvement. Surface it top-level so the history
+            # outcome mapping and the API read the same fact.
+            payload["converged"] = True
         if self.workflow is not None:
             payload.update(
                 {
@@ -270,7 +290,7 @@ class RoundRunner(Protocol):
 
 
 class RepeatCoordinator:
-    """Run bounded repeat rounds or continue the same run with a Deep pass."""
+    """Retry until convergence, an external stop, or an impossible Route; support Deep passes."""
 
     def run(
         self,
@@ -299,7 +319,7 @@ class RepeatCoordinator:
             # Resuming from a paused boundary retries the last round's
             # failures, the same way a Deep pass retries its source run.
             supplied = prior_history[-1].candidate_failures
-        history, outcome = _run_tier(
+        history, outcome, best_prompt = _run_tier(
             execute_round,
             workflow,
             selected_tier,
@@ -307,7 +327,7 @@ class RepeatCoordinator:
             failures=supplied,
             tier_round_start=(prior_history[-1].tier_round + 1 if prior_history else 1),
         )
-        original_kept = history[-1].original_kept
+        original_kept = best_prompt == workflow.original_prompt
         # A round may decline the offer (``report.offer_deep`` false) when a
         # Deep pass could not do anything the lower tier did not. Under the
         # always-improve policy a kept original is a reported failure whose
@@ -321,7 +341,7 @@ class RepeatCoordinator:
         return RepeatResult(
             run_id=run_id,
             tier=selected_tier,
-            final_prompt=outcome.final_prompt or prompt,
+            final_prompt=best_prompt,
             original_kept=original_kept,
             history=history,
             outcome=outcome,
@@ -382,14 +402,14 @@ class RepeatCoordinator:
             raise ValueError("Persisted run does not contain a valid Deep-pass offer")
         prior_history = _history_from_run(run)
         workflow = WorkflowContext.from_run(run)
-        history, outcome = _run_tier(
+        history, outcome, best_prompt = _run_tier(
             execute_round,
             workflow,
             Tier.DEEP,
             history=prior_history,
             failures=prior_history[-1].candidate_failures if prior_history else (),
         )
-        final_original_kept = history[-1].original_kept
+        final_original_kept = best_prompt == workflow.original_prompt
         escalation = EscalationState(
             status="completed",
             run_id=workflow.run_id,
@@ -403,7 +423,7 @@ class RepeatCoordinator:
         return RepeatResult(
             run_id=workflow.run_id,
             tier=Tier.DEEP,
-            final_prompt=outcome.final_prompt or workflow.original_prompt,
+            final_prompt=best_prompt,
             original_kept=final_original_kept,
             history=history,
             outcome=outcome,
@@ -420,10 +440,35 @@ def _run_tier(
     history: tuple[RoundEvidence, ...],
     failures: tuple[CandidateFailure, ...],
     tier_round_start: int = 1,
-) -> tuple[tuple[RoundEvidence, ...], RoundOutcome]:
-    """Run up to the tier's round limit, feeding each round the last one's failures."""
+) -> tuple[tuple[RoundEvidence, ...], RoundOutcome, str]:
+    """Run rounds until the loop converges or an external control stops.
+
+    There is no attempt cap here (#169): the loop keeps retrying while any
+    quality dimension is below its floor or the marginal gain stays above
+    epsilon. Run control (cancel, budget pause), a permanent provider failure,
+    and the Route stage's impossible outcome are the stop surfaces; a converged
+    round stops with a success outcome. A selected winner alone does not stop it.
+    """
     next_round_number = history[-1].round_number + 1 if history else 1
     tier_round = tier_round_start
+    best_prompt, best_score = _best_prompt_from_history(
+        history, workflow.original_prompt
+    )
+    best_outcome: RoundOutcome | None = None
+    stored_best = next(
+        (
+            entry
+            for entry in reversed(history)
+            if entry.final_prompt == best_prompt
+            and entry.score_vector
+            and entry.score_vector.get("selected") is True
+            and entry.score_vector.get("passed") is True
+            and mean_score(entry.score_vector.get("scores", {})) == best_score
+        ),
+        None,
+    )
+    best_source_round = stored_best.round_number if stored_best else None
+    best_vector = stored_best.score_vector if stored_best else None
     while True:
         request = RoundRequest(
             run_id=workflow.run_id,
@@ -437,23 +482,114 @@ def _run_tier(
             history=history,
         )
         outcome = execute_round(request)
+        if best_outcome is None and stored_best is not None:
+            saved_vector = dict(stored_best.score_vector or {})
+            best_outcome = replace(
+                outcome,
+                final_prompt=best_prompt,
+                original_kept=best_prompt == workflow.original_prompt,
+                summary=convergence_summary(
+                    saved_vector.get("scores", {}), saved_vector.get("floors", {})
+                ),
+                convergence=saved_vector,
+                restored_evidence=stored_best.evidence,
+                tests=tuple(stored_best.evidence.get("tests", ())),
+                candidates=tuple(stored_best.evidence.get("candidates", ())),
+                failures=stored_best.candidate_failures,
+                cost=stored_best.cost,
+                timing=stored_best.timing,
+                reported_failure=None,
+            )
         evidence = RoundEvidence.from_outcome(
             round_number=request.round_number,
             tier_round=request.tier_round,
             tier=tier,
             outcome=outcome,
         )
+        vector = evidence.score_vector or {}
+        scores = vector.get("scores") if isinstance(vector, Mapping) else None
+        if (
+            isinstance(scores, Mapping)
+            and vector.get("selected") is True
+            and vector.get("passed") is True
+        ):
+            score = mean_score(scores)
+            if score >= best_score:
+                best_score = score
+                best_prompt = outcome.final_prompt
+                best_outcome = outcome
+                best_source_round = request.round_number
+                best_vector = dict(vector)
+        elif (
+            outcome.status == "clarified"
+            and outcome.final_prompt != workflow.original_prompt
+        ):
+            best_prompt = outcome.final_prompt
         history = (*history, evidence)
         failures = evidence.candidate_failures
-        if (
-            tier_round >= tier.max_rounds
-            or not evidence.continuation_requested
-            or not evidence.original_kept
-            or not failures
-        ):
-            return history, outcome
+        if not evidence.continuation_requested:
+            if outcome.converged and best_outcome is not None:
+                # The report returned to callers describes the accepted winner,
+                # while retaining the terminal round's stopping measurement.
+                # Per-round history continues to show the regressed terminal
+                # candidate as evidence of why convergence occurred.
+                terminal_vector = dict(vector)
+                accepted_vector = dict(best_vector or {})
+                accepted_vector.update(
+                    {
+                        "status": "converged",
+                        "gain": terminal_vector.get("gain"),
+                        "source_round": best_source_round,
+                        "selected_candidate_id": best_outcome.selected_candidate_id,
+                        "terminal_scores": terminal_vector.get("scores"),
+                        "terminal_gain": terminal_vector.get("gain"),
+                    }
+                )
+                outcome = replace(
+                    best_outcome,
+                    status=outcome.status,
+                    convergence=accepted_vector,
+                )
+            return history, outcome, best_prompt
         next_round_number += 1
         tier_round += 1
+
+
+def _best_prompt_from_history(
+    history: Sequence[RoundEvidence], original_prompt: str
+) -> tuple[str, float]:
+    """Recover the highest-scoring floor-passing selected prompt in history."""
+    best_prompt = original_prompt
+    best_score = -1.0
+    for evidence in history:
+        if (
+            evidence.status == "clarified"
+            and evidence.final_prompt
+            and evidence.final_prompt != original_prompt
+        ):
+            best_prompt = evidence.final_prompt
+        vector = evidence.score_vector
+        scores = vector.get("scores") if isinstance(vector, Mapping) else None
+        if (
+            evidence.selected_candidate_id is None
+            or not isinstance(vector, Mapping)
+            or not isinstance(scores, Mapping)
+            or vector.get("passed") is not True
+        ):
+            continue
+        selection = evidence.evidence.get("selection_evidence")
+        selection = selection if isinstance(selection, Mapping) else {}
+        candidate = selection.get("selected_candidate")
+        if not isinstance(candidate, Mapping):
+            continue
+        prompt = candidate.get("text") or candidate.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            continue
+        score = mean_score(scores)
+        if score >= best_score:
+            best_prompt = prompt
+            best_score = score
+    return best_prompt, best_score
 
 
 def _supplied_failure(
@@ -524,6 +660,11 @@ def _round_evidence_from_value(
         ),
         original_kept=_as_bool(value.get("original_kept", False)),
         status=str(value.get("status") or "no_change"),
+        final_prompt=(
+            str(value["final_prompt"])
+            if value.get("final_prompt") is not None
+            else None
+        ),
         selected_candidate_id=_optional_string(value.get("selected_candidate_id")),
         selected_strategy=_optional_string(value.get("selected_strategy")),
         candidate_failures=tuple(
@@ -533,6 +674,11 @@ def _round_evidence_from_value(
         cost=_public_mapping(value.get("cost") or {}),
         timing=_public_mapping(value.get("timing") or {}),
         continuation_requested=_as_bool(value.get("continuation_requested", False)),
+        score_vector=(
+            dict(convergence)
+            if isinstance(convergence := value.get("convergence"), Mapping)
+            else None
+        ),
     )
 
 
