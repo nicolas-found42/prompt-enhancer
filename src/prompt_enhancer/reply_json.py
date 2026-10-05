@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -31,7 +32,8 @@ def parse_reply_json(
         return whole
 
     decoder = json.JSONDecoder()
-    end_of_text = len(text.rstrip())
+    repair_text = re.sub(r"\s*```\s*$", "", text).rstrip()
+    end_of_text = len(repair_text)
     first_error: json.JSONDecodeError | None = None
     position = 0
     while (start := _next_container(text, position)) is not None:
@@ -40,16 +42,16 @@ def parse_reply_json(
         except json.JSONDecodeError as error:
             first_error = first_error or error
             if repair is not None and error.pos >= end_of_text - 1:
-                suffix = repair(text[start:])
+                suffix = repair(repair_text[start:])
                 if suffix:
                     try:
-                        value = json.loads(text[start:] + suffix)
+                        value = json.loads(repair_text[start:] + suffix)
                     except json.JSONDecodeError:
                         pass
                     else:
                         if accept is None or accept(value):
                             return value
-            position = max(start + 1, error.pos)
+            position = _container_end(text, start)
             continue
         if accept is None or accept(value):
             return value
@@ -76,3 +78,32 @@ def _next_container(text: str, position: int) -> int | None:
         if index >= 0
     ]
     return min(candidates) if candidates else None
+
+
+def _container_end(text: str, start: int) -> int:
+    """Skip a failed outer container, including its nested values and strings."""
+
+    stack = []
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        character = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "{[":
+            stack.append(character)
+        elif character in "}]":
+            if not stack or stack[-1] != {"}": "{", "]": "["}[character]:
+                # A mismatched delimiter gives no trustworthy outer boundary.
+                return len(text)
+            stack.pop()
+            if not stack:
+                return index + 1
+    return len(text)

@@ -315,3 +315,26 @@ def test_a_success_test_reply_without_json_still_fails_to_compile() -> None:
         SuccessTestCompiler(
             _accepting_gateway("I cannot write tests for that.")
         ).compile("Summarize the report in two sentences.")
+
+
+@pytest.mark.parametrize("reply", ["[]", "```json\n[]\n```", "Here are the tests: []"])
+def test_empty_success_test_lists_compile_equally_with_and_without_wrappers(
+    reply: str,
+) -> None:
+    compiled = SuccessTestCompiler(_accepting_gateway(reply)).compile(
+        "Summarize the report."
+    )
+
+    assert compiled.tests == ()
+
+
+@pytest.mark.parametrize("missing", [1, 2])
+def test_fenced_success_test_replies_keep_final_delimiter_repair(missing: int) -> None:
+    reply = f"```json\n{_ONE_TEST[:-missing]}\n```"
+    compiled = SuccessTestCompiler(_accepting_gateway(reply)).compile(
+        "Summarize the report in two sentences."
+    )
+
+    assert [test.question for test in compiled.tests] == [
+        "Does the summary run to two sentences?"
+    ]

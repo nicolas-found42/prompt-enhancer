@@ -119,3 +119,29 @@ def test_complete_json_followed_by_stray_characters_is_read(stray: str) -> None:
     reply = '{"tests": [{"question": "Is it short?"}]}' + stray
 
     assert parse_reply_json(reply) == {"tests": [{"question": "Is it short?"}]}
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        'Sure: {"outer": invalid, "nested": {"tests": []}}',
+        'Sure: {"outer": invalid, "nested": {"tests": []}',
+        'Sure: [invalid, {"tests": []}]',
+        'Sure: {"outer": invalid, "text": "escaped \\" {", "nested": {"tests": []}}',
+    ],
+)
+def test_malformed_outer_json_does_not_expose_an_accepted_nested_value(
+    reply: str,
+) -> None:
+    with pytest.raises(json.JSONDecodeError):
+        parse_reply_json(
+            reply, accept=lambda value: isinstance(value, dict) and "tests" in value
+        )
+
+
+def test_a_separate_answer_after_a_malformed_container_is_read() -> None:
+    reply = (
+        'Example: {"outer": invalid, "nested": {"tests": [1]}} Answer: {"tests": []}'
+    )
+
+    assert parse_reply_json(reply) == {"tests": []}

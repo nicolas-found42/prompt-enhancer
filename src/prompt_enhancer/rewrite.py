@@ -28,8 +28,9 @@ from .styles import validated_style_authorization
 # Version 11 tells the success-test writer what `expected` may hold and validates it.
 # Version 12 reads success criteria with a batched Jev request in the grading
 # cascade (`criterion_reading.CRITERION_READING_MIN_VERSION`) instead of regexes.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
-CURRENT_WRITER_INSTRUCTION_VERSION = 12
+# Version 13 records advisory Jev relationships across accepted success tests.
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+CURRENT_WRITER_INSTRUCTION_VERSION = 13
 
 
 class CandidateWriter:
@@ -106,6 +107,7 @@ class CandidateWriter:
             10: current_instructions,
             11: current_instructions,
             12: current_instructions,
+            13: current_instructions,
         }[self.instruction_version]
         if state.get("style_authorization"):
             instructions += (

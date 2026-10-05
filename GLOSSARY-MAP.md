@@ -4,7 +4,7 @@ A local engine that resolves an improvement style, tests a bounded batch of cand
 
 ## Contexts
 
-- [Prompt improvement](docs/contexts/prompt-improvement/GLOSSARY.md): resolves the requested improvement style, evaluates bounded rounds, and reports what the evidence supports. Defines **Round**, **Improvement style**, **Quality dimension**, **Floor**, **Convergence**, **Perfect Prompt Loop**, **Rejection cause label**, and **Improvement not verified**.
+- [Prompt improvement](docs/contexts/prompt-improvement/GLOSSARY.md): resolves the requested improvement style, evaluates bounded rounds, and reports what the evidence supports. Defines **Round**, **Improvement style**, **Quality dimension**, **Floor**, **Convergence**, **Perfect Prompt Loop**, **Rejection cause label**, **Success-test set**, and **Improvement not verified**.
 - [Model access](docs/contexts/model-access/GLOSSARY.md): gives prompt improvement one way to reach Jev, the writer, the weak panel, and the strong check. Defines **Gateway**.
 
 ## Relationships
