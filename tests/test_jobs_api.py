@@ -1,8 +1,9 @@
+import json
 import threading
 
 from fastapi.testclient import TestClient
 
-from prompt_enhancer.api import create_app, run_estimates
+from prompt_enhancer.api import create_app
 from prompt_enhancer.gateway import (
     GatewayConfig,
     HttpGateway,
@@ -14,31 +15,66 @@ from prompt_enhancer.store import RunStore
 
 
 def _decide(request, **_kwargs):
+    key = str(request.get("key", ""))
     if request.get("type") == "choice":
-        choice = "general" if request.get("key") == "task_type" else "none"
+        if key.endswith(":verbosity_direction"):
+            choice = "same"
+        elif key == "task_type":
+            choice = "general"
+        elif key == "strategy_choice":
+            choice = "specify_output_format"
+        elif key.startswith("fidelity:sentence:"):
+            choice = "supported_by_original"
+        else:
+            choice = "none"
         return {
             "type": "choice",
             "choice": choice,
             "probabilities": {choice: 1.0},
             "confidence": 1.0,
         }
-    return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
+    if key.startswith("score:"):
+        probability = 0.99
+    elif key.startswith(("fidelity:", "strategy_recheck:", "evaluate:")):
+        probability = 0.99
+    elif key.startswith("gap:"):
+        probability = 0.01
+    else:
+        probability = 0.01
+    return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
 
 def _client(gateway) -> tuple[TestClient, object]:
     app = create_app(
-        optimizer=PromptOptimizer(store=RunStore(":memory:"), gateway=gateway)
+        optimizer=PromptOptimizer(
+            store=RunStore(":memory:"),
+            gateway=gateway,
+            writer_instruction_version=4,
+        )
     )
     return TestClient(app), app.state.jobs
 
 
 def _clarification_gateway() -> ScriptedGateway:
-    def chat(*_args, **_kwargs):
+    def initial_chat(*_args, **_kwargs):
         return (
             '{"gaps":{"goal":{"question":"What should the assistant do?",'
             '"options":[{"value":"summarize","label":"Summarize"},'
             '{"value":"analyze","label":"Analyze"}]}},"tests":[]}'
         )
+
+    def chat(model, messages, *, role, **_kwargs):
+        if role == "writer":
+            state = json.loads(messages[1]["content"])
+            if "strategies" in state:
+                return json.dumps(
+                    {
+                        strategy["name"]: state["prompt"]
+                        for strategy in state["strategies"]
+                    }
+                )
+            return initial_chat(model, messages, role=role)
+        return "pass"
 
     def decide(request, **_kwargs):
         key = request.get("key")
@@ -46,6 +82,12 @@ def _clarification_gateway() -> ScriptedGateway:
             choice = "general"
         elif key == "infer:goal":
             choice = "unknown"
+        elif key == "strategy_choice":
+            choice = "specify_output_format"
+        elif key.endswith(":verbosity_direction"):
+            choice = "same"
+        elif key.startswith("fidelity:sentence:"):
+            choice = "supported_by_original"
         elif request.get("type") == "choice":
             choice = "none"
         else:
@@ -57,20 +99,34 @@ def _clarification_gateway() -> ScriptedGateway:
                 "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
-        probability = 0.99 if key == "gap:goal" else 0.01
+        if key == "gap:goal":
+            probability = 0.99
+        elif key.startswith(("score:", "fidelity:", "strategy_recheck:", "evaluate:")):
+            probability = 0.99
+        else:
+            probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     return ScriptedGateway(chat=chat, decision=decide)
 
 
 def test_optimize_job_returns_run_id_at_once_and_finishes_with_the_result() -> None:
-    client, jobs = _client(
-        ScriptedGateway(chat=lambda *_a, **_k: '{"tests":[]}', decision=_decide)
-    )
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            state = json.loads(messages[1]["content"])
+            if "strategies" in state:
+                return json.dumps(
+                    {
+                        strategy["name"]: state["prompt"]
+                        for strategy in state["strategies"]
+                    }
+                )
+            return '{"tests":[]}'
+        return "pass"
 
-    started = client.post(
-        "/api/jobs/optimize", json={"prompt": "Explain recursion.", "tier": "fast"}
-    )
+    client, jobs = _client(ScriptedGateway(chat=chat, decision=_decide))
+
+    started = client.post("/api/jobs/optimize", json={"prompt": "Explain recursion."})
 
     assert started.status_code == 202
     run_id = started.json()["run_id"]
@@ -78,11 +134,11 @@ def test_optimize_job_returns_run_id_at_once_and_finishes_with_the_result() -> N
     job = client.get(f"/api/jobs/{run_id}").json()
     assert job["state"] == "done"
     assert job["prompt"] == "Explain recursion."
-    # The stub returns no success tests and rejects every strategy, so the
-    # always-attempt run writes nothing it may return and reports that.
-    assert job["result"]["status"] == "failed"
-    assert job["result"]["report"]["failure"]["kind"] == "improvement_not_verified"
-    assert job["result"]["report"]["status"] == "no_qualified_candidate"
+    # The stub keeps the original prompt and supplies no tests, so the run
+    # converges on its measured baseline with an unverified result.
+    assert job["result"]["status"] == "completed"
+    assert job["result"]["report"]["status"] == "converged"
+    assert job["result"]["report"]["convergence"]["verification"] == "unverified"
     assert "diagnosing" in job["stages_seen"]
     assert client.get(f"/api/runs/{run_id}").status_code == 200
 
@@ -119,9 +175,19 @@ def test_invalid_resume_answer_is_rejected_before_a_job_and_can_be_corrected() -
 
     corrected = client.post(
         f"/api/jobs/{run_id}/resume",
-        json={"answers": {"goal": {"value": "other", "text": "Summarize"}}},
+        json={
+            "answers": {
+                question["id"]: {
+                    "value": "other",
+                    "text": "Summarize"
+                    if question["id"] == "goal"
+                    else "Use concise language",
+                }
+                for question in pending["questions"]
+            }
+        },
     )
-    assert corrected.status_code == 202
+    assert corrected.status_code == 202, corrected.text
     assert jobs.wait(run_id)["result"]["status"] == "completed"
 
 
@@ -131,7 +197,7 @@ def test_refused_provider_produces_a_failed_result_with_a_plain_hint() -> None:
 
     client, jobs = _client(ScriptedGateway(chat=chat, decision=_decide))
     run_id = client.post(
-        "/api/jobs/optimize", json={"prompt": "Write a reply.", "tier": "fast"}
+        "/api/jobs/optimize", json={"prompt": "Write a reply."}
     ).json()["run_id"]
 
     result = jobs.wait(run_id)["result"]
@@ -158,7 +224,7 @@ def test_cancel_stops_the_run_at_the_next_stage() -> None:
         ScriptedGateway(chat=lambda *_a, **_k: '{"tests":[]}', decision=decide)
     )
     run_id = client.post(
-        "/api/jobs/optimize", json={"prompt": "Write a reply.", "tier": "fast"}
+        "/api/jobs/optimize", json={"prompt": "Write a reply."}
     ).json()["run_id"]
     assert entered.wait(5)
 
@@ -171,7 +237,8 @@ def test_cancel_stops_the_run_at_the_next_stage() -> None:
     assert result["final_prompt"] == "Write a reply."
     summary = client.get("/api/runs").json()[0]
     assert summary["status"] == "failed"
-    assert summary["outcome"] == "cancelled"
+    assert summary["control_state"] == "cancelled"
+    assert summary["outcome"] is None
 
 
 def test_invalid_writer_reply_is_not_reported_as_a_network_error() -> None:
@@ -179,7 +246,7 @@ def test_invalid_writer_reply_is_not_reported_as_a_network_error() -> None:
         ScriptedGateway(chat=lambda *_a, **_k: "not json", decision=_decide)
     )
     run_id = client.post(
-        "/api/jobs/optimize", json={"prompt": "Write a reply.", "tier": "fast"}
+        "/api/jobs/optimize", json={"prompt": "Write a reply."}
     ).json()["run_id"]
 
     failure = jobs.wait(run_id)["result"]["report"]["failure"]
@@ -189,29 +256,13 @@ def test_invalid_writer_reply_is_not_reported_as_a_network_error() -> None:
     assert failure["headline"] == "The writer model gave an unusable reply"
 
 
-def test_estimates_use_completed_runs_per_tier() -> None:
-    runs = [
-        {
-            "status": "completed",
-            "tier": "standard",
-            "timings": {"total_ms": 60000 * minutes},
-            "cost": {"total": minutes / 100},
-        }
-        for minutes in (2, 4, 6, 8, 10)
-    ] + [
-        {
-            "status": "failed",
-            "tier": "standard",
-            "timings": {"total_ms": 1000},
-            "cost": {"total": 0.0},
-        }
-    ]
+def test_retired_deep_job_endpoint_is_not_exposed() -> None:
+    client, _jobs = _client(
+        ScriptedGateway(chat=lambda *_a, **_k: "{}", decision=_decide)
+    )
 
-    estimate = run_estimates(runs)["standard"]
-
-    assert estimate["runs"] == 5
-    assert estimate["minutes"][0] == 6
-    assert 8 < estimate["minutes"][1] <= 10
+    assert client.post("/api/jobs/missing/deep").status_code == 404
+    assert client.get("/api/estimates").status_code == 404
 
 
 def test_provider_probe_marks_a_refused_provider_unavailable_without_recording_cost() -> (

@@ -459,7 +459,6 @@ def test_continue_reuses_persisted_style_route_and_provenance(
     paused = optimizer.optimize(
         prompt,
         {
-            "tier": "fast",
             "improvement_style": requested_style,
             "clarification_allowed": False,
             "time_limit_s": 0,

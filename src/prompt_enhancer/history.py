@@ -19,6 +19,7 @@ from typing import Annotated, Any
 
 from fastapi import Body
 
+from .outcomes import OUTCOME_VALUES, apply_outcome_fields
 from .score_vector import SCORE_DIMENSIONS
 
 _VALID_FEEDBACK = {
@@ -97,6 +98,7 @@ def _winning_score_vector(
     result_map = result if isinstance(result, Mapping) else {}
     report = detail.get("report")
     report_map = report if isinstance(report, Mapping) else {}
+    final_prompt = detail.get("final_prompt") or result_map.get("final_prompt")
     selected_id = record.get("selected_candidate_id") or result_map.get(
         "selected_candidate_id"
     )
@@ -109,6 +111,15 @@ def _winning_score_vector(
         ranking = per_model.get("ranking") if isinstance(per_model, Mapping) else None
         if isinstance(ranking, Mapping):
             selected_id = ranking.get("selected_candidate_id")
+    if not selected_id:
+        history = report_map.get("history")
+        if isinstance(history, list):
+            for round_record in reversed(history):
+                if isinstance(round_record, Mapping) and round_record.get(
+                    "selected_candidate_id"
+                ):
+                    selected_id = round_record["selected_candidate_id"]
+                    break
     if not isinstance(selected_id, str) or not selected_id:
         return None, None
 
@@ -116,10 +127,37 @@ def _winning_score_vector(
     selected_candidate = (
         selection.get("selected_candidate") if isinstance(selection, Mapping) else None
     )
+    if not isinstance(selected_candidate, Mapping):
+        history = report_map.get("history")
+        if isinstance(history, list):
+            for round_record in reversed(history):
+                if not isinstance(round_record, Mapping):
+                    continue
+                evidence = round_record.get("evidence")
+                selection = (
+                    evidence.get("selection_evidence")
+                    if isinstance(evidence, Mapping)
+                    else None
+                )
+                if not isinstance(selection, Mapping):
+                    continue
+                if not selected_id:
+                    selected_id = round_record.get(
+                        "selected_candidate_id"
+                    ) or selection.get("selected_candidate_id")
+                candidate = selection.get("selected_candidate")
+                if isinstance(candidate, Mapping):
+                    selected_candidate = candidate
+                    break
     if (
         isinstance(selected_candidate, Mapping)
         and str(selected_candidate.get("candidate_id") or "") == selected_id
     ):
+        candidate_text = selected_candidate.get("text") or selected_candidate.get(
+            "prompt"
+        )
+        if isinstance(final_prompt, str) and candidate_text != final_prompt:
+            return selected_id, None
         metadata = selected_candidate.get("metadata")
         vector = metadata.get("score_vector") if isinstance(metadata, Mapping) else None
         scores = vector.get("scores") if isinstance(vector, Mapping) else None
@@ -139,6 +177,9 @@ def _winning_score_vector(
             continue
         if str(candidate.get("candidate_id") or "") != selected_id:
             continue
+        candidate_text = candidate.get("text") or candidate.get("prompt")
+        if isinstance(final_prompt, str) and candidate_text != final_prompt:
+            return selected_id, None
         metadata = candidate.get("metadata")
         vector = metadata.get("score_vector") if isinstance(metadata, Mapping) else None
         scores = vector.get("scores") if isinstance(vector, Mapping) else None
@@ -192,26 +233,32 @@ def _normalise_record(
     status = pick(
         "status", default="completed" if final_prompt is not None else "needs_input"
     )
-    failure = report_map.get("failure")
-    failure_kind = failure.get("kind") if isinstance(failure, Mapping) else None
-    if report_map.get("status") == "cancelled" or failure_kind == "cancelled":
-        outcome = "cancelled"
-    elif report_map.get("status") == "awaiting_approval":
-        # A budget pause waits for the user's approval to continue or stop.
-        outcome = "awaiting_approval"
-    elif str(status) == "completed" and report_map.get("status") in (
-        "unverified",
-        "improved_unverified",
-        "clarified",
-        "converged",
+    legacy_metadata = source.get("legacy_metadata")
+    is_legacy = isinstance(legacy_metadata, Mapping) and bool(legacy_metadata)
+    canonical = (
+        dict(report_map)
+        if is_legacy
+        else apply_outcome_fields(
+            report_map,
+            original_prompt=str(original_prompt or ""),
+            final_prompt=str(final_prompt or ""),
+        )
+    )
+    report_map = canonical
+    report = canonical
+    outcome_value = canonical.get("outcome")
+    outcome = outcome_value if outcome_value in OUTCOME_VALUES else None
+    control_state = canonical.get("control_state")
+    recorded_style = (
+        legacy_metadata.get("recorded_applied_style") if is_legacy else None
+    )
+    applied_style = canonical.get("applied_style")
+    if (
+        is_legacy
+        and isinstance(recorded_style, str)
+        and recorded_style.casefold() != "auto"
     ):
-        # No success test confirmed the change, so the run must not read as
-        # improved. The report status propagates so list rows pill correctly.
-        # ``converged`` is the loop's success status (#169): floors met, no
-        # further gain, and the history row must say so.
-        outcome = str(report_map.get("status"))
-    else:
-        outcome = str(status)
+        applied_style = recorded_style
     metadata = source.get("metadata")
     metadata = dict(metadata) if isinstance(metadata, Mapping) else {}
     # Keep provider-specific and future fields searchable/visible without a
@@ -227,7 +274,6 @@ def _normalise_record(
         "prompt",
         "input_prompt",
         "inputPrompt",
-        "tier",
         "options",
         "result",
         "report",
@@ -263,29 +309,15 @@ def _normalise_record(
         "round",
         "round_index",
         "roundIndex",
-        "max_rounds",
-        "maxRounds",
-        "escalation",
-        "deep_offer",
-        "deepOffer",
+        "legacy_metadata",
+        "outcome",
+        "outcome_reason",
+        "applied_style",
+        "control_state",
     }
     for key, value in source.items():
         if str(key) not in known and str(key) != "metadata":
             metadata.setdefault(str(key), _jsonable(value))
-    # Repeat/escalation evidence can be supplied top-level or in result/report.
-    for name in ("round", "round_index", "max_rounds", "escalation", "deep_offer"):
-        aliases = {
-            "round_index": ("round_index", "roundIndex"),
-            "max_rounds": ("max_rounds", "maxRounds"),
-            "deep_offer": ("deep_offer", "deepOffer"),
-        }.get(name, (name,))
-        value = _first(source, *aliases, default=None)
-        if value is None:
-            value = _first(result_map, *aliases, default=None)
-        if value is None:
-            value = _first(report_map, *aliases, default=None)
-        if value is not None:
-            metadata.setdefault(name, _jsonable(value))
     models = pick("models", "model_choices", "modelChoices", default={})
     if not models and isinstance(source.get("options"), Mapping):
         options = source["options"]
@@ -323,11 +355,14 @@ def _normalise_record(
         "updated_at": _first(source, "updated_at", "updatedAt", default=None),
         "status": str(status),
         "outcome": outcome,
+        "outcome_reason": canonical.get("outcome_reason") if outcome else None,
+        "applied_style": applied_style,
+        "control_state": control_state,
+        "legacy_metadata": _jsonable(legacy_metadata) if is_legacy else None,
         "prompt": str(original_prompt or ""),
         "original_prompt": str(original_prompt or ""),
         "final_prompt": final_prompt,
         "original_kept": pick("original_kept", "originalKept", default=None),
-        "tier": pick("tier", default=None),
         "models": models,
         "diagnosis": pick("diagnosis", default={}),
         "tests": pick("tests", default=[]),
@@ -349,7 +384,6 @@ def _normalise_record(
         "feedback": feedback_value,
         "feedback_at": _first(source, "feedback_at", "feedbackAt", default=None),
         "feedback_labels": pick("feedback_labels", default=None),
-        "escalated_from": _escalated_from(report_map),
     }
 
 
@@ -447,11 +481,13 @@ class RunHistory:
                 "updated_at",
                 "status",
                 "outcome",
+                "outcome_reason",
+                "applied_style",
+                "control_state",
                 "prompt",
                 "original_prompt",
                 "final_prompt",
                 "original_kept",
-                "tier",
                 "feedback",
                 "feedback_at",
                 "feedback_labels",
@@ -460,7 +496,6 @@ class RunHistory:
             )
         } | {
             "models": detail.get("models", {}),
-            "escalated_from": detail.get("escalated_from"),
         }
 
     @staticmethod
@@ -478,7 +513,6 @@ class RunHistory:
         *,
         search: str | None = None,
         metadata: Mapping[str, Any] | None = None,
-        tier: str | None = None,
         status: str | None = None,
         feedback: str | None = None,
         limit: int = 50,
@@ -518,11 +552,6 @@ class RunHistory:
         filtered: list[dict[str, Any]] = []
         for detail in details:
             if (
-                tier is not None
-                and str(detail.get("tier") or "").casefold() != str(tier).casefold()
-            ):
-                continue
-            if (
                 status is not None
                 and str(detail.get("status") or "").casefold() != str(status).casefold()
             ):
@@ -557,6 +586,10 @@ class RunHistory:
         if value is None:
             raise ValueError("feedback must be 'accept' or 'reject'")
         detail = self.require_run(str(run_id))
+        if detail.get("legacy_metadata"):
+            raise ValueError(
+                "feedback is not available for an unclassified historical run"
+            )
         if str(detail.get("status") or "").casefold() in {
             "needs_input",
             "needs-input",
@@ -631,7 +664,6 @@ def register_history_routes(app: Any, store: Any) -> Any:
     def list_runs(
         q: str | None = Query(default=None),
         search: str | None = Query(default=None),
-        tier: str | None = Query(default=None),
         status: str | None = Query(default=None),
         feedback: str | None = Query(default=None),
         limit: int = Query(default=50, ge=1, le=200),
@@ -639,7 +671,6 @@ def register_history_routes(app: Any, store: Any) -> Any:
     ) -> dict[str, Any]:
         runs = history.list_runs(
             q or search,
-            tier=tier,
             status=status,
             feedback=feedback,
             limit=limit,
@@ -671,10 +702,3 @@ def register_history_routes(app: Any, store: Any) -> Any:
 
     app.include_router(router)
     return app
-
-
-def _escalated_from(report: Mapping[str, Any]) -> str | None:
-    """The tier a Deep pass continued from, so history can show both attempts."""
-    escalation = report.get("escalation")
-    source = escalation.get("source_tier") if isinstance(escalation, Mapping) else None
-    return str(source) if source else None

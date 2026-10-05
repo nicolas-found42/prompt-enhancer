@@ -1,5 +1,3 @@
-export type Tier = "fast" | "standard" | "deep";
-
 export type ClarificationQuestion = {
   id: string;
   prompt: string;
@@ -92,6 +90,15 @@ export type PromptHealthResult = {
 };
 export type ModelSelection = { writer: string; strong: string; weak: string[] };
 
+export type RunOutcome =
+  | "converged"
+  | "improved_tested"
+  | "improved_unverified"
+  | "impossible"
+  | "failed_operational";
+
+export type RunControlState = "awaiting_approval" | "stopped" | "cancelled";
+
 export type OptimizeResult = {
   status: "completed" | "needs_input" | "failed";
   run_id: string;
@@ -100,6 +107,10 @@ export type OptimizeResult = {
   original_kept?: boolean;
   questions?: ClarificationQuestion[];
   report: Record<string, unknown> & {
+    outcome?: RunOutcome | null;
+    outcome_reason?: string | null;
+    applied_style?: string | null;
+    control_state?: RunControlState | null;
     evaluation_evidence?: EvaluationEvidence;
     judgment_provenance?: JudgmentProvenance[];
     capabilities_fired?: CapabilitySummary;
@@ -122,10 +133,10 @@ export type OptimizeResult = {
   timing: { total_ms: number };
 };
 
-export type JobRound = { round?: number; max_rounds?: number };
+export type JobRound = { round?: number };
 export type Job = {
   run_id: string;
-  kind: "optimize" | "resume" | "skip" | "deep" | "continue";
+  kind: "optimize" | "resume" | "skip" | "continue";
   prompt?: string;
   state: "queued" | "running" | "done";
   stage: string | null;
@@ -213,12 +224,6 @@ export type EvaluationCandidateEvidence = {
 
 export type EvaluationEvidence = {
   candidates: Record<string, EvaluationCandidateEvidence>;
-};
-
-export type TierEstimate = {
-  runs: number;
-  minutes: [number, number];
-  cost: [number, number];
 };
 
 /** An HTTP error from the local API, with the server's `detail` when present. */
@@ -317,10 +322,6 @@ export function startSkip(runId: string): Promise<Job> {
   return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/skip`);
 }
 
-export function startDeep(runId: string): Promise<Job> {
-  return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/deep`);
-}
-
 export function startContinue(runId: string, limits?: RunLimits): Promise<Job> {
   return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/continue`, {
     ...(limits?.time_limit_s != null
@@ -362,10 +363,6 @@ export function getProviders(probe: boolean): Promise<ProviderReport> {
   return requestJson<ProviderReport>(
     `/api/providers?probe=${probe ? "true" : "false"}`
   );
-}
-
-export function getEstimates(): Promise<Partial<Record<Tier, TierEstimate>>> {
-  return requestJson<Partial<Record<Tier, TierEstimate>>>("/api/estimates");
 }
 
 export function getCatalog(): Promise<ModelCatalog> {

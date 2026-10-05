@@ -153,12 +153,11 @@ def _gateway(
     return ScriptedGateway(chat=chat, decision=decide)
 
 
-def _plan(*, tier="fast", diagnosis=GAPS, prior_failures=()) -> RoundPlan:
+def _plan(*, diagnosis=GAPS, prior_failures=()) -> RoundPlan:
     return RoundPlan(
         prompt=PROMPT,
         working_prompt=PROMPT,
         run_id="run",
-        tier=tier,
         seed=17,
         diagnosis=diagnosis,
         assumptions=(),
@@ -182,7 +181,6 @@ def test_round_without_faithful_tests_converges_with_unverified_evidence() -> No
     assert outcome.final_prompt != PROMPT
     assert outcome.ranking is not None
     assert outcome.ranking.selected is not None
-    assert outcome.report()["offer_deep"] is False
 
 
 def test_requirement_paraphrase_is_valid_but_exact_output_literal_is_binding() -> None:
@@ -227,7 +225,6 @@ def test_round_without_confirmed_gaps_still_rewrites_the_prompt() -> None:
     assert outcome.status == "converged"
     assert outcome.original_kept is False
     assert outcome.selected_candidate_id is not None
-    assert outcome.report()["offer_deep"] is False
 
 
 def test_round_rejects_a_whole_prompt_mirror_candidate_on_a_clear_input() -> None:
@@ -284,10 +281,17 @@ def test_round_accept_gate_rejects_semantic_leader_and_promotes_survivor() -> No
             "candidate-3-add_done_criteria": 0.99,
             "candidate-1-add_missing_context": 0.8,
             "candidate-2-specify_output_format": 0.7,
+            "candidate-4-remove_contradictions": 0.2,
+            "candidate-5-split_into_steps": 0.1,
+            "candidate-6-add_example": 0.0,
         },
         accept_scores={
             "candidate-3-add_done_criteria": 0.1,
             "candidate-1-add_missing_context": 0.95,
+            "candidate-2-specify_output_format": 0.1,
+            "candidate-4-remove_contradictions": 0.1,
+            "candidate-5-split_into_steps": 0.1,
+            "candidate-6-add_example": 0.1,
         },
     )
 
@@ -521,6 +525,9 @@ def test_original_baseline_must_pass_its_own_accept_gate() -> None:
             "candidate-1-add_missing_context": 0.01,
             "candidate-2-specify_output_format": 0.01,
             "candidate-3-add_done_criteria": 0.01,
+            "candidate-4-remove_contradictions": 0.01,
+            "candidate-5-split_into_steps": 0.01,
+            "candidate-6-add_example": 0.01,
         },
     )
 
@@ -566,7 +573,7 @@ def test_round_marks_and_blocks_a_crutch_strategy_that_regresses() -> None:
         _gateway(
             strong_passes=lambda prompt: prompt.removeprefix("Rewrite ") not in crutches
         ),
-        _plan(tier="deep"),
+        _plan(),
     )
     strong = outcome.report()["strong_check"]["candidates"]
     crutch_outcomes = [entry for entry in strong if entry["strategy"] in crutches]
@@ -595,6 +602,22 @@ def test_round_converges_on_its_measured_baseline_when_rewrites_are_worse() -> N
     assert report["selection_evidence"]["selected_candidate_id"] == "original"
 
 
+def test_round_converges_on_measured_baseline_when_writer_echoes_original() -> None:
+    outcome = run_round(
+        _gateway(writer_echo=True, weak_passes=lambda _model, _prompt: True), _plan()
+    )
+
+    assert outcome.original_kept is True
+    assert outcome.status == "converged"
+    report = outcome.report()
+    assert report["convergence"]["source"] == "original_baseline"
+    assert report["convergence"]["selected"] is True
+    assert (
+        report["evaluation_evidence"]["candidates"]["original"]["accept"]["accepted"]
+        is True
+    )
+
+
 def test_round_grades_each_weak_model_separately() -> None:
     outcome = run_round(
         _gateway(
@@ -604,14 +627,20 @@ def test_round_grades_each_weak_model_separately() -> None:
     )
     grade = next(iter(_candidates(outcome).values()))["grade"]
 
-    assert grade["per_model"] == {"weak-a": 1.0, "weak-b": 0.0}
+    assert grade["per_model"] == {
+        "weak-a": 1.0,
+        "weak-b": 0.0,
+        "weak-c": 0.0,
+        "weak-d": 0.0,
+        "weak-e": 0.0,
+    }
     assert grade["worst"] == 0.0
-    assert grade["mean"] == 0.5
+    assert grade["mean"] == 0.2
 
 
 def test_round_is_reproducible_and_seeds_every_sample_differently() -> None:
-    first = run_round(_gateway(), _plan(tier="standard"))
-    second = run_round(_gateway(), _plan(tier="standard"))
+    first = run_round(_gateway(), _plan())
+    second = run_round(_gateway(), _plan())
     outputs = first.report()["per_model"]["panel"]["outputs"]
     rewrite = [output for output in outputs if output["candidate_id"] != "original"]
 

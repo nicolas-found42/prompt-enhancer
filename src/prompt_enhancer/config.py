@@ -10,7 +10,13 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-from .catalog import DEFAULT_GO_WRITER, JEV_MODEL
+from .catalog import DEFAULT_GO_WRITER, DEFAULT_WEAK_PANEL, JEV_MODEL
+
+MAX_CANDIDATES = 6
+DEFAULT_FIXED_WEAK_PANEL = DEFAULT_WEAK_PANEL + (
+    "mimo-v2.6-flash",
+    "google/gemma-3-4b-it",
+)
 
 
 @dataclass(slots=True)
@@ -21,20 +27,19 @@ class Settings:
     judge_model: str = JEV_MODEL
     writer_model: str = DEFAULT_GO_WRITER
     strong_check_model: str = "glm-5.3-flash"
-    weak_models: tuple[str, ...] = (
-        "meta-llama/llama-3.1-8b-instruct",
-        "mistralai/mistral-nemo",
-        "meta-llama/llama-3.2-3b-instruct",
-    )
+    weak_models: tuple[str, ...] = DEFAULT_FIXED_WEAK_PANEL
+    candidate_count: int = MAX_CANDIDATES
+    weak_model_count: int = 5
+    weak_samples: int = 3
     # Offered by the web app when OpenCode Go refuses requests, so a user
     # without an active subscription can switch in one click.
     fallback_writer_model: str = "~deepseek/deepseek-flash-latest"
     fallback_strong_check_model: str = "deepseek/deepseek-v4.1-flash"
-    grading_cascade_pair_cap: int | None = None
-    grading_cascade_dollar_cap: float | None = None
+    grading_cascade_pair_cap: int | None = 30
+    grading_cascade_dollar_cap: float | None = 0.05
     grading_confirmation_reservation_usd: float = 0.001
-    attribution_pair_cap: int | None = None
-    attribution_dollar_cap: float | None = None
+    attribution_pair_cap: int | None = 30
+    attribution_dollar_cap: float | None = 0.03
     # Quality score-vector floors (#168): per-dimension minima on the 0-1
     # scale. Any dimension below its floor rejects the candidate outright
     # (max-gate: a breach is never averaged away by strong siblings). These

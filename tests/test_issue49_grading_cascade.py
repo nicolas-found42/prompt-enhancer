@@ -29,7 +29,6 @@ def test_decisive_jev_confirmation_resolves_borderline_grade_without_strong_fall
 ):
     result, batches = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=1,
@@ -77,12 +76,14 @@ def test_confirmation_predicate_cannot_gate_on_raw_probability_alone() -> None:
     assert evidence[0]["policy"]["predicate"] == {"confidence_gte": 0.7}
 
 
-def test_fast_retains_original_with_unresolved_grade_and_no_cascade_requests() -> None:
+def test_disabled_confirmation_budget_retains_original_without_cascade_requests() -> (
+    None
+):
     result, batches = _run_screened_round(
         writer_instruction_version=7,
-        tier="fast",
         grade_pass_probability=0.5,
         generated_test_count=1,
+        settings=Settings(grading_cascade_pair_cap=0),
         pause_after_round=True,
     )
 
@@ -99,7 +100,6 @@ def test_fast_retains_original_with_unresolved_grade_and_no_cascade_requests() -
 def test_unsupported_strong_fallback_quote_cannot_resolve_uncertain_grade() -> None:
     result, batches = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.5, 0.5),
         generated_test_count=1,
@@ -135,7 +135,6 @@ def test_missing_verification_candidate_skips_strong_escalation() -> None:
 
     result, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.5, 0.5),
         generated_test_count=1,
@@ -192,7 +191,6 @@ def test_supported_strong_evidence_resolves_only_after_consistent_jev_verificati
     criterion = "Does the answer satisfy the request?"
     options = {
         "writer_instruction_version": 7,
-        "tier": "standard",
         "grade_pass_probability": 0.5,
         "confirmation_answers": (0.95, 0.5, 0.5),
         "generated_test_count": 1,
@@ -232,7 +230,6 @@ def test_supported_strong_evidence_resolves_only_after_consistent_jev_verificati
 def test_rank_only_calibration_cannot_make_extreme_raw_grade_authoritative() -> None:
     initial, batches = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
     )
     assert initial["original_kept"] is False
@@ -264,7 +261,6 @@ def test_rank_only_calibration_cannot_make_extreme_raw_grade_authoritative() -> 
 
     held, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         decision_policy=policy,
         pause_after_round=True,
@@ -319,7 +315,7 @@ def test_confident_choice_and_score_failures_do_not_trigger_confirmation() -> No
         judge_model=gateway.jev_model,
         run_id="confident-failure",
         shared_state=True,
-        cascade_budget=CascadeBudget.for_tier("standard"),
+        cascade_budget=CascadeBudget.for_settings(Settings()),
         cascade_strong_model="strong",
     )
 
@@ -329,24 +325,23 @@ def test_confident_choice_and_score_failures_do_not_trigger_confirmation() -> No
 
 
 def test_cascade_pair_and_dollar_caps_hold_remaining_grades_unresolved() -> None:
-    standard, _ = _run_screened_round(
+    capped_by_pairs, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=3,
+        settings=Settings(grading_cascade_pair_cap=10),
         pause_after_round=True,
     )
-    assert standard["original_kept"] is True
-    assert standard["report"]["grading_cascade"]["confirmation_count"] == 10
+    assert capped_by_pairs["original_kept"] is True
+    assert capped_by_pairs["report"]["grading_cascade"]["confirmation_count"] == 10
     assert any(
         item["reason"] == "pair_budget_exhausted"
-        for item in standard["report"]["grading_cascade"]["pairs"]
+        for item in capped_by_pairs["report"]["grading_cascade"]["pairs"]
     )
 
     capped, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=1,
@@ -364,7 +359,6 @@ def test_cascade_pair_and_dollar_caps_hold_remaining_grades_unresolved() -> None
 def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
     failed, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         generated_test_count=1,
         confirmation_provider_error=True,
@@ -378,7 +372,6 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
 
     unpriced, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         generated_test_count=1,
         confirmation_answers=(0.95, 0.5, 0.5),
@@ -394,7 +387,6 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
 
     uncalibrated, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         generated_test_count=1,
         criterion_text="Does the answer satisfy the request?",
@@ -427,7 +419,6 @@ def test_detected_output_cannot_be_rescued_and_unresolved_screen_skips_confirmat
 ):
     detected, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         generated_test_count=1,
         output_screen={"pass": 0.99},
@@ -444,7 +435,6 @@ def test_detected_output_cannot_be_rescued_and_unresolved_screen_skips_confirmat
 
     unresolved, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         generated_test_count=1,
         output_screen={"pass": None},
@@ -464,7 +454,6 @@ def test_current_cascade_recording_replays_initial_and_confirmation_evidence(
     path = tmp_path / "cascade.json"
     original, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=1,
@@ -477,7 +466,6 @@ def test_current_cascade_recording_replays_initial_and_confirmation_evidence(
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
         {
-            "tier": "standard",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
         },
@@ -495,7 +483,6 @@ def test_calibrated_fallback_recording_replays_all_three_stages(tmp_path: Path) 
     criterion = "Does the answer satisfy the request?"
     original, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.5, 0.5),
         generated_test_count=1,
@@ -518,7 +505,6 @@ def test_calibrated_fallback_recording_replays_all_three_stages(tmp_path: Path) 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
         {
-            "tier": "standard",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
         },
@@ -537,7 +523,6 @@ def test_recorded_cascade_budget_overrides_replay_without_extra_calls(
     path = tmp_path / "capped.json"
     original, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=1,
@@ -552,7 +537,6 @@ def test_recorded_cascade_budget_overrides_replay_without_extra_calls(
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
         {
-            "tier": "standard",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
             "time_limit_s": 0,
@@ -571,7 +555,6 @@ def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
     path = tmp_path / "retry-budget.json"
     original, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=1,
@@ -591,7 +574,6 @@ def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
         {
-            "tier": "standard",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
             "time_limit_s": 0,
@@ -604,51 +586,21 @@ def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
     )
 
 
-def test_deep_pair_cap_is_thirty_even_when_more_outputs_are_borderline() -> None:
-    def decide(request: dict, **_kwargs: object) -> dict:
-        key = str(request["key"])
-        probability = (
-            0.95
-            if key.endswith(("sufficient", "meets"))
-            else 0.05
-            if key.endswith("violation")
-            else 0.5
-        )
-        return {"type": "noul", "probability_true": probability}
-
-    gateway = ScriptedGateway(decision=decide)
-    observation: dict = {}
-    grades, _ = grade_panel_with_jev(
-        [
-            PanelResult("candidate", "weak", index, index, "answer", "prompt")
-            for index in range(31)
-        ],
-        [
-            {
-                "id": "t0",
-                "question": "Does it answer?",
-                "kind": "noul",
-                "expected": "yes",
-            }
-        ],
-        gateway,
-        judge_model=gateway.jev_model,
-        run_id="deep-cap",
-        shared_state=True,
-        cascade_budget=CascadeBudget.for_tier("deep"),
-        cascade_observation=observation,
-        cascade_strong_model="strong",
+def test_cascade_budget_defaults_and_explicit_overrides_are_settings_backed() -> None:
+    defaults = CascadeBudget.for_settings(Settings())
+    custom = CascadeBudget.for_settings(
+        Settings(), pair_cap=2, dollar_cap=0.004, judge_reservation_usd=0.0003
     )
 
-    assert observation["confirmation_count"] == 30
-    assert observation["unresolved_count"] == 1
-    assert grades["candidate"].unresolved_grade_outputs == 1
+    assert (defaults.pair_cap, defaults.dollar_cap) == (30, 0.05)
+    assert (defaults.judge_reservation_usd) == 0.001
+    assert (custom.pair_cap, custom.dollar_cap) == (2, 0.004)
+    assert custom.judge_reservation_usd == 0.0003
 
 
 def test_inclusive_uncertainty_boundaries_and_confirmation_decision_table() -> None:
     failed, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         grade_pass_probability=0.3,
         confirmation_answers=(0.8, 0.2, 0.8),
@@ -659,7 +611,6 @@ def test_inclusive_uncertainty_boundaries_and_confirmation_decision_table() -> N
 
     passed, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         grade_pass_probability=0.7,
         confirmation_answers=(0.8, 0.8, 0.2),
@@ -671,7 +622,6 @@ def test_inclusive_uncertainty_boundaries_and_confirmation_decision_table() -> N
 def test_exact_json_failure_blocks_semantic_confirmation_and_fallback_claim() -> None:
     result, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         criterion_text="Is the output valid JSON?",
         decision_policy=_verification_policy("Is the output valid JSON?"),
@@ -698,7 +648,6 @@ def test_exact_json_failure_blocks_semantic_confirmation_and_fallback_claim() ->
 def test_unimplemented_numeric_check_cannot_be_confirmed_by_prose() -> None:
     result, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         criterion_text="Does the answer include 12 citations?",
         grade_pass_probability=0.5,
@@ -719,7 +668,6 @@ def test_unimplemented_numeric_check_cannot_be_confirmed_by_prose() -> None:
 def test_word_bound_criterion_resolves_when_jev_confirms_and_the_count_agrees() -> None:
     result, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         criterion_text="Is the answer under 100 words?",
         grade_pass_probability=0.5,
@@ -736,7 +684,6 @@ def test_word_bound_criterion_resolves_when_jev_confirms_and_the_count_agrees() 
 def test_word_bound_conflict_with_jev_confirmation_stays_unresolved() -> None:
     result, _ = _run_screened_round(
         writer_instruction_version=7,
-        tier="standard",
         generated_test_count=1,
         criterion_text="Is the answer under 1 words?",
         grade_pass_probability=0.5,

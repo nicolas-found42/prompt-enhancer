@@ -10,16 +10,18 @@ Checking a prompt properly means running it on several models and judging every 
 
 ## Solution
 
-A standalone prompt optimizer: an engine exposed as an API, with a web app on top. The user pastes a prompt and picks a tier (Fast, Standard, Deep). The engine runs a full optimization loop on that single prompt:
+A standalone prompt optimizer: an engine exposed as an API, with a web app on top. The user pastes a prompt and chooses an improvement style. Each bounded Round can write up to six candidates. An early routing or writing decision can end a Round before panel requests; generated candidates are tested on five distinct weak models with three samples per model, then fidelity, score-floor, and acceptance checks decide which qualify. The engine repeats Rounds until its evidence converges or a separate control or provider condition interrupts the run:
 
 1. **Diagnose.** Jev classifies the task, finds gaps it's confident about, and points to the exact sentences that are vague or contradictory.
 2. **Clarify.** Jev decides which gaps can be filled from the prompt itself. Only when a gap can't be inferred and it matters is the user asked, and always as multiple choice.
 3. **Set the tests.** A writer model turns the user's intent into Jev questions that define success. Jev checks that those tests match what the user asked for.
 4. **Write candidates.** The writer produces several rewrites using different strategies, editing only the flagged sentences.
-5. **Run.** Every candidate runs on a panel of weak models from several model families, several samples each.
+5. **Run.** Generated candidates run on a panel of weak models from several model families, with several samples each. An earlier routing or writing decision can end the Round before panel requests.
 6. **Grade.** Jev grades every output against the tests in batched requests. This is fast and costs next to nothing, which is what makes checking each prompt affordable.
 7. **Strong check.** The best candidates must not do worse than the original on a stronger reference model, and strategies known to hurt strong models are blocked.
-8. **Pick or repeat.** The winner is chosen by strict ordered rules. If nothing beats the original, the user gets the original back with the diagnosis and an offer to run a Deep pass.
+8. **Pick or repeat.** Fidelity, score floors, and acceptance checks determine candidate eligibility; eligible choices are reranked and compared with the original. The Perfect Prompt Loop carries losing-candidate evidence forward and continues without a fixed Round limit while any quality dimension is below its floor or measured gain is above epsilon.
+
+Every result names the applied style and gives a brief explanation grounded in run evidence. The five outcomes are **converged**, **improved (tested)**, **improved (unverified)**, **impossible**, and **failed (operational)**. A finalized user stop may retain an accepted changed prompt only when that prompt's evidence supports a tested or unverified improvement; a stop by itself does not establish one. Pause, cancellation, and stop are control states kept separate from the outcome.
 
 The user gets one clean prompt to copy, plus a collapsible report: diagnosis, highlighted sentences, per-model pass rates, the diff against the original, assumptions made, and cost. Every run is logged locally, and the logs train a quality model that improves the rubric over time.
 
@@ -35,16 +37,44 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 6. As a user, I want my own wording kept wherever it wasn't a problem, so that the result still sounds like me.
 7. As a user, I want to see a diff between my prompt and the result, so that I know exactly what changed.
 8. As a user, I want the original prompt returned unchanged when no candidate beats it, so that the tool never hands me something worse.
-9. As a user, I want to be told plainly when my prompt already does best, so that "no change" reads as a result, not an error.
-10. As a user whose prompt wasn't improved on a lower tier, I want to be offered a Deep run, so that I can spend more effort when I care.
+9. As a user, I want every result to name its applied style and explain the evidence behind one of five outcomes—converged, improved (tested), improved (unverified), impossible, or failed (operational)—so that each status says exactly what the run established.
+10. As a user, I want the loop to continue while any quality floor is unmet or measured gain remains above epsilon, so that the run stops based on evidence rather than an arbitrary Round count.
 
-### Tiers and budget
+### Round workload and controls
 
-11. As a user, I want to pick Fast, Standard or Deep, so that I can trade time and cost against thoroughness.
-12. As a user, I want Standard to be the default, so that I don't have to think about tiers for ordinary prompts.
-13. As a user, I want to see the estimated time and cost of each tier before I run it, so that there are no surprises.
-14. As a user, I want the actual cost of each run shown afterwards, split by model role, so that I know where the money goes.
-15. As a user on a subscription with usage caps, I want to see how much of each OpenCode Go model cap a run used, so that I don't run out unexpectedly.
+11. As a user, I want each Round to allow up to six candidates, with five distinct weak models and three samples per model for candidates that reach the panel, so that each Round has a consistent evidence budget.
+12. As a user, I want a time or spend limit to pause for approval, so that I can control an uncapped convergence loop without mistaking a limit for an optimization result.
+13. As a user, I want actual cost split by model role after a run, so that I know where the money went.
+14. As a user on a subscription with usage caps, I want to see how much of each OpenCode Go model cap a run used, so that I don't run out unexpectedly.
+15. As a user, I want to cancel or stop a run and see that control state separately from its quality result, so that stopping is not mistaken for model evidence.
+
+### Result outcomes and control states
+
+Each finalized result carries `report.outcome`, `report.outcome_reason`, and
+`report.applied_style`. The outcome is one of five values:
+
+- **converged**: the selected prompt meets every quality floor and the loop
+  stopped under its convergence rule. On the first Round, `gain` is `null`
+  because there is no earlier vector; it is not a measured zero. A first-round
+  prompt can converge on its floor evidence alone.
+- **improved (tested)**: a changed prompt was accepted with usable success-test
+  evidence supporting it.
+- **improved (unverified)**: a changed prompt was accepted after meaning and
+  safety checks, but usable success-test evidence was unavailable; the report
+  must say that answer quality remains untested.
+- **impossible**: Route proved the selected style incompatible with a required
+  constraint, so candidate writing could not proceed. The current implementation
+  handles an exact-output conflict as this case.
+- **failed (operational)**: a provider or engine failure prevented a supported
+  final result. A Round that rejects its current candidates is not itself this
+  outcome; the loop can continue from its evidence.
+
+`report.control_state` is separate and can identify `awaiting_approval`,
+`stopped`, or `cancelled`. A user stop can retain an already accepted changed
+prompt as tested or unverified only when its own evidence supports that
+outcome. A stop without an accepted changed prompt must not be presented as an
+improvement. Clarification's `needs_input` response is also separate from the
+five finalized outcomes.
 
 ### Clarification
 
@@ -52,7 +82,7 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 17. As a user, I want to be asked only when a gap truly can't be inferred and would change the result, so that questions feel worth answering.
 18. As a user, I want clarifying questions as multiple choice with the most likely answer pre-selected, so that answering takes seconds.
 19. As a user, I want an "other" option on every clarifying question, so that I can give an answer the tool didn't think of.
-20. As a user, I want to skip clarification and let the tool assume, so that I can go fast when I don't care.
+20. As a user, I want to skip clarification and let the tool assume, so that I can move quickly when I don't care.
 21. As a user, I want each assumption shown as an editable chip in the report, so that I can correct a wrong guess.
 22. As a user, I want editing an assumption chip to update the final prompt, so that I don't have to re-run everything for a small fix.
 23. As an API client, I want a run that needs input to return a "needs input" result with the questions and a run ID, so that I can answer and resume the same run.
@@ -121,10 +151,10 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 
 ### Engine modules
 
-- **Engine facade.** The single public entry point: `optimize(prompt, options)` returns either a result or a needs-input response, and `resume(run_id, answers)` continues a paused run. Options cover tier, per-run model overrides, and whether clarification is allowed.
+- **Engine facade.** The single public entry point: `optimize(prompt, options)` returns either a result or a needs-input response, and `resume(run_id, answers)` continues a paused run. Options cover the requested improvement style, per-run model overrides, clarification, and optional run-control limits.
 - **Model gateway.** One interface for all model traffic: Jev decision requests and chat-completion requests. It routes by model: Jev goes to OpenRouter's Decisions API; models OpenCode Go offers go to Go's chat-completions endpoint; everything else goes to OpenRouter chat completions. It tracks cost per call and per role, handles retries and timeouts, and exposes the live model catalogs from both providers for the picker.
 - **Live prompt health.** When Jev is configured, the draft editor makes bounded advisory checks after typing pauses. Dimension applicability and quality drive a provisional Prompt clarity score; separate sentence flags retain exact source positions. Raw Jev answers use a versioned semantic cache and a persisted rolling allowance. Health usage is separate from optimization runs. See [the health workflow](prompt-health.md).
-- **OpenCode Go compliance.** Requests to Go send the tool's own user agent and one stable `x-opencode-session` value per optimization run. The gateway knows DeepSeek's peak and off-peak hours when estimating cost.
+- **OpenCode Go compliance.** Requests to Go send the tool's own user agent and one stable `x-opencode-session` value per optimization run.
 - **Jev client.** Builds Decisions API requests and parses answers into typed results (`noul` probability; `choice` pick, per-option probabilities and confidence; `score` level, per-level probabilities and confidence). The user's prompt and the model outputs being judged always go in `state`, never in `instructions`, so text being judged can't steer the question. Structured instructions can name state fields but cannot embed their text. The writer can propose Choice descriptions; only descriptions in a success test that passed Jev's faithfulness check can enter `criteria`.
 - **Diagnoser.** One batched Jev request per prompt:
   - A task-type taxonomy, classified with tree search over `choice` probabilities (each option's description shows the subtree beneath it). Each leaf carries its own checklist of required pieces.
@@ -135,43 +165,46 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 - **Strategy library.** Named rewrite strategies (for example: add missing context, specify output format, add done criteria, split into steps, add an example, remove contradictions). Each is tagged as safe or as a crutch (known to hurt strong models). Strategies are selected per prompt with rank-then-recheck: first a `choice` across the whole library, then a recheck of the shortlist with one `noul` per strategy.
 - **Candidate writer.** Generates K candidates in one structured call, each using a different strategy, editing only the flagged sentences unless the strategy explicitly restructures. It includes previous-round failures when running repeat rounds.
 - **Lossless restructuring.** The `restructure_lossless` strategy uses Jev Choices only to assign stable source units to Context, Task, Constraints, Output format, Examples, or Other. Code renders fixed headings and moves each exact source unit once; uncertain roles remain in Other. A deterministic proof checks IDs, source hashes, multiplicity, and the rendered candidate before fidelity. The candidate writer never receives this strategy. Whole-prompt meaning, weak-panel ranking, and the strong check still apply because moving text can change its interpretation. Reports expose the proof result, roles, outcome, and role-assignment cost; the evaluation harness counts generation, wins, and strong regressions with denominators. Missing observed evidence is reported as unavailable.
-- **Runner.** Runs each candidate and the original on every weak-panel model S times, at a nonzero temperature so samples differ, with a fixed per-run seed for reproducibility. Runs happen in parallel.
+- **Runner.** Each Round has capacity for six candidates. Generated candidates run on five distinct weak-panel models with three samples per model, at a nonzero temperature so samples differ, with a fixed per-run seed for reproducibility. The original is also measured for comparison. Runs happen in parallel. An earlier routing or writing decision can end a Round before panel requests.
 - **Grader.** Grades every (candidate × model × sample) output against the approved tests and computes pass rate per model, worst-model pass rate, mean pass rate and sample spread. New runs send one output and all its test questions in a shared-state Jev request, splitting only that output when question or request-size limits require it. Oversized or partial responses are ungradable and cannot verify a candidate. An unresolved grade for either the original or a candidate makes that candidate ineligible; if the finite confirmation budget leaves no eligible candidate, the Round retains the original rather than claiming an improvement. Each Noul success test uses one direct question; an expected "no" uses the complement of that answer. The reversed-form Noul self-check stays dropped because [Jev 1.13 does not guarantee that separate questions and their negations sum to 1](https://docs.typesafe.ai/model-jaggedness/jev-1.13). Choice and Score option order is governed by a versioned order-bias artifact: `single` asks once, and `mean_pair` averages the two orders after aligning them to semantic options/levels. With no compatible artifact, the grader keeps the existing `legacy_min_pair` rule. The offline `order-bias` experiment compares cross-order changes with same-order repeat variation using paired source-group bootstrap intervals. It recommends `single` only when both excess-effect upper bounds are at most 0.01, `mean_pair` when either lower bound exceeds 0.01, and `insufficient_evidence` otherwise; it requires 30 distinct prompt/output groups. Synthetic-only, incomplete, snapshot-mismatched, or inconclusive evidence cannot activate a policy. The report does not change the production default by itself.
 - **Fidelity checker.** Code first checks that edits stay within diagnosed sentences, authorized gap insertions, or explicit restructuring; a confinement failure rejects the candidate without a Jev request. Jev then checks each inserted or changed sentence for support and the whole prompt for preserved meaning. Writer instruction versions 1–3 keep the historical three-question protocol.
-- **Selector.** Applies the ordered rules below and decides whether to run another round.
+- **Selector.** Applies hard eligibility checks before semantic reranking and decides whether the Perfect Prompt Loop continues from this Round's evidence.
 - **Run store.** A SQLite-backed repository behind an interface. It logs everything: prompt, options, diagnosis, questions and answers, tests, candidates, outputs, every Jev answer with its question, costs, timings and the user's accept/reject.
 - **Self-improving rubric.** An offline job trains a gradient-boosted model (CatBoost) on logged runs. Features come from Jev answers (`noul` probabilities; `score` mean and spread). The label is the original prompt's weak-panel pass rate. A writer model proposes new, revised or dropped Jev questions based on the model's biggest errors (the pattern from TypeSafe's autoresearch cookbook). Adopted questions feed back into the diagnoser. An explicit REWORD workflow proposes at most four equivalent wordings for one active question, screens their meaning with Jev, selects on training groups, recalibrates on a separate partition, and adopts automatically only after a sealed independent final set clears every quantitative gate. Missing evidence returns hold or reject with an audit record; ordinary Optimize calls never start a wording search. See [automatic rewording](reword-workflow.md).
 
-### Selection rules (strictest first)
+### Selection rules
 
-1. Hard requirements: code enforces edit confinement; Jev checks changed-sentence support and preserved meaning. Writer instruction versions 1–3 use the historical three-question Jev protocol. Starting thresholds are 0.8, to be tuned on the test set.
-2. Strong check: the candidate's strong-model output scores at least as well as the original prompt's strong-model output. Crutch strategies are only allowed if they pass this.
-3. Rank the remaining candidates by worst weak-model pass rate, then mean pass rate, then lower spread between samples, then shorter length.
-4. If no candidate passes rules 1–2 and beats the original under rule 3, return the original unchanged with the diagnosis and test results. On Fast or Standard, offer a Deep run.
+1. Reject candidates that fail edit confinement, meaning support, success-test requirements, the strong-model gate, or any applicable score-vector floor. A candidate cannot average away a breached floor with stronger scores elsewhere.
+2. Apply the requested or Auto-resolved improvement style and route constraints. A proved style/constraint incompatibility produces **impossible** before candidate writing; the current implementation handles an incompatible required exact literal.
+3. Rerank only eligible candidates for relevance to the user's request, then select using worst weak-model pass rate, mean pass rate, lower sample spread, and shorter length as tie-breaks. Compare the selected candidate with the original under the same applicable gates.
+4. Continue the Perfect Prompt Loop while floors remain unmet or measured mean-vector gain exceeds epsilon. A first-Round gain is `null` because there is no previous vector; it is not a measured zero. A Round that rejects all current candidates may still continue, so it does not by itself finalize the run.
 
-### Tiers and model defaults
+### Round workload and model defaults
 
-| Tier | Candidates | Weak models | Samples | Max rounds |
-|---|---|---|---|---|
-| Fast | 3 | 2 | 1 | 1 |
-| Standard (default) | 4 | 3 | 2 | 2 |
-| Deep | 6 | 5 | 3 | 3 |
+Each Round may write up to six candidates. An early routing or writing decision
+can end a Round before panel requests. Generated candidates are tested on five
+distinct weak models with three samples per model; later eligibility checks
+decide which candidates qualify.
+There is no fixed total Round count. A per-run time or spend limit pauses at a
+Round boundary for approval; approval continues the same run, while cancel or
+stop is recorded as control state separately from the run outcome. Provider
+failures are operational failures, not a claim about prompt quality.
 
-| Role | Default model | Route |
-|---|---|---|
-| Judge (pinned default) | `typesafe/jev-1.13-20260917` | OpenRouter Decisions API |
-| Writer | `space-bunny-free` | OpenCode Go |
-| Strong check | `glm-5.3-flash` | OpenCode Go |
-| Weak panel | `meta-llama/llama-3.1-8b-instruct`, `mistralai/mistral-nemo`, `meta-llama/llama-3.2-3b-instruct` | OpenRouter |
-| Extra weak models on Deep | `mimo-v2.6-flash`, `muse-spark-1.3-contributor` | OpenCode Go |
+| Role                           | Default model                                                                                                            | Route                    |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
+| Judge (pinned default)         | `typesafe/jev-1.13-20260917`                                                                                             | OpenRouter Decisions API |
+| Writer                         | `space-bunny-free`                                                                                                       | OpenCode Go              |
+| Strong check                   | `glm-5.3-flash`                                                                                                          | OpenCode Go              |
+| Weak panel (five models total) | `meta-llama/llama-3.1-8b-instruct`, `mistralai/mistral-nemo`, `meta-llama/llama-3.2-3b-instruct`, `google/gemma-3-4b-it` | OpenRouter               |
+| Weak panel (five models total) | `mimo-v2.6-flash`                                                                                                        | OpenCode Go              |
 
-- Muse Spark 1.3 Contributor is included in Deep by explicit user choice. OpenCode Go marks it as training on prompts and not zero data retention. GPT 5.6 Luna remains excluded from defaults.
+- Muse Spark 1.3 Contributor and GPT 5.6 Luna remain excluded from defaults.
 - GLM 5.3 Flash is the strong reference by design. No frontier-model check runs per prompt or on a schedule.
 - Every role except the judge can be changed in the picker. Choices are saved as defaults and can be overridden per run.
 
 ### API contract (shape, not final)
 
-- **Optimize:** takes prompt text, tier, optional per-role model overrides, and a clarification-allowed flag. Returns either a *result* (final prompt, whether the original was kept, report, cost breakdown, run ID) or *needs-input* (run ID and a list of multiple-choice questions, each with options, a pre-selected default and an "other" option).
+- **Optimize:** takes prompt text, a requested improvement style, optional per-role model overrides, a clarification-allowed flag, and optional time/spend limits. Returns a result with one of the five outcomes and an evidence-grounded explanation, or _needs-input_ (run ID and a list of multiple-choice questions, each with options, a pre-selected default and an "other" option).
 - **Resume:** takes a run ID and answers, and returns a result.
 - **Update assumption:** takes a run ID and an edited assumption, and returns an updated final prompt. It re-checks meaning with Jev but does not re-run the whole loop.
 - **Catalog:** returns available models per provider for the picker.
@@ -187,14 +220,14 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 - **What makes a good test:** it drives the engine only through its public entry points (`optimize`, `resume`, update assumption) and checks what comes back: the final prompt, whether the original was kept, needs-input questions, report contents, cost accounting and what the run store recorded. Gateway contract tests may also inspect outgoing requests to verify the boundary between user-controlled state and static instructions. Tests must not depend on internal module structure, prompt templates or the order of internal calls.
 - **Single seam:** the engine facade, called in-process. All model traffic goes through the model gateway, which tests replace with (a) a scripted fake returning chosen Jev answers and chat completions, or (b) a replay of recorded real responses keyed by request, like the JSON cache in TypeSafe's cookbooks. No test calls live APIs by default.
 - **Engine behavior to cover through the seam:**
-  - A clear prompt with no gaps is returned unchanged with a "no change" report.
+  - Even when a prompt has no confirmed gaps, the style-selected rewrite is tested; the result states whether it passed, remained unverified, converged, proved impossible, or failed operationally.
   - Confident gaps produce a rewritten prompt; undecided answers near 0.5 produce no gaps.
   - An unknown, high-impact gap produces needs-input, and resuming with answers completes the run.
   - A candidate that fails the meaning or no-invention check is never selected.
   - A candidate that does worse than the original on the strong check is never selected.
   - A crutch strategy is selected only when it passes the strong check.
   - Ranking follows the ordered rules (worst model first, then mean, then spread, then length).
-  - When nothing beats the original, the original is returned and a Deep run is offered on lower tiers.
+  - A result names whether the run converged, returned a tested or unverified improvement, found a style/constraint incompatibility, or failed operationally; pause, cancel, and stop remain separate control states.
   - Repeat rounds receive earlier failures.
   - Routing sends Go-listed models to Go (with the session header) and others to OpenRouter.
   - Cost is split correctly by role.
@@ -230,7 +263,7 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
   - Content in `state` can steer its answers.
   - Probabilities depend on exact wording, so thresholds can't be reused across differently worded questions.
   - Every `choice` needs an explicit "unknown" or "none" option, because without one the model answers confidently and wrongly.
-- **Weak → strong transfer is a floor, not a guarantee.** Prompt preferences are fairly consistent across model sizes (S2LPP, arXiv 2505.20097). But strict rule-based prompting that helps mid-tier models can hurt the strongest ones ("prompting inversion", arXiv 2510.22251), and explicit step-by-step reasoning can reduce instruction-following (arXiv 2505.11423). This is why the strong check and the crutch rule exist.
+- **Weak → strong transfer is a floor, not a guarantee.** Prompt preferences are fairly consistent across model sizes (S2LPP, arXiv 2505.20097). But strict rule-based prompting that helps smaller models can hurt the strongest ones ("prompting inversion", arXiv 2510.22251), and explicit step-by-step reasoning can reduce instruction-following (arXiv 2505.11423). This is why the strong check and the crutch rule exist.
 - **OpenCode Go usage policy risk (accepted).** Go says it is designed for coding-agent traffic and monitors for abuse. This tool's traffic is not coding-agent traffic, so the account could be flagged or throttled. The user chose Go for every model it offers anyway; the gateway sends the required headers.
 - **Cost:** Writer and strong check come out of Go caps; the small weak panel and Jev are paid through OpenRouter. Live benchmark reports provide the measured cost for the selected writer.
 - **Prior art studied:** pi-prompt-enhancer (Jev gap checklist, fail-open, confident-gaps-only scoring), prompt-oscilloscope (Jev prompt analysis, debounce, hash caching, local secret checks), mimicry and Lossless Rewrite (LLM rewrites, Jev checks meaning in a bounded loop), and OpenRouter's Jev-verified cascade and "prompt to questions" lab.

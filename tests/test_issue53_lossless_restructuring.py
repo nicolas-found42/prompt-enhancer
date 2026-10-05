@@ -291,7 +291,6 @@ def _run_lossless_round(
     ).optimize(
         prompt,
         {
-            "tier": "standard" if mixed_strategies else "fast",
             "clarification_allowed": False,
             # The recheck stub admits restructure_lossless, which lives in
             # the faithful_transform bundle.
@@ -306,6 +305,9 @@ def _run_lossless_round(
 def test_optimizer_selects_lossless_candidate_without_candidate_writer_call() -> None:
     result, writer_requests, decision_keys = _run_lossless_round()
 
+    assert result["status"] == "completed"
+    assert result["report"]["status"] == "converged"
+    assert result["report"]["outcome"] == "converged"
     assert result["original_kept"] is False
     assert "### Context" in result["final_prompt"]
     assert "### Task" in result["final_prompt"]
@@ -335,19 +337,31 @@ def test_other_strategy_uses_writer_when_sharing_a_round_with_lossless() -> None
     )
 
 
+def _assert_budget_paused_after_one_round(result: dict) -> None:
+    assert result["status"] == "needs_input"
+    assert result["report"]["status"] == "awaiting_approval"
+    assert result["report"]["pause"]["reason"] == "time_limit"
+    assert len(result["report"]["history"]) == 1
+
+
 def test_invalid_role_id_declines_and_reports_reason_without_running_candidate() -> (
     None
 ):
-    result, writer_requests, keys = _run_lossless_round(invalid_role_id=True)
+    result, writer_requests, keys = _run_lossless_round(
+        invalid_role_id=True, pause_after_round=True
+    )
 
+    _assert_budget_paused_after_one_round(result)
+    assert result["report"]["history"][0]["status"] == "improvement_not_verified"
     assert result["original_kept"] is True
     assert all("strategies" not in request for request in writer_requests)
     assert any(key.startswith("restructure_lossless:role:") for key in keys)
-    evidence = result["report"]["lossless_restructuring"]
+    round_evidence = result["report"]["history"][0]["evidence"]
+    evidence = round_evidence["lossless_restructuring"]
     assert evidence["outcome"] == "declined"
     assert "invalid unit ID" in evidence["decline_reason"]
     assert evidence["source_preservation"]["status"] == "not_proven"
-    assert result["report"]["candidates"] == []
+    assert round_evidence["candidates"] == []
 
 
 def test_meaning_rejection_keeps_original_after_lossless_proof() -> None:
@@ -355,6 +369,7 @@ def test_meaning_rejection_keeps_original_after_lossless_proof() -> None:
         meaning_probability=0.1, pause_after_round=True
     )
 
+    _assert_budget_paused_after_one_round(result)
     assert result["original_kept"] is True
     assert "fidelity:meaning" in keys
     round_report = result["report"]["history"][0]["evidence"]
@@ -375,6 +390,7 @@ def test_strong_regression_keeps_original_after_lossless_proof_and_weak_win() ->
         strong_passes=False, pause_after_round=True
     )
 
+    _assert_budget_paused_after_one_round(result)
     assert result["original_kept"] is True
     assert "fidelity:meaning" in keys
     assert result["report"]["history"][0]["evidence"]["strong_check"]["candidates"]

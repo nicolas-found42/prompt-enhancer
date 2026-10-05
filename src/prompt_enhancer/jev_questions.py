@@ -48,7 +48,12 @@ def sentence_pointer_question(problem: str) -> str:
     return f"Which sentence best contains this problem: {problem}?"
 
 
-FIDELITY_MEANING_QUESTION = "Does the candidate preserve the original prompt's meaning and all stated constraints?"
+FIDELITY_MEANING_QUESTION = (
+    "Does the candidate preserve the original prompt's meaning and all stated "
+    "constraints? A nonempty state.style_authorization permits its bounded "
+    "presentation intent only; it never permits changed substantive meaning, "
+    "task scope, deliverables, or exact-output constraints."
+)
 FIDELITY_CHECKS = {
     "meaning_preserved": "Does the candidate preserve the original request and all stated constraints?",
     "no_invention": "Does the candidate avoid facts or requirements not given by the user?",
@@ -57,21 +62,29 @@ FIDELITY_CHECKS = {
 FIDELITY_SUPPORT_OPTIONS = {
     "supported_by_original": "The original prompt states or clearly entails this sentence.",
     "supported_by_assumption": "A confirmed user answer in state.confirmed_assumptions supports this sentence.",
-    "new_requirement": "This sentence adds a fact or requirement not supported by the prompt or a confirmed answer.",
-    "unknown": "The available prompt and confirmed answers do not establish whether this sentence is supported.",
+    "authorized_style_presentation": (
+        "This sentence changes only presentation expressly permitted by the nonempty "
+        "state.style_authorization for state.applied_style. It adds no task facts, "
+        "scope, deliverables, success criteria, or substantive requirements."
+    ),
+    "new_requirement": "This sentence adds a fact or substantive task requirement not supported by the prompt or a confirmed answer; presentation-only catalog permission cannot support it.",
+    "unknown": "The available prompt, confirmed answers, and bounded catalog presentation permission do not establish whether this sentence is supported.",
 }
 
 #: Judged (non-fidelity) quality score-vector dimensions. Fidelity keeps the
 #: existing fidelity checks as its hard gate, so it has no question here.
 SCORE_QUESTIONS = {
     "clarity": (
-        "Is the candidate prompt clearer and easier to follow than the "
-        "original prompt, without dropping any stated requirement?"
+        "Is the candidate prompt clear and easy to follow for its expressed "
+        "task, without dropping any stated requirement? An unchanged prompt "
+        "may pass when it is already sufficiently clear."
     ),
     "specificity": (
-        "Does the candidate prompt state the task, audience, or success "
-        "conditions more specifically than the original prompt, without "
-        "inventing requirements the user did not state?"
+        "Does the candidate prompt specify its task sufficiently to understand "
+        "and perform it, using only details supported by the original or "
+        "confirmed user answers? Do not demand audience or success details "
+        "the task does not need, or invent requirements. An unchanged prompt "
+        "may pass when it is already sufficiently specific."
     ),
     "coherence": (
         "Is the candidate prompt internally coherent: free of "
@@ -105,7 +118,9 @@ def sentence_existence_question(problem: str) -> str:
 def fidelity_sentence_support_question(change_id: str) -> str:
     return (
         f"Does the candidate sentence recorded at state.changed_sentences[{change_id!r}] "
-        "follow from state.original_prompt or a confirmed user answer?"
+        "follow from state.original_prompt or a confirmed user answer, or change "
+        "only presentation expressly permitted by state.style_authorization? "
+        "Style never supports new facts or substantive task requirements."
     )
 
 

@@ -14,6 +14,7 @@ from .diagnosis import split_sentences
 from .gateway import Gateway, ProviderError
 from .jev import ChoiceDecision, JevResponseError, NoulDecision, parse_decision
 from .lossless_restructuring import verify_lossless_proof
+from .styles import validated_style_authorization
 
 FIDELITY_THRESHOLD = 0.8
 DECISION_BATCH_LIMIT = 40
@@ -335,6 +336,8 @@ def check_candidate_fidelity(
     legacy_protocol: bool = False,
     candidate_id: str | None = None,
     round_number: int | None = None,
+    applied_style: str | None = None,
+    style_authorization: Mapping[str, Any] | None = None,
 ) -> FidelityResult:
     """Check deterministic edit confinement, then semantic support and meaning.
 
@@ -343,6 +346,7 @@ def check_candidate_fidelity(
     sentence and one whole-prompt meaning decision. Responses follow ADR-0001:
     the Gateway returns raw values and this caller parses them fail-closed.
     """
+    authorization = validated_style_authorization(applied_style, style_authorization)
     if legacy_protocol:
         stable_diagnosis = deepcopy(dict(diagnosis))
         request_evidence = stable_diagnosis.get("request_evidence")
@@ -463,6 +467,11 @@ def check_candidate_fidelity(
     state = {
         "original_prompt": support_prompt or original_prompt,
         "candidate_prompt": candidate_prompt,
+        **(
+            {"applied_style": applied_style, "style_authorization": authorization}
+            if authorization
+            else {}
+        ),
         "confirmed_assumptions": confirmed_assumptions,
         "changed_sentences": {
             change_id: {
@@ -552,11 +561,17 @@ def check_candidate_fidelity(
         except JevResponseError:
             decision = None
         accepted = bool(
-            selected in {"supported_by_original", "supported_by_assumption"}
+            selected
+            in {
+                "supported_by_original",
+                "supported_by_assumption",
+                "authorized_style_presentation",
+            }
             and probability >= FIDELITY_THRESHOLD
             and not (
                 selected == "supported_by_assumption" and not confirmed_assumptions
             )
+            and not (selected == "authorized_style_presentation" and not authorization)
         )
         support = {
             "change_id": edit["change_id"],
@@ -572,11 +587,17 @@ def check_candidate_fidelity(
         }
         if selected == "supported_by_assumption" and not confirmed_assumptions:
             support["reason"] = "no confirmed user answer was available"
+        elif selected == "authorized_style_presentation" and not authorization:
+            support["reason"] = "no matching catalog style authorization was available"
         elif selected == "new_requirement":
             support["reason"] = "new requirement"
         elif selected == "unknown":
             support["reason"] = "support unknown"
-        elif selected not in {"supported_by_original", "supported_by_assumption"}:
+        elif selected not in {
+            "supported_by_original",
+            "supported_by_assumption",
+            "authorized_style_presentation",
+        }:
             support["reason"] = "malformed or missing support answer"
         elif probability < FIDELITY_THRESHOLD:
             support["reason"] = "supported option probability below 0.80"

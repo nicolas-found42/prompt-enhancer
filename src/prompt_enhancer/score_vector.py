@@ -25,6 +25,7 @@ from . import jev_questions
 from .fidelity import FidelityResult
 from .gateway import Gateway, ProviderError
 from .jev import JevResponseError, NoulDecision, parse_decision
+from .styles import style_authorization_for
 
 #: Six score-vector dimensions in pinned report order.
 SCORE_DIMENSIONS = (
@@ -163,6 +164,7 @@ def score_candidate(
         "candidate_prompt": candidate_prompt,
         "applied_style": applied_style,
         "style_bundle": list(style_bundle),
+        "style_authorization": style_authorization_for(applied_style),
         **({"candidate_id": candidate_id} if candidate_id is not None else {}),
         **({"round_number": round_number} if round_number is not None else {}),
     }

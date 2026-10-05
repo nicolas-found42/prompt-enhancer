@@ -17,6 +17,7 @@ import pytest
 
 from prompt_enhancer import criterion_reading
 from prompt_enhancer.catalog import JEV_MODEL
+from prompt_enhancer.config import Settings
 from prompt_enhancer.criterion_checks import check_criterion
 from prompt_enhancer.criterion_reading import (
     CRITERION_READING_MIN_VERSION,
@@ -709,7 +710,7 @@ def grade_recorded(
         judge_model=JEV_MODEL,
         run_id="issue-116",
         shared_state=True,
-        cascade_budget=CascadeBudget.for_tier("standard"),
+        cascade_budget=CascadeBudget.for_settings(Settings()),
         cascade_observation=observation,
         cascade_strong_model="strong",
         read_criteria=version >= CRITERION_READING_MIN_VERSION,
@@ -737,7 +738,7 @@ def replay_grade(recorded: Mapping[str, Any]) -> dict[str, Any]:
         judge_model=JEV_MODEL,
         run_id="issue-116",
         shared_state=True,
-        cascade_budget=CascadeBudget.for_tier("standard"),
+        cascade_budget=CascadeBudget.for_settings(Settings()),
         cascade_observation=observation,
         cascade_strong_model="strong",
         read_criteria=True,

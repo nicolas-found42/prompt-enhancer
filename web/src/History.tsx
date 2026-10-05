@@ -1,17 +1,26 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { requestJson, type OptimizeResult } from "./api";
 import FailureCard from "./components/FailureCard";
-import { record } from "./outcome";
+import {
+  controlLabel,
+  isCanonicalOutcome,
+  OUTCOME_LABELS,
+  record,
+} from "./outcome";
+import { STYLE_LABELS, type ImprovementStyle } from "./styles";
 
 export type RunSummary = {
   run_id: string;
   created_at?: string;
   status?: string;
   outcome?: string;
+  outcome_reason?: string | null;
+  applied_style?: string | null;
+  control_state?: string | null;
   prompt: string;
   final_prompt?: string | null;
   original_kept?: boolean | null;
-  tier?: string | null;
+  legacy_metadata?: Record<string, unknown> | null;
   feedback?: "accept" | "reject" | null;
   feedback_labels?: {
     status?: "linked" | "unavailable";
@@ -45,14 +54,13 @@ type HistoryProps = {
 
 /** The status labels `badgeFor` can return. */
 export type BadgeLabel =
-  | "Cancelled"
-  | "Failed"
-  | "Paused"
-  | "Waiting for answers"
-  | "Not tested"
   | "Converged"
-  | "Improved"
-  | "Unchanged";
+  | "Improved (tested)"
+  | "Improved (unverified)"
+  | "Impossible"
+  | "Failed (operational)"
+  | "Outcome not established"
+  | "Legacy run";
 
 type Badge = {
   label: BadgeLabel;
@@ -66,59 +74,67 @@ type Badge = {
  * sentence, so the status never reads from colour alone.
  */
 export const BADGE_EXPLANATIONS: Record<BadgeLabel, string> = {
-  Cancelled: "You cancelled this run, so your prompt was left unchanged.",
-  Failed:
-    "The run stopped before finishing. The reason is shown on this row; open it for the full failure card.",
-  Paused:
-    "This run paused at your time or spend limit. Continue it from the paused panel above History, or stop it.",
-  "Waiting for answers":
-    "This run is paused until you answer its questions in the clarification panel above History.",
-  "Not tested":
-    "Your prompt changed, but no reliable test confirmed the change is better, so treat it as unproven.",
   Converged:
     "Every quality dimension met its floor and further rounds stopped buying improvement, so the run stopped on purpose.",
-  Improved:
-    "A rewrite passed its checks and scored better than your original prompt.",
-  Unchanged:
-    "No rewrite passed verification while changing your prompt, so the original was kept. Retrying may find an improvement.",
+  "Improved (tested)":
+    "A changed prompt was accepted with usable success-test evidence supporting it.",
+  "Improved (unverified)":
+    "A changed prompt passed meaning and safety checks, but usable success-test evidence was unavailable.",
+  Impossible:
+    "The selected improvement style conflicts with a required prompt constraint, so candidate writing could not proceed.",
+  "Failed (operational)":
+    "A provider or engine failure prevented the run from producing a supported final result.",
+  "Outcome not established":
+    "This run has no accepted quality outcome yet; its separate control state explains why it paused or stopped.",
+  "Legacy run":
+    "This saved run predates canonical outcomes, so its result is shown without inferring an outcome or applied style.",
 };
 
 export function badgeFor(run: RunSummary | RunDetail): Badge {
   const detail = run as RunDetail;
-  const reportStatus = String(
-    record(detail.report).status ??
-      record(record(detail.result).report).status ??
-      ""
-  );
-  if (run.outcome === "cancelled" || reportStatus === "cancelled")
-    return { label: "Cancelled", tone: "neutral" };
-  if (
-    run.outcome === "awaiting_approval" ||
-    reportStatus === "awaiting_approval"
-  )
-    return { label: "Paused", tone: "warn" };
-  if (run.status === "failed") return { label: "Failed", tone: "bad" };
-  if (run.status === "needs_input")
-    return { label: "Waiting for answers", tone: "warn" };
-  if (run.outcome === "converged" || reportStatus === "converged")
-    // A converged run met every quality floor and stopped buying improvement:
-    // a success outcome, distinct from a merely untested rewrite.
-    return { label: "Converged", tone: "good" };
-  if (run.original_kept === false) {
-    const untestedOutcome =
-      run.outcome === "unverified" ||
-      run.outcome === "improved_unverified" ||
-      run.outcome === "clarified";
-    const untested =
-      untestedOutcome ||
-      reportStatus === "unverified" ||
-      reportStatus === "improved_unverified" ||
-      reportStatus === "clarified";
-    return untested
-      ? { label: "Not tested", tone: "neutral" }
-      : { label: "Improved", tone: "good" };
+  const report = record(detail.report ?? record(detail.result).report);
+  const value = run.outcome ?? report.outcome;
+  if (!isCanonicalOutcome(value)) {
+    return {
+      label:
+        controlLabelFor(run) || !run.legacy_metadata
+          ? "Outcome not established"
+          : "Legacy run",
+      tone: "neutral",
+    };
   }
-  return { label: "Unchanged", tone: "neutral" };
+  const label = OUTCOME_LABELS[value] as BadgeLabel;
+  const tone =
+    value === "converged" || value === "improved_tested"
+      ? "good"
+      : value === "failed_operational"
+        ? "bad"
+        : value === "impossible"
+          ? "warn"
+          : "neutral";
+  return { label, tone };
+}
+
+export function controlLabelFor(run: RunSummary | RunDetail): string | null {
+  const detail = run as RunDetail;
+  const report = record(detail.report ?? record(detail.result).report);
+  return controlLabel(run.control_state ?? report.control_state);
+}
+
+function runReason(run: RunSummary | RunDetail): string | null {
+  const detail = run as RunDetail;
+  const report = record(detail.report ?? record(detail.result).report);
+  const reason = run.outcome_reason ?? report.outcome_reason;
+  return typeof reason === "string" && reason.trim() ? reason : null;
+}
+
+function appliedStyle(run: RunSummary | RunDetail): string | null {
+  const detail = run as RunDetail;
+  const report = record(detail.report ?? record(detail.result).report);
+  const style = run.applied_style ?? report.applied_style;
+  return typeof style === "string" && Object.hasOwn(STYLE_LABELS, style)
+    ? STYLE_LABELS[style as ImprovementStyle]
+    : null;
 }
 
 const feedbackText = { accept: "helpful", reject: "not helpful" } as const;
@@ -178,6 +194,12 @@ function StatusBadge({
   );
 }
 
+function ControlBadge({ run }: { run: RunSummary | RunDetail }) {
+  const label = controlLabelFor(run);
+  if (!label) return null;
+  return <span className="badge badge-warn badge-control-state">{label}</span>;
+}
+
 /** The explanation text a pill points at; hidden until hover or focus. */
 function StatusExplanation({
   id,
@@ -192,14 +214,6 @@ function StatusExplanation({
       {BADGE_EXPLANATIONS[badge.label]}
     </span>
   );
-}
-
-/** "standard" or, after a Deep pass, "standard, then deep". */
-function tierText(run: RunSummary): string {
-  if (!run.tier) return "";
-  return run.escalated_from && run.escalated_from !== run.tier
-    ? `${run.escalated_from}, then ${run.tier}`
-    : run.tier;
 }
 
 function when(value?: string): string {
@@ -402,18 +416,21 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
         <div className="run-details-heading">
           <h3 id="selected-run-heading">Run details</h3>
           <StatusBadge run={run} describedBy={detailsExplanationId} focusable />
+          <ControlBadge run={run} />
           <StatusExplanation id={detailsExplanationId} run={run} />
         </div>
         <p className="history-meta">
-          {[when(run.created_at), tierText(run), duration(run), money(run.cost)]
+          {[
+            when(run.created_at),
+            appliedStyle(run) ? `Applied style: ${appliedStyle(run)}` : "",
+            duration(run),
+            money(run.cost),
+          ]
             .filter(Boolean)
             .join(" · ")}
         </p>
-        {run.escalated_from && (
-          <p className="history-note">
-            This run started on {run.escalated_from} and then had a Deep pass;
-            this shows the latest result.
-          </p>
+        {runReason(run) && (
+          <p className="history-outcome-reason">{runReason(run)}</p>
         )}
         {run.status === "failed" && run.result ? (
           <FailureCard
@@ -444,12 +461,6 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
               </>
             ) : (
               <>
-                {originalKept === true ? (
-                  <p className="history-outcome">
-                    No verified improvement was found; your prompt was kept
-                    as-is.
-                  </p>
-                ) : null}
                 <div className="history-copy-heading">
                   <h4>Your prompt</h4>
                   {canCopyFinalPrompt && !hasDistinctFinalPrompt
@@ -485,7 +496,20 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
             <button
               type="button"
               className="secondary"
-              onClick={() => onOpen(run.result as OptimizeResult)}
+              onClick={() => {
+                const result = run.result as OptimizeResult;
+                onOpen(
+                  run.legacy_metadata
+                    ? {
+                        ...result,
+                        report: {
+                          ...record(result.report),
+                          legacy_metadata: run.legacy_metadata,
+                        },
+                      }
+                    : result
+                );
+              }}
             >
               {run.status === "needs_input"
                 ? "Answer the questions"
@@ -499,6 +523,11 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
               className="feedback-group"
             >
               <span>Was this helpful?</span>
+              <span className="feedback-outcome-context">
+                {badgeFor(run).label}
+                {appliedStyle(run) ? ` · ${appliedStyle(run)}` : ""}
+                {runReason(run) ? ` — ${runReason(run)}` : ""}
+              </span>
               <button
                 type="button"
                 className="secondary"
@@ -588,7 +617,9 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
           {runs.map((run) => {
             const open = selected?.run_id === run.run_id;
             const explanationId = rowExplanationId(run.run_id);
-            const failed = badgeFor(run).label === "Failed";
+            const failed =
+              run.status === "failed" ||
+              badgeFor(run).label === "Failed (operational)";
             return (
               <li key={run.run_id}>
                 <button
@@ -600,11 +631,14 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                   aria-describedby={explanationId}
                 >
                   <StatusBadge run={run} />
+                  <ControlBadge run={run} />
                   <span className="history-prompt">{run.prompt}</span>
                   <span className="history-meta">
                     {[
                       when(run.created_at),
-                      tierText(run),
+                      appliedStyle(run)
+                        ? `Applied style: ${appliedStyle(run)}`
+                        : "",
                       run.feedback
                         ? `you found it ${feedbackText[run.feedback]}`
                         : "",
@@ -612,7 +646,10 @@ export function History({ onOpen, refreshKey }: HistoryProps) {
                       .filter(Boolean)
                       .join(" · ")}
                   </span>
-                  {failed ? (
+                  {runReason(run) ? (
+                    <span className="history-row-reason">{runReason(run)}</span>
+                  ) : null}
+                  {failed && !runReason(run) ? (
                     <span className="history-failure-reason">
                       <span className="history-failure-label">
                         Why it failed:

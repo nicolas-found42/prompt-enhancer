@@ -198,18 +198,6 @@ button:focus-visible {
   margin: 10px 0 0;
 }
 
-.deep-offer {
-  background: #18212d;
-  border: 1px solid #30363d;
-  border-radius: 8px;
-  margin: 14px 0;
-  padding: 12px 16px;
-}
-
-.deep-offer p {
-  margin: 0 0 8px;
-}
-
 select {
   background: #21262d;
   border: 1px solid #30363d;
@@ -880,8 +868,26 @@ input:focus {
   gap: 8px;
 }
 
-.history-outcome {
-  font-weight: 600;
+.history-outcome-reason {
+  color: #c9d1d9;
+  margin: 4px 0 12px;
+}
+
+.history-row-reason {
+  color: #8b949e;
+  font-size: 0.83rem;
+  grid-column: 1 / -1;
+}
+
+.badge-control-state {
+  background: #2d2414;
+  border: 1px solid #6e531e;
+  color: #f5d08a;
+}
+
+.feedback-outcome-context {
+  color: #8b949e;
+  flex-basis: 100%;
 }
 
 /* Issue #146: each status pill explains itself, without a global legend. */

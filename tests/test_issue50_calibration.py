@@ -69,6 +69,18 @@ def _observation(
     )
 
 
+def _optimize_for_diagnosis(optimizer: PromptOptimizer) -> dict[str, object]:
+    result = optimizer.optimize(
+        "Help me plan.", {"clarification_allowed": False, "time_limit_s": 0}
+    )
+    assert result["status"] == "needs_input"
+    assert result["report"]["status"] == "awaiting_approval"
+    assert result["report"]["control_state"] == "awaiting_approval"
+    assert result["report"]["outcome"] is None
+    assert len(result["report"]["history"]) == 1
+    return result
+
+
 def test_choice_and_score_adapters_preserve_declared_distributions() -> None:
     choice = normalize_event(
         CalibrationObservation(
@@ -327,7 +339,7 @@ def test_runtime_policy_gates_rankers_and_abstains_on_snapshot_mismatch() -> Non
         store=RunStore(":memory:"),
         decision_policy=DecisionPolicy.from_artifact(artifact("gate")),
     )
-    gated = optimizer.optimize("Help me plan.", {"tier": "fast"})
+    gated = _optimize_for_diagnosis(optimizer)
     assert [item["key"] for item in gated["report"]["diagnosis"]["confirmed_gaps"]] == [
         "goal"
     ]
@@ -337,7 +349,7 @@ def test_runtime_policy_gates_rankers_and_abstains_on_snapshot_mismatch() -> Non
         store=RunStore(":memory:"),
         decision_policy=DecisionPolicy.from_artifact(artifact("ranker")),
     )
-    ranked = optimizer.optimize("Help me plan.", {"tier": "fast"})
+    ranked = _optimize_for_diagnosis(optimizer)
     assert ranked["report"]["diagnosis"]["confirmed_gaps"] == []
 
     optimizer = PromptOptimizer(
@@ -347,7 +359,7 @@ def test_runtime_policy_gates_rankers_and_abstains_on_snapshot_mismatch() -> Non
             artifact("gate", snapshot="other-snapshot")
         ),
     )
-    mismatched = optimizer.optimize("Help me plan.", {"tier": "fast"})
+    mismatched = _optimize_for_diagnosis(optimizer)
     assert mismatched["report"]["diagnosis"]["confirmed_gaps"] == []
 
     optimizer = PromptOptimizer(
@@ -360,7 +372,7 @@ def test_runtime_policy_gates_rankers_and_abstains_on_snapshot_mismatch() -> Non
             )
         ),
     )
-    below = optimizer.optimize("Help me plan.", {"tier": "fast"})
+    below = _optimize_for_diagnosis(optimizer)
     assert below["report"]["diagnosis"]["confirmed_gaps"] == []
 
 
@@ -401,7 +413,7 @@ def test_optimizer_gates_using_fitted_probability_from_artifact() -> None:
         store=RunStore(":memory:"),
         decision_policy=DecisionPolicy.from_artifact(artifact),
     )
-    result = optimizer.optimize("Help me plan.", {"tier": "fast"})
+    result = _optimize_for_diagnosis(optimizer)
 
     assert [gap["key"] for gap in result["report"]["diagnosis"]["confirmed_gaps"]] == [
         "goal"
@@ -454,7 +466,7 @@ def test_optimizer_abstains_when_answer_snapshot_is_unknown() -> None:
         store=RunStore(":memory:"),
         decision_policy=DecisionPolicy.from_artifact(artifact),
     )
-    result = optimizer.optimize("Help me plan.", {"tier": "fast"})
+    result = _optimize_for_diagnosis(optimizer)
 
     assert result["report"]["diagnosis"]["confirmed_gaps"] == []
     assert result["report"]["diagnosis"]["calibration"]["gap:goal"]["reason"] == (

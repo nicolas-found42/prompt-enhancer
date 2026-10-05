@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from . import jev_questions
 from .candidate_evaluation import round_judgment_provenance, summarize_capabilities
-from .catalog import DEFAULT_DEEP_WEAK_PANEL, DEFAULT_WEAK_PANEL, LiveModelCatalog
+from .catalog import LiveModelCatalog
 from .clarification import (
     ClarificationService,
     InMemoryClarificationRepository,
@@ -63,10 +63,10 @@ from .jev import NoulDecision, parse_decision
 from .models import (
     CostBreakdown,
     OptimizeResult,
-    Tier,
     new_run_id,
     utc_now,
 )
+from .outcomes import apply_outcome_fields
 from .repeat import (
     RepeatCoordinator,
     RoundEvidence,
@@ -103,6 +103,30 @@ from .success_tests import (
     SuccessTestScreenCache,
 )
 from .understand import UnderstandResult, run_understand
+
+RUN_OPTION_KEYS = frozenset(
+    {
+        "clarification_allowed",
+        "improvement_style",
+        "model_overrides",
+        "prior_round_failures",
+        "seed",
+        "spend_limit_usd",
+        "time_limit_s",
+    }
+)
+MODEL_OVERRIDE_KEYS = frozenset(
+    {
+        "judge",
+        "judge_model",
+        "strong",
+        "strong_check_model",
+        "weak",
+        "weak_models",
+        "writer",
+        "writer_model",
+    }
+)
 
 if TYPE_CHECKING:
     from .evaluation.calibration import CalibrationArtifact, DecisionPolicy
@@ -367,12 +391,12 @@ class PromptOptimizer:
             raise ValueError("strong_check_model must be a model ID")
         if (
             not isinstance(weak, (list, tuple))
-            or len(weak) < 3
+            or len(weak) < self.config.weak_model_count
             or any(not isinstance(item, str) or not item.strip() for item in weak)
             or len(set(weak)) != len(weak)
         ):
             raise ValueError(
-                "weak_models must contain at least three distinct model IDs"
+                f"weak_models must contain at least {self.config.weak_model_count} distinct model IDs"
             )
         selected = ModelDefaults(
             writer=writer.strip(), strong=strong.strip(), weak=tuple(weak)
@@ -408,7 +432,7 @@ class PromptOptimizer:
             return InMemoryClarificationRepository()
         return SQLiteClarificationRepository(self.store.path)
 
-    def _run_settings(self, options: Mapping[str, Any], tier: str) -> Settings:
+    def _run_settings(self, options: Mapping[str, Any]) -> Settings:
         overrides = options.get("model_overrides") or {}
         if not isinstance(overrides, Mapping):
             raise TypeError("model_overrides must be a mapping")
@@ -424,20 +448,6 @@ class PromptOptimizer:
         selected_weak = overrides.get("weak", overrides.get("weak_models"))
         if selected_weak is None:
             selected_weak = self.config.weak_models
-        if tier == "deep":
-            # Deep is the only workload and its panel needs five distinct
-            # models. Top up a short explicit panel from the configured
-            # defaults (the user's picks stay first) instead of refusing a
-            # run the user can no longer resize by choosing another tier.
-            selected_weak = tuple(
-                dict.fromkeys(
-                    (
-                        *selected_weak,
-                        *self.config.weak_models,
-                        *DEFAULT_DEEP_WEAK_PANEL,
-                    )
-                )
-            )
         if (
             not isinstance(writer, str)
             or not writer
@@ -453,9 +463,9 @@ class PromptOptimizer:
             or any(not isinstance(item, str) or not item for item in selected_weak)
         ):
             raise ValueError("weak model overrides must be a non-empty list")
-        count = Tier.parse(tier).budget.models
-        if len(set(selected_weak[:count])) != count:
-            raise ValueError(f"weak panel for {tier} requires {count} distinct models")
+        count = self.config.weak_model_count
+        if len(selected_weak) < count or len(set(selected_weak[:count])) != count:
+            raise ValueError(f"weak panel requires {count} distinct models")
         return replace(
             self.config,
             writer_model=writer,
@@ -471,14 +481,20 @@ class PromptOptimizer:
 
     def _prepare(
         self, prompt: str, options: Mapping[str, Any] | None
-    ) -> tuple[dict[str, Any], str, Settings, int]:
+    ) -> tuple[dict[str, Any], Settings, int]:
         if not isinstance(prompt, str) or not prompt.strip():
             raise ValueError("prompt must be a non-empty string")
         supplied_options = _safe_options(options or {})
-        # The engine still honors an explicit tier for direct callers, but a
-        # missing tier means Deep: every product run goes through the API,
-        # which always requests Deep (legacy tier input is ignored there).
-        tier = Tier.parse(supplied_options.pop("tier", "deep")).value
+        unknown_options = set(supplied_options).difference(RUN_OPTION_KEYS)
+        if unknown_options:
+            names = ", ".join(sorted(unknown_options))
+            raise ValueError(f"unknown run option(s): {names}")
+        overrides = supplied_options.get("model_overrides")
+        if isinstance(overrides, Mapping):
+            unknown_overrides = set(overrides).difference(MODEL_OVERRIDE_KEYS)
+            if unknown_overrides:
+                names = ", ".join(sorted(unknown_overrides))
+                raise ValueError(f"unknown model override(s): {names}")
         style = parse_improvement_style(
             supplied_options.get("improvement_style", "auto")
         )
@@ -486,9 +502,9 @@ class PromptOptimizer:
         # Optional run-control limits ride along in the options; reject an
         # invalid limit here so callers fail fast with a ValueError.
         RunControl.from_options(supplied_options)
-        run_settings = self._run_settings(supplied_options, tier)
+        run_settings = self._run_settings(supplied_options)
         run_seed = _run_seed(prompt, supplied_options.get("seed"))
-        return supplied_options, tier, run_settings, run_seed
+        return supplied_options, run_settings, run_seed
 
     @contextmanager
     def _progress_scope(
@@ -549,7 +565,7 @@ class PromptOptimizer:
         run_id: str | None = None,
         progress: ProgressCallback | None = None,
     ) -> OptimizeResult:
-        supplied_options, tier, run_settings, run_seed = self._prepare(prompt, options)
+        supplied_options, run_settings, run_seed = self._prepare(prompt, options)
         run_id = run_id or new_run_id()
         started_perf = perf_counter()
         started_at = utc_now()
@@ -561,7 +577,6 @@ class PromptOptimizer:
                 result = self._optimize_started(
                     prompt,
                     supplied_options,
-                    tier,
                     run_settings,
                     run_seed,
                     run_id,
@@ -576,7 +591,7 @@ class PromptOptimizer:
         )
         result["timing"]["started_at"] = started_at
         result["timing"]["finished_at"] = utc_now()
-        self._save_result(prompt, tier, supplied_options, result, started_at)
+        self._save_result(prompt, supplied_options, result, started_at)
         return result
 
     def failure_result(
@@ -595,16 +610,21 @@ class PromptOptimizer:
             run_id=run_id,
             final_prompt=prompt,
             original_kept=True,
-            report={
-                "status": "cancelled" if cancelled else "failed",
-                "summary": failure["hint"]
-                if cancelled
-                else "The run stopped before finishing; your original prompt was saved unchanged.",
-                "error": failure["message"],
-                "failure": failure,
-                "diagnosis": {"confirmed_gaps": [], "problem_sentences": []},
-                "assumptions": [],
-            },
+            report=apply_outcome_fields(
+                {
+                    "status": "cancelled" if cancelled else "failed",
+                    "summary": failure["hint"]
+                    if cancelled
+                    else "The run stopped before finishing; your original prompt was saved unchanged.",
+                    "error": failure["message"],
+                    "failure": failure,
+                    "diagnosis": {"confirmed_gaps": [], "problem_sentences": []},
+                    "assumptions": [],
+                },
+                original_prompt=prompt,
+                final_prompt=prompt,
+                control_state="cancelled" if cancelled else None,
+            ),
             cost=self._usage_cost(),
             timing={
                 "total_ms": 0,
@@ -612,13 +632,15 @@ class PromptOptimizer:
                 "finished_at": utc_now(),
             },
         )
-        self._attach_current_run_jev(payload)
+        self._attach_current_run_jev(payload, original_prompt=prompt)
         return payload
 
     def _attach_current_run_jev(
         self,
         payload: OptimizeResult,
         previous: Sequence[Mapping[str, Any]] = (),
+        *,
+        original_prompt: str | None = None,
     ) -> None:
         """Retain all answered raw judgments when a run stops mid-pipeline."""
         records = [dict(item) for item in previous] + [
@@ -630,13 +652,26 @@ class PromptOptimizer:
         report = dict(payload.get("report", {}))
         report["judgment_provenance"] = records
         report["capabilities_fired"] = summarize_capabilities(records)
+        report = apply_outcome_fields(
+            report,
+            original_prompt=(
+                original_prompt
+                if original_prompt is not None
+                else str(
+                    payload.get("original_prompt")
+                    or payload.get("prompt")
+                    or payload.get("final_prompt")
+                    or ""
+                )
+            ),
+            final_prompt=str(payload.get("final_prompt") or ""),
+        )
         payload["report"] = report
 
     def _optimize_started(
         self,
         prompt: str,
         options: Mapping[str, Any],
-        tier: str,
         run_settings: Settings,
         run_seed: int,
         run_id: str,
@@ -673,7 +708,6 @@ class PromptOptimizer:
                     "summary": "Diagnosis evidence was incomplete; your original prompt was kept.",
                     "diagnosis": diagnosis_payload,
                     "assumptions": [],
-                    "offer_deep": False,
                     "history": [],
                     "models": run_settings.model_roles(),
                     "judgment_provenance": diagnosis_records,
@@ -704,14 +738,11 @@ class PromptOptimizer:
                 prompt,
                 plan,
                 metadata={
-                    "tier": tier,
                     "options": dict(options),
                     "diagnosis": diagnosis_payload,
                 },
             )
-            result = self._needs_input_result(
-                run_id, state, tier, started_at, started_perf
-            )
+            result = self._needs_input_result(run_id, state, started_at, started_perf)
             result["report"]["models"] = run_settings.model_roles()
             result["report"]["diagnosis"] = diagnosis_payload
             return result
@@ -725,7 +756,6 @@ class PromptOptimizer:
                 run_seed,
                 str(options.get("improvement_style", "auto")),
             ),
-            tier,
             prior_failures=options.get("prior_round_failures", ()),
             control=RunControl.from_options(options),
             options=options,
@@ -744,7 +774,6 @@ class PromptOptimizer:
                     context.prompt, context.assumptions
                 ),
                 run_id=context.run_id,
-                tier=request.tier,
                 seed=context.seed,
                 diagnosis=context.diagnosis,
                 assumptions=context.assumptions,
@@ -802,7 +831,11 @@ class PromptOptimizer:
 
     @staticmethod
     def _attach_understand_route(
-        payload: OptimizeResult, understand: UnderstandResult, route: RouteResult
+        payload: OptimizeResult,
+        understand: UnderstandResult,
+        route: RouteResult,
+        *,
+        original_prompt: str,
     ) -> None:
         """Record the style stages on a completed run payload."""
         report = dict(payload.get("report", {}))
@@ -839,12 +872,16 @@ class PromptOptimizer:
                     )
         report["judgment_provenance"] = records
         report["capabilities_fired"] = summarize_capabilities(records)
+        report = apply_outcome_fields(
+            report,
+            original_prompt=original_prompt,
+            final_prompt=str(payload.get("final_prompt") or original_prompt),
+        )
         payload["report"] = report
 
     def _run_rounds(
         self,
         context: _RunContext,
-        tier: str,
         *,
         prior_failures: Any = (),
         prior_history: tuple[RoundEvidence, ...] = (),
@@ -862,7 +899,7 @@ class PromptOptimizer:
             understand, route = self._understand_and_route(context)
             context = replace(context, understand=understand, route=route)
         if route.impossible_reason is not None:
-            return self._impossible_result(context, tier, understand, route)
+            return self._impossible_result(context, understand, route)
         active = tracker if tracker is not None else RoundTracker()
         state = RunControlState(
             control=control or RunControl(),
@@ -883,15 +920,12 @@ class PromptOptimizer:
             repeated = self.repeat.run(
                 run_id=context.run_id,
                 prompt=context.prompt,
-                tier=tier,
                 execute_round=execute_round,
                 initial_failures=prior_failures,
                 prior_history=prior_history,
             )
         except BudgetPaused as paused:
-            return self._paused_result(
-                context, tier, state, paused, options, started_at
-            )
+            return self._paused_result(context, state, paused, options, started_at)
         except RunCancelled:
             cancelled = as_optimize_result(
                 build_cancelled_result(
@@ -906,16 +940,50 @@ class PromptOptimizer:
                     },
                 )
             )
-            self._attach_current_run_jev(cancelled)
+            cancelled_report = dict(cancelled.get("report", {}))
+            cancelled_report["improvement_style"] = context.improvement_style
+            cancelled_report["applied_style"] = (
+                understand.applied_style if understand is not None else None
+            )
+            cancelled_report = apply_outcome_fields(
+                cancelled_report,
+                original_prompt=context.prompt,
+                final_prompt=str(cancelled.get("final_prompt") or context.prompt),
+                control_state="cancelled",
+            )
+            cancelled["report"] = cancelled_report
+            self._attach_current_run_jev(cancelled, original_prompt=context.prompt)
             return cancelled
+        except Exception as exc:  # noqa: BLE001 - keep resolved run context on failure
+            failed = self.failure_result(
+                context.run_id,
+                context.prompt,
+                exc,
+                started_at=started_at,
+            )
+            failure_report = dict(failed.get("report", {}))
+            failure_report["improvement_style"] = context.improvement_style
+            if understand is not None:
+                failure_report["applied_style"] = understand.applied_style
+                failure_report["understand"] = understand.to_dict()
+            if route is not None:
+                failure_report["route"] = route.to_dict()
+            failure_report["history"] = [dict(item) for item in active.entries]
+            failed["report"] = failure_report
+            self._attach_current_run_jev(
+                failed,
+                original_prompt=context.prompt,
+            )
+            return failed
         payload = cast(OptimizeResult, repeated.as_payload())
-        self._attach_understand_route(payload, understand, route)
+        self._attach_understand_route(
+            payload, understand, route, original_prompt=context.prompt
+        )
         return payload
 
     def _impossible_result(
         self,
         context: _RunContext,
-        tier: str,
         understand: UnderstandResult,
         route: RouteResult,
     ) -> OptimizeResult:
@@ -942,25 +1010,29 @@ class PromptOptimizer:
             run_id=context.run_id,
             final_prompt=context.prompt,
             original_kept=True,
-            report={
-                "status": "impossible",
-                "summary": failure["message"],
-                "failure": failure,
-                "improvement_style": understand.requested_style,
-                "applied_style": understand.applied_style,
-                "understand": understand.to_dict(),
-                "route": route.to_dict(),
-                "diagnosis": dict(context.diagnosis),
-                "assumptions": list(context.assumptions),
-                "selection_evidence": {
-                    "selected_candidate_id": None,
-                    "rejection_reasons": {},
+            report=apply_outcome_fields(
+                {
+                    "status": "impossible",
+                    "summary": failure["message"],
+                    "failure": failure,
+                    "improvement_style": understand.requested_style,
+                    "applied_style": understand.applied_style,
+                    "understand": understand.to_dict(),
+                    "route": route.to_dict(),
+                    "diagnosis": dict(context.diagnosis),
+                    "assumptions": list(context.assumptions),
+                    "selection_evidence": {
+                        "selected_candidate_id": None,
+                        "rejection_reasons": {},
+                    },
+                    "history": [],
+                    "models": context.settings.model_roles(),
+                    "judgment_provenance": records,
+                    "capabilities_fired": summarize_capabilities(records),
                 },
-                "history": [],
-                "models": context.settings.model_roles(),
-                "judgment_provenance": records,
-                "capabilities_fired": summarize_capabilities(records),
-            },
+                original_prompt=context.prompt,
+                final_prompt=context.prompt,
+            ),
             cost=self._usage_cost(),
             timing={
                 "total_ms": 0,
@@ -972,7 +1044,6 @@ class PromptOptimizer:
     def _paused_result(
         self,
         context: _RunContext,
-        tier: str,
         state: RunControlState,
         paused: BudgetPaused,
         options: Mapping[str, Any] | None,
@@ -995,8 +1066,7 @@ class PromptOptimizer:
             },
         )
         payload[RESUME_CONTEXT_KEY] = resume_context(
-            tier=tier,
-            options={**(options or {}), "tier": tier},
+            options=dict(options or {}),
             diagnosis=context.diagnosis,
             assumptions=context.assumptions,
             seed=context.seed,
@@ -1016,8 +1086,16 @@ class PromptOptimizer:
             paused_report["understand"] = context.understand.to_dict()
         if context.route is not None:
             paused_report["route"] = context.route.to_dict()
+        paused_report = apply_outcome_fields(
+            paused_report,
+            original_prompt=context.prompt,
+            final_prompt=str(payload.get("final_prompt") or context.prompt),
+            control_state="awaiting_approval",
+        )
         payload["report"] = paused_report
-        self._attach_current_run_jev(cast(OptimizeResult, payload))
+        self._attach_current_run_jev(
+            cast(OptimizeResult, payload), original_prompt=context.prompt
+        )
         return as_optimize_result(payload)
 
     def _diagnose(self, prompt: str) -> DiagnosisReport | None:
@@ -1257,12 +1335,9 @@ class PromptOptimizer:
         metadata = (
             state.get("metadata") if isinstance(state.get("metadata"), Mapping) else {}
         )
-        tier = str((metadata or {}).get("tier", "standard"))
         stored_options = (metadata or {}).get("options", {})
-        options: Mapping[str, Any] = (
-            stored_options if isinstance(stored_options, Mapping) else {}
-        )
-        run_settings = self._run_settings(options, tier)
+        options = dict(stored_options) if isinstance(stored_options, Mapping) else {}
+        run_settings = self._run_settings(options)
         assumptions = state.get("assumptions", [])
         stored_options = (metadata or {}).get("options", {})
         style = str(
@@ -1283,7 +1358,6 @@ class PromptOptimizer:
         )
         return self._run_rounds(
             context,
-            tier,
             control=RunControl.from_options(options),
             options=options,
             started_perf=perf_counter(),
@@ -1370,8 +1444,7 @@ class PromptOptimizer:
             {"time_limit_s": time_limit_s, "spend_limit_usd": spend_limit_usd}
         )
         options = dict(saved.get("options") or {})
-        tier = str(saved.get("tier") or "deep")
-        run_settings = self._run_settings(options, tier)
+        run_settings = self._run_settings(options)
         prompt = str(record.get("prompt") or "")
         saved_diagnosis = saved.get("diagnosis")
         diagnosis: Mapping[str, Any] = (
@@ -1420,7 +1493,6 @@ class PromptOptimizer:
             result = dict(
                 self._run_rounds(
                     context,
-                    tier,
                     tracker=tracker,
                     control=control,
                     options=options,
@@ -1447,6 +1519,7 @@ class PromptOptimizer:
         self._attach_current_run_jev(
             cast(OptimizeResult, result),
             [item for item in previous_judgments if isinstance(item, Mapping)],
+            original_prompt=str(record.get("prompt") or ""),
         )
         return self._save_continued_run(record, cast(OptimizeResult, result))
 
@@ -1458,6 +1531,7 @@ class PromptOptimizer:
         stored_cost = record.get("cost")
         stopped = build_stopped_result(
             paused_result=paused_result,
+            original_prompt=str(record.get("prompt") or ""),
             cost=dict(stored_cost)
             if isinstance(stored_cost, Mapping)
             else dict(paused_result.get("cost") or {}),
@@ -1470,7 +1544,6 @@ class PromptOptimizer:
         record: Mapping[str, Any],
         result: OptimizeResult,
         *,
-        tier: str | None = None,
         options: Mapping[str, Any] | None = None,
     ) -> OptimizeResult:
         resume_ctx = take_resume_context(cast(dict[str, Any], result))
@@ -1486,8 +1559,6 @@ class PromptOptimizer:
             "timing": result.get("timing", cleaned.get("timing", {})),
             **evidence,
         }
-        if tier is not None:
-            saved["tier"] = tier
         if options is not None:
             saved["options"] = dict(options)
         if resume_ctx is not None:
@@ -1598,6 +1669,8 @@ class PromptOptimizer:
                 break
         report["assumptions"] = assumptions
         report["status"] = "edited"
+        report.pop("convergence", None)
+        report.pop("selection_evidence", None)
         report["summary"] = (
             "Assumption corrected; performance evidence is from the original optimization."
         )
@@ -1612,6 +1685,11 @@ class PromptOptimizer:
         }
         result["final_prompt"] = updated_prompt
         result["original_kept"] = updated_prompt == str(record["prompt"])
+        report = apply_outcome_fields(
+            report,
+            original_prompt=str(record.get("prompt") or ""),
+            final_prompt=updated_prompt,
+        )
         result["report"] = report
         result["cost"] = cast(
             CostBreakdown,
@@ -1624,138 +1702,6 @@ class PromptOptimizer:
         self.store.save_run({**record, "result": result, "cost": result["cost"]})
         return result
 
-    def start_deep_pass(
-        self, run_id: str, *, progress: ProgressCallback | None = None
-    ) -> OptimizeResult:
-        started_perf = perf_counter()
-        with self._progress_scope(progress, started_perf=started_perf):
-            result = self._start_deep_pass(run_id)
-        result["timing"] = _finished_timing(result.get("timing"), started_perf)
-        return result
-
-    def _start_deep_pass(self, run_id: str) -> OptimizeResult:
-        record = self.store.get_run(run_id)
-        if record is None:
-            raise RunNotFoundError(run_id)
-        detail = self.history.get_run(run_id)
-        assert detail is not None
-        self.gateway.new_run(run_id)
-        self._run_log_start = len(self.gateway.decision_log)
-        prior_cost = dict(record.get("cost") or {})
-        deep_options = dict(record.get("options") or {})
-        overrides = dict(deep_options.get("model_overrides") or {})
-        if "weak" in overrides or "weak_models" in overrides:
-            prior_weak = overrides.get("weak", overrides.get("weak_models"))
-            chosen = [prior_weak] if isinstance(prior_weak, str) else list(prior_weak)
-            base_slots = max(0, 3 - len(set(chosen)))
-            base_fill = [model for model in DEFAULT_WEAK_PANEL if model not in chosen][
-                :base_slots
-            ]
-            deep_extras = DEFAULT_DEEP_WEAK_PANEL[len(DEFAULT_WEAK_PANEL) :]
-            overrides["weak"] = list(
-                dict.fromkeys((*chosen, *base_fill, *deep_extras, *DEFAULT_WEAK_PANEL))
-            )[:5]
-            overrides.pop("weak_models", None)
-            deep_options["model_overrides"] = overrides
-        deep_options["tier"] = "deep"
-        run_settings = self._run_settings(deep_options, "deep")
-        prior_report = dict((record.get("result") or {}).get("report") or {})
-        deep_style = str(deep_options.get("improvement_style", "auto"))
-        deep_context = _RunContext(
-            str(record["prompt"]),
-            run_id,
-            prior_report.get("diagnosis", {}),
-            prior_report.get("assumptions", []),
-            run_settings,
-            _run_seed(str(record["prompt"]), (record.get("options") or {}).get("seed")),
-            deep_style,
-        )
-        understand, route = self._understand_and_route(deep_context)
-        if route.impossible_reason is not None:
-            impossible = self._impossible_result(
-                deep_context, "deep", understand, route
-            )
-            self.store.save_run(
-                {
-                    **record,
-                    "result": impossible,
-                    "tier": "deep",
-                    "options": deep_options,
-                    "cost": impossible["cost"],
-                }
-            )
-            return impossible
-        repeated = self.repeat.deep_pass(
-            detail,
-            self._round_executor(deep_context, understand, route),
-        )
-        prior_result = record.get("result")
-        prior_result_map = prior_result if isinstance(prior_result, Mapping) else {}
-        deep_tracker = RoundTracker.preload(
-            [evidence.to_dict() for evidence in _history_from_run(prior_result_map)],
-            str(prior_result_map.get("final_prompt") or record["prompt"]),
-            bool(prior_result_map.get("original_kept", True)),
-        )
-        deep_state = RunControlState(
-            control=RunControl.from_options(deep_options),
-            tracker=deep_tracker,
-            usage_total=self._current_usage_total,
-            started_perf=perf_counter(),
-        )
-        base_execute = self._round_executor(deep_context, understand, route)
-
-        def execute_deep_round(request: RoundRequest) -> RoundOutcome:
-            outcome = base_execute(request)
-            deep_state.note_completed(request, outcome)
-            return outcome
-
-        try:
-            repeated = self.repeat.deep_pass(detail, execute_deep_round)
-        except BudgetPaused as paused:
-            interrupted = self._paused_result(
-                deep_context, "deep", deep_state, paused, deep_options, None
-            )
-            cast(dict[str, Any], interrupted)["cost"] = _add_usage_delta(
-                prior_cost, {"total": 0.0}, self._usage_cost()
-            )
-            return self._save_continued_run(record, interrupted, options=deep_options)
-        except RunCancelled:
-            cancelled = as_optimize_result(
-                build_cancelled_result(
-                    run_id=run_id,
-                    prompt=str(record["prompt"]),
-                    tracker=deep_tracker,
-                    cost=_add_usage_delta(
-                        prior_cost, {"total": 0.0}, self._usage_cost()
-                    ),
-                    timing={
-                        "total_ms": deep_state.elapsed_ms(),
-                        "started_at": utc_now(),
-                        "finished_at": utc_now(),
-                    },
-                )
-            )
-            return self._save_continued_run(record, cancelled, options=deep_options)
-        result = cast(OptimizeResult, repeated.as_payload())
-        self._attach_understand_route(result, understand, route)
-        result["cost"] = cast(
-            CostBreakdown,
-            _add_usage_delta(prior_cost, {"total": 0.0}, self._usage_cost()),
-        )
-        evidence = self._training_evidence(result, record)
-        self._attach_jev_evidence(result, evidence)
-        self.store.save_run(
-            {
-                **record,
-                "result": result,
-                "tier": "deep",
-                "options": deep_options,
-                "cost": result["cost"],
-                **evidence,
-            }
-        )
-        return result
-
     def _usage_cost(self) -> CostBreakdown:
         return cast(CostBreakdown, self.gateway.usage_report())
 
@@ -1763,7 +1709,6 @@ class PromptOptimizer:
         self,
         run_id: str,
         state: Mapping[str, Any],
-        tier: str,
         started_at: str,
         started_perf: float,
     ) -> OptimizeResult:
@@ -1779,7 +1724,6 @@ class PromptOptimizer:
                 "questions": questions,
                 "assumptions": list(state.get("assumptions", [])),
                 "diagnosis": {},
-                "offer_deep": False,
                 "history": [],
             },
             cost=self._usage_cost(),
@@ -1793,7 +1737,6 @@ class PromptOptimizer:
     def _save_result(
         self,
         prompt: str,
-        tier: str,
         options: dict[str, Any],
         result: OptimizeResult,
         created_at: str,
@@ -1805,8 +1748,7 @@ class PromptOptimizer:
             "run_id": result["run_id"],
             "created_at": created_at,
             "prompt": prompt,
-            "tier": tier,
-            "options": {**options, "tier": tier},
+            "options": options,
             "result": result,
             "cost": result["cost"],
             "timing": result["timing"],

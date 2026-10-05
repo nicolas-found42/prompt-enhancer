@@ -159,24 +159,25 @@ def convergence_decision(
 
 
 def convergence_summary(
-    scores: Mapping[str, float], floors: Mapping[str, float]
+    scores: Mapping[str, float],
+    floors: Mapping[str, float],
+    *,
+    gain: float | None = None,
 ) -> str:
-    """The report summary for a converged run, naming the vector and floors."""
+    """Summarize measured convergence without claiming an unmeasured plateau."""
 
+    evidence = (
+        "every quality dimension met its floor on the first round; no earlier round existed for a gain comparison"
+        if gain is None
+        else "every quality dimension met its floor and the measured gain was within the configured epsilon"
+    )
     if scores and floors:
         dimensions = ", ".join(
             f"{name} {scores.get(name, 0.0):.2f} (floor {floors.get(name, 0.0):.2f})"
             for name in sorted(scores)
         )
-        return (
-            "The prompt converged: every quality dimension met its floor and "
-            "further rounds stopped buying improvement. "
-            f"Final vector — {dimensions}."
-        )
-    return (
-        "The prompt converged: every quality dimension met its floor and "
-        "further rounds stopped buying improvement."
-    )
+        return f"The prompt converged: {evidence}. Final vector — {dimensions}."
+    return f"The prompt converged: {evidence}."
 
 
 __all__ = [

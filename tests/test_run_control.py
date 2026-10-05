@@ -19,7 +19,6 @@ from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
 from prompt_enhancer.gateway import ScriptedGateway
-from prompt_enhancer.models import Tier
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.run_control import RoundTracker
 from prompt_enhancer.store import RunStore
@@ -41,7 +40,7 @@ def _gateway(
 
     With the default support the rewrite passes fidelity and the run
     improves in one round; with ``support="new_requirement"`` every
-    candidate is rejected and Deep runs all three rounds.
+    candidate is rejected and the uncapped loop continues until its score evidence converges.
     """
 
     class CostlyGateway(ScriptedGateway):
@@ -328,7 +327,8 @@ def test_cancel_mid_run_preserves_completed_rounds() -> None:
     )
 
     stored = client.get(f"/api/runs/{run_id}").json()
-    assert stored["outcome"] == "cancelled"
+    assert stored["control_state"] == "cancelled"
+    assert stored["outcome"] is None
     assert stored["result"]["report"]["history"] == history
 
 
@@ -365,7 +365,7 @@ def test_round_tracker_keeps_best_selected_prompt_across_regression_and_resume()
             evidence=lambda evidence=evidence: evidence,
         )
         tracker.record(
-            SimpleNamespace(round_number=index, tier_round=index, tier=Tier.FAST),
+            SimpleNamespace(round_number=index),
             outcome,
         )
 

@@ -15,6 +15,7 @@ from urllib.parse import quote
 from .gateway import Gateway
 from .jev import ChoiceDecision, JevDecision, NoulDecision, parse_decision
 from .selector import RankingCandidate
+from .styles import validated_style_authorization
 
 EVALUATION_ASPECTS = (
     "task_preserved",
@@ -357,6 +358,7 @@ def evaluate_candidate_packages(
     run_id: str,
     round_number: int,
     on_stage: Callable[[str], None] | None = None,
+    style_authorization: Mapping[str, Any] | None = None,
 ) -> CandidateEvaluation:
     """Rerank and fully evaluate already-eligible candidate packages.
 
@@ -366,6 +368,9 @@ def evaluate_candidate_packages(
     acceptance; incomplete reranking falls back to deterministic selector order.
     """
     bundle = ", ".join(style_bundle) if style_bundle else "no named strategies"
+    authorization = validated_style_authorization(
+        improvement_style, style_authorization
+    )
     requests: list[dict[str, Any]] = []
     request_info: list[tuple[str, str, str]] = []
     for candidate in candidates:
@@ -376,6 +381,14 @@ def evaluate_candidate_packages(
             "round_number": round_number,
             "original_prompt": original_prompt,
             "candidate_prompt": candidate.text,
+            **(
+                {
+                    "applied_style": improvement_style,
+                    "style_authorization": authorization,
+                }
+                if authorization
+                else {}
+            ),
         }
         for aspect in EVALUATION_ASPECTS:
             if aspect == "task_preserved":
@@ -387,7 +400,10 @@ def evaluate_candidate_packages(
             elif aspect == "no_invented_detail":
                 query = (
                     "Does the candidate avoid adding facts or requirements not "
-                    "supported by the original prompt?"
+                    "supported by the original prompt? A nonempty canonical "
+                    "state.style_authorization permits only its expressly bounded "
+                    "presentation changes. It never supports new task facts, scope, "
+                    "deliverables, or success criteria."
                 )
             elif aspect == "structure_added":
                 query = (
@@ -575,6 +591,14 @@ def evaluate_candidate_packages(
                     "original_prompt": original_prompt,
                     "candidate_prompt": candidate.text,
                     "improvement_style": improvement_style,
+                    **(
+                        {
+                            "applied_style": improvement_style,
+                            "style_authorization": authorization,
+                        }
+                        if authorization
+                        else {}
+                    ),
                     "style_bundle": list(style_bundle),
                     "complete_candidate_evidence": deepcopy(evidence),
                 },

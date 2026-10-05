@@ -1,4 +1,4 @@
-"""Public-API regression for score-vector retries beyond the former Deep cap."""
+"""Public-API regression for score-vector retries beyond the former round cap."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from prompt_enhancer import PromptOptimizer, RunStore
 from prompt_enhancer.gateway import ScriptedGateway
 
 
-def test_deep_run_retries_until_a_changed_candidate_passes_then_plateaus() -> None:
+def test_run_retries_until_a_changed_candidate_passes_then_plateaus() -> None:
     prompt = "Summarize the report."
     early_candidates = (
         "Provide a summary of the report.",
@@ -100,14 +100,15 @@ def test_deep_run_retries_until_a_changed_candidate_passes_then_plateaus() -> No
         writer_instruction_version=4,
     ).optimize(
         prompt,
-        {"tier": "deep", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
 
     report = result["report"]
     history = report["history"]
     assert len(history) == 6
     assert writer_rounds == 6
-    assert history[0]["max_rounds"] == 3
+    assert len(history) > 3
+    assert report["convergence"]["status"] == "converged"
     assert result["final_prompt"] == winner
     assert result["final_prompt"] != prompt
     assert report["convergence"]["status"] == "converged"

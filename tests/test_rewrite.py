@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from prompt_enhancer.config import Settings
 from prompt_enhancer.fidelity import check_candidate_fidelity, sentence_edit_script
 from prompt_enhancer.gateway import ProviderError, ScriptedGateway
 from prompt_enhancer.rewrite import CandidateWriter
@@ -29,7 +30,7 @@ def test_candidate_writer_keeps_user_text_in_state_and_preserves_language() -> N
 
     result = search_strategies(
         "Escribe un resumen.",
-        tier="fast",
+        settings=Settings(),
         writer=CandidateWriter(ScriptedGateway(chat=chat)),
     )
 

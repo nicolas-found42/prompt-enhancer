@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -24,13 +25,10 @@ def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
     if "Revise only the stated assumption" in instruction:
         return "Analyze this."
     if "state.strategies" in instruction:
-        # Candidate batch: echo the input unchanged so scripted runs keep
-        # exercising the gates without inventing rewrites. Unchanged
-        # candidates are rejected as unchanged by the selector.
-        import json as _json
-
-        state = _json.loads(messages[1]["content"])
-        return _json.dumps(
+        # Echo the clarified prompt. Score and acceptance evidence should let
+        # the baseline converge without inventing an improvement.
+        state = json.loads(messages[1]["content"])
+        return json.dumps(
             {item["name"]: state["prompt"] for item in state["strategies"]}
         )
     return '{"tests":[]}'
@@ -53,19 +51,48 @@ def decide(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
             "confidence": 0.6,
         }
     if request.get("type") == "choice":
+        if key == "strategy_choice":
+            choice = next(iter(request.get("criteria", {})), "none")
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        if str(key).startswith("fidelity:sentence:"):
+            choice = "supported_by_original"
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        if str(key).startswith("evaluate:compare:") and str(key).endswith(
+            ":verbosity_direction"
+        ):
+            choice = "same"
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        criteria = request.get("criteria", {})
+        choice = "none" if "none" in criteria else next(iter(criteria), "none")
         return {
             "type": "choice",
-            "choice": "none",
-            "probabilities": {"none": 1.0},
+            "choice": choice,
+            "probabilities": {choice: 1.0},
             "confidence": 1.0,
         }
-    probability = (
-        0.99
-        if key == "gap:goal"
-        else 1.0
-        if "preserve" in str(request.get("question", ""))
-        else 0.01
-    )
+    if key == "gap:goal":
+        probability = 0.99
+    elif str(key).startswith(("score:", "evaluate:", "fidelity:", "strategy_recheck:")):
+        probability = 1.0
+    elif "preserve" in str(request.get("question", "")):
+        probability = 1.0
+    else:
+        probability = 0.01
     return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
 

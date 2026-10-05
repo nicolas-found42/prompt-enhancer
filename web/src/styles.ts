@@ -83,5 +83,5 @@ export const MORE_STYLES: ImprovementStyle[] = [
 ];
 
 export function isImprovementStyle(value: string): value is ImprovementStyle {
-  return value in STYLE_LABELS;
+  return Object.hasOwn(STYLE_LABELS, value);
 }

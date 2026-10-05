@@ -8,12 +8,11 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
-from .catalog import DEFAULT_DEEP_WEAK_PANEL
+from .config import DEFAULT_FIXED_WEAK_PANEL, Settings
 from .gateway import Gateway
-from .models import Tier
 from .strategies import CandidateDraft
 
-DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_DEEP_WEAK_PANEL
+DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_FIXED_WEAK_PANEL
 
 
 # Weak models sample at this temperature; replay keys include it.
@@ -153,29 +152,40 @@ def run_candidates(
     *,
     original: str | None = None,
     samples: int | None = None,
-    budget: Tier | str | None = None,
+    settings: Settings | None = None,
     run_seed: int = 0,
     max_workers: int | None = None,
     run_id: str | None = None,
 ) -> PanelRunResult:
-    """Run the original and all candidates on a tier-bounded weak panel.
+    """Run the original and candidates on the settings-backed weak panel.
 
-    The original runs first, as ``original``, when it is provided. A tier
-    budget truncates the configured model panel and supplies its sample count;
-    an explicit ``samples`` value overrides the count.
+    The original runs first, as ``original``, when it is provided. The panel
+    uses the first configured number of distinct models and configured sample
+    count; an explicit ``samples`` value overrides the count.
     """
 
-    selected_budget = Tier.parse(budget).budget if budget is not None else None
-    if selected_budget is not None:
-        models = tuple(weak_models or DEFAULT_WEAK_PANEL)[: selected_budget.models]
-        selected_samples = selected_budget.samples if samples is None else samples
-    else:
-        models = tuple(weak_models or DEFAULT_WEAK_PANEL)
-        selected_samples = 1 if samples is None else samples
-    if not models:
-        raise ValueError("weak_models must contain at least one model")
-    if selected_samples < 1:
-        raise ValueError("samples must be at least 1")
+    workload = settings or Settings()
+    model_count = workload.weak_model_count
+    configured_models = tuple(weak_models or workload.weak_models or DEFAULT_WEAK_PANEL)
+    if (
+        not isinstance(model_count, int)
+        or isinstance(model_count, bool)
+        or model_count < 1
+        or len(configured_models) < model_count
+    ):
+        raise ValueError(f"weak_models must contain at least {model_count} models")
+    models = configured_models[:model_count]
+    if any(not isinstance(model, str) or not model for model in models):
+        raise ValueError("weak_models must contain non-empty model IDs")
+    if len(set(models)) != model_count:
+        raise ValueError(f"weak_models must contain {model_count} distinct models")
+    selected_samples = workload.weak_samples if samples is None else samples
+    if (
+        not isinstance(selected_samples, int)
+        or isinstance(selected_samples, bool)
+        or selected_samples < 1
+    ):
+        raise ValueError("samples must be a positive integer")
 
     items = ([("original", original)] if original is not None else []) + [
         (candidate.candidate_id, candidate.text) for candidate in candidates
