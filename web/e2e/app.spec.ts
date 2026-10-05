@@ -99,7 +99,7 @@ function job(
     kind: "optimize",
     state,
     stage: state === "running" ? "grading" : null,
-    round: { round: 1, max_rounds: 2 },
+    round: { round: 1 },
     stages_seen: [],
     elapsed_ms: 65000,
     cancel_requested: false,
@@ -378,7 +378,6 @@ test("opening another paused run resets its answers and error", async ({
         ...run,
         created_at: "2026-09-24T04:00:00Z",
         status: "needs_input",
-        tier: "standard",
       })),
     })
   );
@@ -642,7 +641,6 @@ test("opening a saved result preserves the current draft", async ({ page }) => {
           prompt: olderPrompt,
           final_prompt: result.final_prompt,
           original_kept: false,
-          tier: "standard",
         },
       ],
     })
@@ -657,7 +655,6 @@ test("opening a saved result preserves the current draft", async ({ page }) => {
         original_prompt: olderPrompt,
         final_prompt: result.final_prompt,
         original_kept: false,
-        tier: "standard",
         cost: result.cost,
         timings: { total_ms: 1 },
         result,
@@ -702,19 +699,13 @@ test("clarification, assumption editing, history, and feedback use the local API
   ).toBeVisible();
   await expect(page.getByText("What should the assistant do?")).toBeVisible();
   await page.getByRole("button", { name: "Use my answers" }).click();
-  // No success test was established, so the confirmed answer is not an improvement.
-  await expect(
-    page.getByRole("heading", { name: "We couldn't test this prompt" })
-  ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Optimized prompt" })
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Converged" })).toBeVisible();
   await expect(page.locator(".final-prompt")).toContainText("goal: Summarize");
   await expect(
     page
       .getByRole("list", { name: "Saved optimization runs" })
       .getByRole("button")
-  ).toContainText("Not tested");
+  ).toContainText("Converged");
   const copyGuidance = page.getByText(
     "After copying, paste this prompt into an AI chat or another tool that accepts prompts."
   );
@@ -726,7 +717,14 @@ test("clarification, assumption editing, history, and feedback use the local API
   await assumption.fill("Analyze");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Updated prompt" })
+    page.getByRole("heading", { name: "Outcome not established" })
+  ).toBeVisible();
+  await expect(
+    page
+      .locator("#run-outcome .outcome-reason")
+      .getByText(
+        "Assumption corrected; performance evidence is from the original optimization."
+      )
   ).toBeVisible();
   await expect(page.locator(".final-prompt")).toContainText("goal: Analyze");
 
@@ -737,7 +735,7 @@ test("clarification, assumption editing, history, and feedback use the local API
     .getByRole("list", { name: "Saved optimization runs" })
     .getByRole("button");
   await expect(runs).toContainText("Help me with this.");
-  await expect(runs).toContainText("Improved");
+  await expect(runs).toContainText("Outcome not established");
   await page.reload();
   await page
     .getByRole("list", { name: "Saved optimization runs" })
@@ -761,7 +759,7 @@ test("clarification, assumption editing, history, and feedback use the local API
   await page.reload();
   // The result shown before the reload comes back instead of vanishing.
   await expect(
-    page.getByRole("heading", { name: "Updated prompt" })
+    page.getByRole("heading", { name: "Outcome not established" })
   ).toBeVisible();
   await page
     .getByRole("list", { name: "Saved optimization runs" })
@@ -772,7 +770,7 @@ test("clarification, assumption editing, history, and feedback use the local API
   await expect(page.locator(".final-prompt")).toContainText("goal: Analyze");
 });
 
-test("a retained original with weak evidence says it could not be improved", async ({
+test("a converged prompt reports its applied style and evidence reason", async ({
   page,
 }) => {
   await mockRun(page, {
@@ -781,7 +779,9 @@ test("a retained original with weak evidence says it could not be improved", asy
     original_prompt: "Write a report.",
     final_prompt: "Write a report.",
     report: {
-      status: "no_change",
+      outcome: "converged",
+      outcome_reason: "The prompt met every quality floor.",
+      applied_style: "clearer",
       summary: "No candidate beat the original.",
       diagnosis: {
         task_type: "writing",
@@ -806,23 +806,16 @@ test("a retained original with weak evidence says it could not be improved", asy
         ],
       },
       strong_check: { original_score: 0.8, candidates: [] },
-      offer_deep: { expected_evaluation_multiplier: 5.625 },
     },
   });
   await page.goto("/");
   await page.getByLabel("Your prompt").fill("Write a report.");
   await page.getByRole("button", { name: "Optimize prompt" }).click();
 
+  await expect(page.getByRole("heading", { name: "Converged" })).toBeVisible();
+  await expect(page.getByText("Applied style: Clearer.").first()).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "We couldn't safely improve this" })
-  ).toBeVisible();
-  await expect(page.getByText(/It is missing relevant context/)).toBeVisible();
-  await expect(page.getByText(/passed only 0% of checks/)).toBeVisible();
-  await expect(
-    page.getByText(/about 5\.6× the work of this run, roughly \$0\.01/)
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Try a Deep pass" })
+    page.getByText("The prompt met every quality floor.").first()
   ).toBeVisible();
   await page.getByText("View report").click();
   const row = page.getByRole("row", { name: /weak-one/ });
@@ -837,16 +830,17 @@ test("a retained original with weak evidence says it could not be improved", asy
   ).toBeVisible();
 });
 
-test("a prompt with no gaps and strong results says it already works", async ({
-  page,
-}) => {
+test("a tested improvement reports its canonical outcome", async ({ page }) => {
   await mockRun(page, {
     ...completedBase,
     run_id: "clear-1",
     original_prompt: "Write two sentences.",
-    final_prompt: "Write two sentences.",
+    final_prompt: "Write exactly two useful sentences.",
+    original_kept: false,
     report: {
-      status: "no_change",
+      outcome: "improved_tested",
+      outcome_reason: "The changed prompt passed the success tests.",
+      applied_style: "more_specific",
       diagnosis: { confirmed_gaps: [], problem_sentences: [] },
       tests: [],
       selection_evidence: {
@@ -859,14 +853,17 @@ test("a prompt with no gaps and strong results says it already works", async ({
   await page.getByRole("button", { name: "Optimize prompt" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "Your prompt already works well" })
+    page.getByRole("heading", { name: "Improved (tested)" })
   ).toBeVisible();
   await expect(
-    page.getByText(/passed at least 90% of checks on every test model/)
+    page.getByText("Applied style: More specific.").first()
+  ).toBeVisible();
+  await expect(
+    page.getByText("The changed prompt passed the success tests.").first()
   ).toBeVisible();
 });
 
-test("an untested prompt is not called good, near misses are hinted, and Deep is not offered", async ({
+test("an accepted unverified improvement states that answer quality was not tested", async ({
   page,
 }) => {
   const prompt =
@@ -875,9 +872,13 @@ test("an untested prompt is not called good, near misses are hinted, and Deep is
     ...completedBase,
     run_id: "untested-1",
     original_prompt: prompt,
-    final_prompt: prompt,
+    final_prompt: `${prompt} Specify that the notice applies next week.`,
+    original_kept: false,
     report: {
-      status: "no_change",
+      outcome: "improved_unverified",
+      outcome_reason:
+        "The rewrite passed meaning and safety checks, but answer quality was not tested.",
+      applied_style: "clearer",
       diagnosis: {
         confirmed_gaps: [],
         problem_sentences: [],
@@ -892,7 +893,6 @@ test("an untested prompt is not called good, near misses are hinted, and Deep is
         ],
       },
       tests: [{ id: "test-1", question: "Is it short?" }],
-      offer_deep: { expected_evaluation_multiplier: 5.625 },
     },
   });
   await page.goto("/");
@@ -900,22 +900,11 @@ test("an untested prompt is not called good, near misses are hinted, and Deep is
   await page.getByRole("button", { name: "Optimize prompt" }).click();
 
   await expect(
-    page.getByRole("heading", { name: "We didn't find anything to fix" })
+    page.getByRole("heading", { name: "Improved (unverified)" })
   ).toBeVisible();
   await expect(
-    page.getByText("Your prompt wasn't tested on other models.", {
-      exact: false,
-    })
+    page.getByText(/answer quality was not tested/).first()
   ).toBeVisible();
-  await expect(page.getByText("Your prompt already works well")).toHaveCount(0);
-  await expect(
-    page.getByText(
-      /It may depend on details only you know, such as what “Tell the lads about the new rules for the vans\.” refers to/
-    )
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Try a Deep pass" })
-  ).toHaveCount(0);
 });
 
 test("opening a history run shows its details next to the row", async ({
@@ -928,8 +917,9 @@ test("opening a history run shows its details next to the row", async ({
     prompt: `Saved prompt number ${index}`,
     final_prompt: `Saved prompt number ${index}`,
     original_kept: true,
-    tier: index === 0 ? "deep" : "standard",
-    escalated_from: index === 0 ? "standard" : null,
+    outcome: "converged",
+    outcome_reason: "The prompt met every quality floor.",
+    applied_style: "clearer",
   }));
   await page.route("**/api/runs?*", (route) => route.fulfill({ json: runs }));
   await page.route("**/api/runs/hist-*", (route) => {
@@ -945,33 +935,21 @@ test("opening a history run shows its details next to the row", async ({
       },
     });
   });
-  await page.route("**/api/estimates", (route) =>
-    route.fulfill({
-      json: {
-        standard: { runs: 4, minutes: [0.3, 6.6], cost: [0.001, 0.012] },
-      },
-    })
-  );
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.goto("/");
-  await expect(
-    page.getByText(
-      /Standard: up to 2 rounds of rewrites, tried on 3 test models\. Usually under a minute, up to 7 min\. About \$0\.001–\$0\.012, billed to your own OpenCode Go and OpenRouter accounts — from your last 4 standard runs\./
-    )
-  ).toBeVisible();
 
   const list = page.getByRole("list", { name: "Saved optimization runs" });
   const first = list.getByRole("button", { name: /Saved prompt number 0/ });
-  await expect(first).toContainText("Unchanged");
-  await expect(first).toContainText("standard, then deep");
+  await expect(first).toContainText("Converged");
+  await expect(first).toContainText("Applied style: Clearer");
   await first.click();
   await expect(first).toHaveAttribute("aria-expanded", "true");
   await expect(
     page.getByRole("heading", { name: "Run details" })
   ).toBeInViewport();
-  await expect(
-    page.getByText(/started on standard and then had a Deep pass/)
-  ).toBeVisible();
+  await expect(page.locator("#selected-run")).toContainText(
+    "The prompt met every quality floor."
+  );
   await first.click();
   await expect(page.getByRole("heading", { name: "Run details" })).toHaveCount(
     0
@@ -1074,7 +1052,7 @@ test("a running job shows its stage, elapsed time, and can be cancelled", async 
     page.getByRole("heading", { name: "Improving your prompt" })
   ).toBeVisible();
   await expect(page.getByText("1:05 elapsed")).toBeVisible();
-  await expect(page.getByText(/round 1 of 2/)).toBeVisible();
+  await expect(page.getByText(/· round 1/)).toBeVisible();
   await expect(page.locator('[aria-current="step"]')).toHaveText(
     "Scoring the answers"
   );

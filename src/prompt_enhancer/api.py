@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import statistics
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Response
@@ -21,16 +20,22 @@ from .prompt_health import (
     PromptHealthStore,
     isolated_health_gateway,
 )
-from .repeat import _reject_provider_secrets
 from .store import RunStore
 
 
 class OptimizeRequest(BaseModel):
     prompt: str
-    tier: str = "standard"
+    improvement_style: str = "auto"
     options: dict[str, Any] = Field(default_factory=dict)
     model_overrides: dict[str, Any] = Field(default_factory=dict)
     clarification_allowed: bool | None = None
+    time_limit_s: float | None = None
+    spend_limit_usd: float | None = None
+
+
+class ContinueRequest(BaseModel):
+    time_limit_s: float | None = None
+    spend_limit_usd: float | None = None
 
 
 class AnswersRequest(BaseModel):
@@ -65,7 +70,11 @@ def _public_catalog(settings: Settings) -> dict[str, Any]:
 
 def _optimize_options(request: OptimizeRequest) -> dict[str, Any]:
     options = dict(request.options)
-    options["tier"] = request.tier
+    options["improvement_style"] = request.improvement_style
+    if request.time_limit_s is not None:
+        options["time_limit_s"] = request.time_limit_s
+    if request.spend_limit_usd is not None:
+        options["spend_limit_usd"] = request.spend_limit_usd
     if request.model_overrides:
         options["model_overrides"] = {
             **options.get("model_overrides", {}),
@@ -74,46 +83,6 @@ def _optimize_options(request: OptimizeRequest) -> dict[str, Any]:
     if request.clarification_allowed is not None:
         options["clarification_allowed"] = request.clarification_allowed
     return options
-
-
-def _percentile(values: list[float], fraction: float) -> float:
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return ordered[0]
-    return statistics.quantiles(ordered, n=100, method="inclusive")[
-        round(fraction * 100) - 1
-    ]
-
-
-def run_estimates(runs: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    """Typical time and cost per tier from completed local runs."""
-    samples: dict[str, list[tuple[float, float]]] = {}
-    for run in runs:
-        if run.get("status") != "completed" or not run.get("tier"):
-            continue
-        timing = run.get("timings") or run.get("timing") or {}
-        cost = run.get("cost") or {}
-        total_ms = timing.get("total_ms") if isinstance(timing, Mapping) else None
-        total_cost = cost.get("total") if isinstance(cost, Mapping) else None
-        if (
-            not isinstance(total_ms, (int, float))
-            or not isinstance(total_cost, (int, float))
-            or total_ms <= 0
-        ):
-            continue
-        samples.setdefault(str(run["tier"]), []).append(
-            (total_ms / 60000, float(total_cost))
-        )
-    estimates: dict[str, Any] = {}
-    for tier, values in samples.items():
-        minutes = [item[0] for item in values]
-        costs = [item[1] for item in values]
-        estimates[tier] = {
-            "runs": len(values),
-            "minutes": [_percentile(minutes, 0.5), _percentile(minutes, 0.9)],
-            "cost": [_percentile(costs, 0.5), _percentile(costs, 0.9)],
-        }
-    return estimates
 
 
 def create_app(
@@ -257,13 +226,30 @@ def create_app(
             ),
         )
 
-    @app.post("/api/jobs/{run_id}/deep", status_code=202)
-    def start_deep_job(run_id: str) -> dict[str, Any]:
+    @app.post("/api/jobs/{run_id}/continue", status_code=202)
+    def start_continue(run_id: str, request: ContinueRequest) -> dict[str, Any]:
         require_run(run_id)
+        try:
+            app_optimizer.validate_continue(
+                run_id,
+                time_limit_s=request.time_limit_s,
+                spend_limit_usd=request.spend_limit_usd,
+            )
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return submit(
             run_id,
-            "deep",
-            lambda progress: app_optimizer.start_deep_pass(run_id, progress=progress),
+            "continue",
+            lambda progress: app_optimizer.continue_run(
+                run_id,
+                progress=progress,
+                time_limit_s=request.time_limit_s,
+                spend_limit_usd=request.spend_limit_usd,
+            ),
         )
 
     @app.get("/api/jobs")
@@ -288,10 +274,6 @@ def create_app(
             raise HTTPException(
                 status_code=404, detail="no run in progress with this ID"
             ) from exc
-
-    @app.get("/api/estimates")
-    def estimates() -> dict[str, Any]:
-        return run_estimates(app_optimizer.history.list_runs(None, limit=200))
 
     @app.get("/api/providers")
     def providers(probe: bool = False) -> dict[str, Any]:
@@ -352,6 +334,15 @@ def create_app(
     def resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:
         return continue_run(lambda: app_optimizer.resume(run_id, request.answers))
 
+    @app.post("/api/runs/{run_id}/stop")
+    def stop(run_id: str) -> dict[str, Any]:
+        try:
+            return dict(app_optimizer.stop_run(run_id))
+        except RunNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.post("/api/optimize/resume/{run_id}")
     def optimize_resume(run_id: str, request: AnswersRequest) -> dict[str, Any]:
         return continue_run(lambda: app_optimizer.resume(run_id, request.answers))
@@ -359,31 +350,6 @@ def create_app(
     @app.post("/api/optimize/skip/{run_id}")
     def optimize_skip(run_id: str) -> dict[str, Any]:
         return continue_run(lambda: app_optimizer.skip_clarification(run_id))
-
-    @app.post("/api/runs/{run_id}/deep")
-    def start_deep(run_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        try:
-            _reject_provider_secrets(body or {})
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        method = getattr(app_optimizer, "start_deep_pass", None)
-        if body:
-            raise HTTPException(
-                status_code=422,
-                detail="The deep endpoint does not accept request options",
-            )
-        if method is None:
-            raise HTTPException(
-                status_code=501, detail="deep escalation is not configured"
-            )
-        try:
-            return dict(method(run_id))
-        except RunNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="run not found") from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except NotImplementedError as exc:
-            raise HTTPException(status_code=501, detail=str(exc)) from exc
 
     @app.post("/api/runs/{run_id}/assumption")
     def update_assumption(run_id: str, request: AssumptionRequest) -> dict[str, Any]:
@@ -428,6 +394,11 @@ def create_app(
             return app_optimizer.update_model_settings(values)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/quality/floors/recalibrate")
+    def recalibrate_quality_floors() -> dict[str, Any]:
+        """Explicitly calibrate quality floors from recorded keep/reject labels."""
+        return app_optimizer.recalibrate_score_floors()
 
     return app
 

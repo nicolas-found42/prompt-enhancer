@@ -50,7 +50,6 @@ def collect(
             raise TypeError("expected product optimizer")
         evidence["replay_digests"][writer] = replay_digest(replay_path)
         options = HarnessOptions(
-            tier="fast",
             model_overrides={"writer": writer} if writer != "space-bunny-free" else {},
         )
         candidates = []

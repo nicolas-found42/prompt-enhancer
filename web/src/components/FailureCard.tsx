@@ -1,5 +1,5 @@
 import type { OptimizeResult } from "../api";
-import { failureOf } from "../outcome";
+import { failureOf, items } from "../outcome";
 
 type Props = {
   result: OptimizeResult;
@@ -18,6 +18,7 @@ export default function FailureCard({
   const cancelled = failure.kind === "cancelled";
   const modelProblem =
     !cancelled && failure.kind !== "internal" && Boolean(failure.provider);
+  const keptRounds = items(result.report.history);
 
   return (
     <section
@@ -30,8 +31,24 @@ export default function FailureCard({
       <p className="eyebrow">{cancelled ? "CANCELLED" : "RUN FAILED"}</p>
       <h2 id="failure-heading">{failure.headline}</h2>
       <p>{failure.hint}</p>
-      {!cancelled && (
+      {!cancelled && result.original_kept === true && (
         <p className="failure-kept">Your prompt was not changed.</p>
+      )}
+      {keptRounds.length > 0 && (
+        <div className="failure-rounds">
+          <p>
+            {keptRounds.length} completed round
+            {keptRounds.length === 1 ? "" : "s"} kept:
+          </p>
+          <ul>
+            {keptRounds.map((entry, index) => (
+              <li key={String(entry.round_number ?? index)}>
+                Round {String(entry.round_number ?? index + 1)} —{" "}
+                {String(entry.status ?? "completed")}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <div className="failure-actions">
         {modelProblem && onOpenModels && (

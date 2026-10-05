@@ -17,25 +17,46 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from . import jev_questions
+from .candidate_evaluation import (
+    evaluate_candidate_packages,
+    round_judgment_provenance,
+)
 from .config import Settings
+from .convergence import (
+    CONVERGED_STATUS,
+    best_candidate_vector,
+    convergence_decision,
+    convergence_summary,
+)
 from .criterion_reading import CRITERION_READING_MIN_VERSION
 from .diagnosis import model_diagnosis
 from .evaluation.calibration import DecisionPolicy
 from .evaluation.order_bias import OrderBiasPolicy
 from .failure_attribution import AttributionBudget, attribute_failed_pairs
-from .fidelity import check_candidate_fidelity
+from .fidelity import FidelityResult, check_candidate_fidelity
 from .gateway import Gateway, ProviderError, completion_text
 from .grading import grade_panel_with_jev
 from .grading_cascade import CascadeBudget
+from .improve import (
+    failure_no_confirmed_improvement,
+    failure_no_qualified_candidate,
+    failure_unverified,
+    improved_unverified_summary,
+    improvement_unverified_summary,
+    no_confirmed_improvement_reason,
+    prompts_differ_meaningfully,
+)
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
-from .models import Tier, utc_now
+from .models import utc_now
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
+from .score_vector import score_candidate
 from .selector import RankingCandidate, RankingResult, rank_candidates
 from .strategies import (
     CURRENT_STRATEGY_LIBRARY,
     STRATEGY_LIBRARY,
+    STYLE_STRATEGY_BUNDLES,
     CandidateBatchRequest,
     CandidateDraft,
     RewriteStrategy,
@@ -44,6 +65,7 @@ from .strategies import (
     search_strategies,
 )
 from .strong_check import StrongCheckPolicy, StrongCheckReport
+from .styles import style_authorization_for
 from .success_tests import SuccessTestCompiler, SuccessTestScreenCache
 
 StageCallback = Callable[[str], None]
@@ -196,7 +218,6 @@ class RoundPlan:
     working_prompt: str
     """The prompt with confirmed clarifications applied; candidates rewrite this."""
     run_id: str
-    tier: Tier
     seed: int
     diagnosis: Mapping[str, Any]
     assumptions: Sequence[Any]
@@ -208,6 +229,18 @@ class RoundPlan:
     grading_policy: OrderBiasPolicy | None = None
     screen_cache: SuccessTestScreenCache | None = None
     decision_policy: DecisionPolicy | None = None
+    applied_style: str = "auto"
+    """The improvement style this round writes with (Auto already resolved)."""
+    hard_constraints: tuple[str, ...] = ()
+    """Audited requirements every candidate must preserve semantically."""
+    exact_output: bool = False
+    """Whether selected literals are an exact-output contract."""
+    route_strategies: tuple[str, ...] = ()
+    """The Route bundle's strategy names; empty means the full library."""
+    prior_vector: Mapping[str, Any] | None = None
+    """The previous round's best score vector, for the convergence comparison."""
+    round_number: int = 1
+    """The absolute run round; candidate IDs may repeat in a later round."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,19 +269,52 @@ class RoundOutcome:
     output_screen: tuple[dict[str, Any], ...] | None = None
     grading_cascade: Mapping[str, Any] | None = None
     failure_attribution: Mapping[str, Any] | None = None
+    reported_failure: Mapping[str, str] | None = None
+    """Set when always-improve kept the input; the reason the change failed."""
+    convergence: Mapping[str, Any] | None = None
+    """The convergence decision (#169), recorded for the report and history."""
+    restored_evidence: Mapping[str, Any] | None = None
+    """Actual persisted winning evidence when a resumed terminal round regresses."""
+    evaluation_evidence: Mapping[str, Any] | None = None
+    judgment_provenance: tuple[Mapping[str, Any], ...] = ()
+
+    @property
+    def converged(self) -> bool:
+        """True when the round met every floor and stopped buying improvement."""
+        return (
+            isinstance(self.convergence, Mapping)
+            and self.convergence.get("status") == CONVERGED_STATUS
+        )
 
     @property
     def continue_rounds(self) -> bool:
-        """Another round can try to beat the prompt using these failures."""
+        """Whether the convergence evidence requires another round.
+
+        A selected candidate does not end a healthy run while it still has
+        quality to gain. The losing candidates continue to seed strategy
+        variation; an empty loss set leaves the route's ordinary strategy
+        bundle available. External stops are raised by run control or the
+        optimizer's provider/Route boundary and therefore do not become
+        retries here.
+        """
+        if self.convergence is not None:
+            return not self.converged
         return bool(self.failures) and self.original_kept
 
     @property
     def selected_candidate_id(self) -> str | None:
+        if self.restored_evidence is not None:
+            selection = self.restored_evidence.get("selection_evidence", {})
+            return selection.get("selected_candidate_id")
         return self.ranking.selected_candidate_id if self.ranking is not None else None
 
     @property
     def selected_strategy(self) -> str | None:
         """The rewrite strategy of the winning candidate, if one was selected."""
+        if self.restored_evidence is not None:
+            selection = self.restored_evidence.get("selection_evidence", {})
+            candidate = selection.get("selected_candidate") or {}
+            return candidate.get("strategy")
         selected = self.ranking.selected if self.ranking is not None else None
         return selected.strategy if selected is not None else None
 
@@ -256,29 +322,43 @@ class RoundOutcome:
         """The run report for this round, in the shape the web app and history read."""
         plan = self.plan
         models = plan.settings.model_roles()
+        if self.restored_evidence is not None:
+            return {
+                **self.restored_evidence,
+                "status": self.status,
+                "models": models,
+                "summary": self.summary,
+                "assumptions": list(plan.assumptions),
+                "diff": prompt_diff(plan.prompt, self.final_prompt),
+                "convergence": dict(self.convergence or {}),
+                "history": [],
+            }
         grading_policies: list[dict[str, Any]] = []
         for answer in self.grading_answers:
             policy = answer.get("grading_policy")
             if isinstance(policy, Mapping) and dict(policy) not in grading_policies:
                 grading_policies.append(dict(policy))
         if self.ranking is None:
-            # Without a confirmed gap no strategy can run, so a Deep pass would
-            # only repeat the diagnosis; it is not offered.
+            # Without a confirmed gap no strategy can safely run.
             report = {
                 "status": self.status,
                 "models": models,
                 "summary": self.summary,
                 "diagnosis": dict(plan.diagnosis),
                 "tests": list(self.tests),
+                "evaluation_evidence": dict(self.evaluation_evidence or {}),
+                "judgment_provenance": [
+                    dict(item) for item in self.judgment_provenance
+                ],
                 "grading_policy": grading_policies,
                 "candidates": [],
                 "per_model": {},
                 "assumptions": list(plan.assumptions),
                 "diff": prompt_diff(plan.prompt, plan.working_prompt),
-                "offer_deep": plan.tier != "deep"
-                and bool(plan.diagnosis.get("confirmed_gaps")),
                 "history": [],
             }
+            if self.convergence is not None:
+                report["convergence"] = dict(self.convergence)
             if self.strategies is not None and self.lossless_restructuring is not None:
                 report["strategies"] = self.strategies.to_dict()
             if self.lossless_restructuring is not None:
@@ -293,11 +373,13 @@ class RoundOutcome:
                 report["grading_cascade"] = dict(self.grading_cascade)
             if self.failure_attribution is not None:
                 report["failure_attribution"] = dict(self.failure_attribution)
+            if self.reported_failure is not None:
+                report["failure"] = dict(self.reported_failure)
             return report
         assert (
             self.panel is not None
-            and self.strong_check is not None
             and self.strategies is not None
+            and (self.strong_check is not None or not self.tests)
         )
         return {
             "status": self.status,
@@ -305,6 +387,8 @@ class RoundOutcome:
             "summary": self.summary,
             "diagnosis": plan.diagnosis,
             "tests": list(self.tests),
+            "evaluation_evidence": dict(self.evaluation_evidence or {}),
+            "judgment_provenance": [dict(item) for item in self.judgment_provenance],
             "grading_policy": grading_policies,
             "jev_answers": list(self.grading_answers),
             "candidates": list(self.candidates),
@@ -315,7 +399,14 @@ class RoundOutcome:
             "assumptions": list(plan.assumptions),
             "diff": prompt_diff(plan.prompt, self.final_prompt),
             "selection_evidence": self.ranking.to_dict(),
-            "strong_check": self.strong_check.to_dict(),
+            **(
+                {"convergence": dict(self.convergence)}
+                if self.convergence is not None
+                else {}
+            ),
+            "strong_check": self.strong_check.to_dict()
+            if self.strong_check is not None
+            else None,
             "strategies": self.strategies.to_dict(),
             **(
                 {"test_screening": dict(self.test_screening)}
@@ -347,7 +438,11 @@ class RoundOutcome:
                 if self.lossless_restructuring is not None
                 else {}
             ),
-            "offer_deep": plan.tier != "deep" and self.original_kept,
+            **(
+                {"failure": dict(self.reported_failure)}
+                if self.reported_failure is not None
+                else {}
+            ),
             "history": [],
         }
 
@@ -394,12 +489,140 @@ class RoundOutcome:
                 "per_model",
                 "strong_check",
                 "selection_evidence",
+                "evaluation_evidence",
+                "judgment_provenance",
+                "output_screen",
                 "grading_policy",
+                "test_screening",
+                "grading_observation",
+                "grading_cascade",
+                "lossless_restructuring",
                 "strategies",
                 "failure_attribution",
             )
             if key in report
         }
+
+
+def _style_bundle(plan: RoundPlan) -> tuple[str, ...]:
+    """Strategy names feeding the style-fit dimension (#166 style criteria)."""
+    if plan.route_strategies:
+        return tuple(plan.route_strategies)
+    return STYLE_STRATEGY_BUNDLES.get(plan.applied_style, ())
+
+
+def _ranking_candidate(
+    gateway: Gateway,
+    plan: RoundPlan,
+    settings: Settings,
+    working_prompt: str,
+    candidate: CandidateDraft,
+    panel_grades: Mapping[str, Any],
+    original_grade: Any,
+) -> RankingCandidate:
+    """Eligibility with the fidelity hard gate and the score-vector max-gate."""
+    fidelity = check_candidate_fidelity(
+        gateway,
+        working_prompt,
+        candidate.text,
+        plan.diagnosis,
+        candidate.strategy,
+        run_id=plan.run_id,
+        judge_model=settings.judge_model,
+        assumptions=plan.assumptions,
+        support_prompt=plan.prompt,
+        preservation_proof=candidate.metadata.get("lossless_proof"),
+        applied_style=plan.applied_style,
+        style_authorization=style_authorization_for(plan.applied_style),
+        legacy_protocol=plan.writer_instruction_version < 4,
+        candidate_id=candidate.candidate_id,
+        round_number=plan.round_number,
+    )
+    vector = score_candidate(
+        gateway,
+        working_prompt,
+        candidate.text,
+        fidelity=fidelity,
+        applied_style=plan.applied_style,
+        style_bundle=_style_bundle(plan),
+        floors=settings.score_floors,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
+        candidate_id=candidate.candidate_id,
+        round_number=plan.round_number,
+    )
+    grade = panel_grades[candidate.candidate_id]
+    hard_violated = tuple(
+        literal
+        for literal in plan.hard_constraints
+        if plan.exact_output and literal not in candidate.text
+    )
+    eligible = (
+        fidelity.passed
+        and vector.passed
+        and grade.ungradable_outputs == 0
+        and original_grade.ungradable_outputs == 0
+        and grade.unresolved_screen_outputs == 0
+        and original_grade.unresolved_screen_outputs == 0
+        and grade.unresolved_grade_outputs == 0
+        and original_grade.unresolved_grade_outputs == 0
+        and grade.detected_outputs == 0
+        and not hard_violated
+    )
+    return RankingCandidate(
+        candidate_id=candidate.candidate_id,
+        text=candidate.text,
+        strategy=candidate.strategy.name,
+        strategy_kind=candidate.strategy.kind,
+        grade=grade,
+        eligible=eligible,
+        rejection_reasons=(
+            (
+                ()
+                if fidelity.passed
+                else (
+                    "candidate failed fidelity checks",
+                    *fidelity.rejection_reasons,
+                )
+            )
+            + vector.judged_breach_reasons
+            + tuple(
+                f"hard requirement violated: {literal!r} must be preserved verbatim"
+                for literal in hard_violated
+            )
+            + (
+                ("weak-panel grading was incomplete or oversized",)
+                if grade.ungradable_outputs or original_grade.ungradable_outputs
+                else ()
+            )
+            + (
+                ("weak-panel output screen was unresolved",)
+                if grade.unresolved_screen_outputs
+                or original_grade.unresolved_screen_outputs
+                else ()
+            )
+            + (
+                ("weak-panel grade confirmation was unresolved",)
+                if grade.unresolved_grade_outputs
+                or original_grade.unresolved_grade_outputs
+                else ()
+            )
+            + (
+                ("weak-panel output screen detected steering",)
+                if grade.detected_outputs
+                else ()
+            )
+        ),
+        metadata={
+            "fidelity": fidelity.to_dict(),
+            "score_vector": vector.to_dict(),
+            **(
+                {"lossless_restructuring": candidate.metadata["lossless_restructuring"]}
+                if "lossless_restructuring" in candidate.metadata
+                else {}
+            ),
+        },
+    )
 
 
 def run_round(
@@ -409,6 +632,8 @@ def run_round(
     stage = on_stage or (lambda _name: None)
     settings = plan.settings
     working_prompt = plan.working_prompt
+    round_log_start = len(gateway.decision_log)
+    candidate_prompts: dict[str, str] = {"original": working_prompt}
     model_view = model_diagnosis(plan.diagnosis)
     screening_evidence: Mapping[str, Any] | None = None
 
@@ -423,6 +648,12 @@ def run_round(
             original_kept=working_prompt == plan.prompt,
             tests=tests,
             test_screening=screening_evidence,
+            judgment_provenance=round_judgment_provenance(
+                gateway,
+                round_log_start,
+                candidate_prompts,
+                plan.round_number,
+            ),
             **_spent(gateway),
         )
 
@@ -452,15 +683,17 @@ def run_round(
         screening_evidence = compiled.as_dict()
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
-    if not tests or no_gaps:
-        summary = (
-            "No confirmed gaps were found; the original request was returned unchanged."
-            if no_gaps and tests
-            else "No confirmed gaps were found; the original request was returned unchanged. No faithful success tests were established."
-            if no_gaps
-            else "No faithful success tests were established; the original request and any confirmed clarifications were returned without claiming an improvement."
-        )
-        return ended("no_change" if no_gaps and tests else "unverified", summary, tests)
+    # Always-attempt policy (#165): missing or uncertain success tests never
+    # force a no-op. The round always proceeds to strategy search and
+    # candidate writing; fidelity gates (meaning preserved, no invention,
+    # edits confined) decide below whether a rewrite may be returned, and
+    # the evidence status (tested vs unverified) records what was measured.
+    # Always-improve policy: a prompt with no confirmed gaps is still rewritten.
+    # Writers get whole-prompt latitude here because edit confinement would
+    # otherwise authorize no edits at all (no diagnosed spans, no gap slots).
+    # Meaning preservation, sentence support, grading, screens, and the strong
+    # check still gate every candidate; only rewrites that pass all of them
+    # and change the prompt can be returned.
 
     stage("choosing_strategy")
     strategy_library = (
@@ -468,19 +701,46 @@ def run_round(
         if plan.writer_instruction_version >= 4
         else STRATEGY_LIBRARY
     )
+    if plan.route_strategies:
+        # The Route stage picked this bundle; candidates come only from it.
+        wanted = set(plan.route_strategies)
+        strategy_library = tuple(
+            item for item in strategy_library if item.name in wanted
+        )
+    always_improve_view = dict(model_view)
+    if no_gaps:
+        # With no confirmed gaps the strategy search has no diagnosed weakness
+        # to match; give the choice a whole-prompt optimization framing
+        # instead of leaving it empty, and drop the "none" option: the
+        # always-improve policy requires rewrites to be written and tested.
+        always_improve_view["note"] = (
+            "No weakness was confirmed; select the strategy that most improves "
+            "the prompt's clarity, precision, structure, or usefulness while "
+            "preserving its meaning."
+        )
     strategy_choice = gateway.decide(
         {
             "model": settings.judge_model,
             "key": "strategy_choice",
             "type": "choice",
-            "query": jev_questions.STRATEGY_CHOICE_QUESTION,
+            "query": (
+                "Which rewrite strategy best addresses the diagnosed weakness?"
+                if not no_gaps
+                else (
+                    "Which rewrite strategy would most improve this already-clear "
+                    "prompt?"
+                )
+            ),
             "criteria": {
                 **{item.name: item.description for item in strategy_library},
-                "none": jev_questions.STRATEGY_NONE_DESCRIPTION,
+                **(
+                    {} if no_gaps else {"none": jev_questions.STRATEGY_NONE_DESCRIPTION}
+                ),
             },
             "state": {
                 "prompt": working_prompt,
-                "diagnosis": model_view,
+                "round_number": plan.round_number,
+                "diagnosis": always_improve_view,
                 "prior_failures": list(plan.prior_failures),
             },
         },
@@ -503,6 +763,7 @@ def run_round(
                 "query": jev_questions.STRATEGY_RECHECK_QUESTION,
                 "state": {
                     "prompt": working_prompt,
+                    "round_number": plan.round_number,
                     "diagnosis": model_view,
                     "strategy": strategy.to_dict(),
                 },
@@ -550,12 +811,14 @@ def run_round(
     search = search_strategies(
         working_prompt,
         model_view,
-        plan.tier,
+        settings=settings,
         strategies=strategy_library,
         writer=write_selected,
         previous_failures=plan.prior_failures,
         recheck=recheck_strategy,
         priority_strategy=preferred_strategy,
+        applied_style=plan.applied_style,
+        style_authorization=style_authorization_for(plan.applied_style),
     )
     if lossless_build is not None:
         kept: list[CandidateDraft] = []
@@ -589,23 +852,16 @@ def run_round(
             rejections=tuple(rejections),
         )
     candidates = list(search.candidates)
-    if not candidates:
-        return replace(
-            ended("no_change", "No candidate strategy was selected.", tests),
-            strategies=search,
-            lossless_restructuring=lossless_build.evidence
-            if lossless_build is not None
-            else None,
-            test_screening=screening_evidence,
-        )
-
+    candidate_prompts.update(
+        {candidate.candidate_id: candidate.text for candidate in candidates}
+    )
     stage("running_weak_models")
     panel = run_candidates(
         candidates,
         settings.weak_models,
         gateway,
         original=working_prompt,
-        budget=plan.tier,
+        settings=settings,
         run_seed=plan.seed,
         run_id=plan.run_id,
     )
@@ -623,8 +879,8 @@ def run_round(
         shared_state=plan.writer_instruction_version >= 5,
         output_screen=plan.writer_instruction_version >= 6,
         decision_policy=plan.decision_policy,
-        cascade_budget=CascadeBudget.for_tier(
-            plan.tier.value,
+        cascade_budget=CascadeBudget.for_settings(
+            settings,
             pair_cap=settings.grading_cascade_pair_cap,
             dollar_cap=settings.grading_cascade_dollar_cap,
             judge_reservation_usd=settings.grading_confirmation_reservation_usd,
@@ -638,6 +894,7 @@ def run_round(
         pair_outcomes_out=pair_outcomes
         if plan.writer_instruction_version >= 8
         else None,
+        round_number=plan.round_number,
         measurements=grading_observation
         if plan.writer_instruction_version >= 5
         else None,
@@ -646,92 +903,168 @@ def run_round(
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
     ranking_candidates = [
-        RankingCandidate(
-            candidate_id=candidate.candidate_id,
-            text=candidate.text,
-            strategy=candidate.strategy.name,
-            strategy_kind=candidate.strategy.kind,
-            grade=panel_grades[candidate.candidate_id],
-            eligible=(
-                fidelity := check_candidate_fidelity(
-                    gateway,
-                    working_prompt,
-                    candidate.text,
-                    plan.diagnosis,
-                    candidate.strategy,
-                    run_id=plan.run_id,
-                    judge_model=settings.judge_model,
-                    assumptions=plan.assumptions,
-                    support_prompt=plan.prompt,
-                    preservation_proof=candidate.metadata.get("lossless_proof"),
-                    legacy_protocol=plan.writer_instruction_version < 4,
-                )
-            ).passed
-            and panel_grades[candidate.candidate_id].ungradable_outputs == 0
-            and original_grade.ungradable_outputs == 0
-            and panel_grades[candidate.candidate_id].unresolved_screen_outputs == 0
-            and original_grade.unresolved_screen_outputs == 0
-            and panel_grades[candidate.candidate_id].unresolved_grade_outputs == 0
-            and original_grade.unresolved_grade_outputs == 0,
-            rejection_reasons=(
-                (
-                    ()
-                    if fidelity.passed
-                    else (
-                        "candidate failed fidelity checks",
-                        *fidelity.rejection_reasons,
-                    )
-                )
-                + (
-                    ("weak-panel grading was incomplete or oversized",)
-                    if panel_grades[candidate.candidate_id].ungradable_outputs
-                    or original_grade.ungradable_outputs
-                    else ()
-                )
-                + (
-                    ("weak-panel output screen was unresolved",)
-                    if panel_grades[candidate.candidate_id].unresolved_screen_outputs
-                    or original_grade.unresolved_screen_outputs
-                    else ()
-                )
-                + (
-                    ("weak-panel grade confirmation was unresolved",)
-                    if panel_grades[candidate.candidate_id].unresolved_grade_outputs
-                    or original_grade.unresolved_grade_outputs
-                    else ()
-                )
-            ),
-            metadata={
-                "fidelity": fidelity.to_dict(),
-                **(
-                    {
-                        "lossless_restructuring": candidate.metadata[
-                            "lossless_restructuring"
-                        ]
-                    }
-                    if "lossless_restructuring" in candidate.metadata
-                    else {}
-                ),
-            },
+        _ranking_candidate(
+            gateway,
+            plan,
+            settings,
+            working_prompt,
+            candidate,
+            panel_grades,
+            original_grade,
         )
         for candidate in candidates
     ]
     stage("strong_check")
-    strong = StrongCheckPolicy(settings.strong_check_model).check(
-        working_prompt,
-        [candidate for candidate in ranking_candidates if candidate.eligible],
-        list(tests),
-        lambda candidate_prompt, _tests: _strong_score(
-            gateway, candidate_prompt, _tests, plan
-        ),
+    # Without success tests there is nothing to check answers against, so
+    # the strong check cannot run; fidelity gates already passed above, and
+    # the unverified evidence status records the missing measurement.
+    strong = (
+        StrongCheckPolicy(settings.strong_check_model).check(
+            working_prompt,
+            [candidate for candidate in ranking_candidates if candidate.eligible],
+            list(tests),
+            lambda candidate_prompt, _tests: _strong_score(
+                gateway, candidate_prompt, _tests, plan
+            ),
+        )
+        if tests
+        else None
     )
-    ranking = rank_candidates(
-        RankingCandidate(
-            "original", working_prompt, "original", "baseline", original_grade
+    baseline_vector = score_candidate(
+        gateway,
+        working_prompt,
+        working_prompt,
+        fidelity=FidelityResult(True, True, True, {"identity": True}),
+        applied_style=plan.applied_style,
+        style_bundle=_style_bundle(plan),
+        floors=settings.score_floors,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
+        candidate_id="original",
+        round_number=plan.round_number,
+    )
+    baseline_graded = not tests or (
+        original_grade is not None
+        and original_grade.worst > 0
+        and original_grade.ungradable_outputs == 0
+        and original_grade.unresolved_screen_outputs == 0
+        and original_grade.unresolved_grade_outputs == 0
+        and original_grade.detected_outputs == 0
+    )
+    baseline = RankingCandidate(
+        "original",
+        working_prompt,
+        "original",
+        "baseline",
+        original_grade,
+        eligible=baseline_vector.passed and baseline_graded,
+        rejection_reasons=(
+            ()
+            if baseline_vector.passed and baseline_graded
+            else (
+                *baseline_vector.judged_breach_reasons,
+                *(
+                    ("original baseline failed success-test eligibility",)
+                    if not baseline_graded
+                    else ()
+                ),
+            )
         ),
+        metadata={
+            "fidelity": {"passed": True, "identity": True},
+            "score_vector": {
+                **baseline_vector.to_dict(),
+                "source": "original_baseline",
+            },
+            "convergence_source": "original_baseline",
+        },
+    )
+    preliminary = rank_candidates(
+        baseline,
         ranking_candidates,
         strong_check=strong,
+        allow_unverified_selection=not tests,
     )
+    finalists = [item.candidate for item in preliminary.ranked if item.rank > 0]
+    strong_evidence = {
+        str(item.get("candidate_id")): item
+        for item in (strong.to_dict().get("candidates", ()) if strong else ())
+        if isinstance(item, Mapping)
+    }
+    candidate_outputs: dict[str, list[dict[str, Any]]] = {}
+    for output in panel.results:
+        candidate_outputs.setdefault(output.candidate_id, []).append(output.to_dict())
+    evaluation_candidates = [*finalists]
+    if baseline.eligible:
+        evaluation_candidates.append(baseline)
+    evaluation = evaluate_candidate_packages(
+        gateway,
+        working_prompt,
+        evaluation_candidates,
+        constraints=plan.hard_constraints,
+        improvement_style=plan.applied_style,
+        style_authorization=style_authorization_for(plan.applied_style),
+        style_bundle=_style_bundle(plan),
+        success_tests=tests,
+        candidate_outputs=candidate_outputs,
+        strong_evidence=strong_evidence,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
+        round_number=plan.round_number,
+        on_stage=stage,
+    )
+    final_candidates: list[RankingCandidate] = []
+    for candidate in ranking_candidates:
+        package = evaluation.candidates.get(candidate.candidate_id)
+        if package is None:
+            final_candidates.append(candidate)
+            continue
+        final_candidates.append(
+            replace(
+                candidate,
+                eligible=candidate.eligible and bool(package["eligible"]),
+                rejection_reasons=(
+                    *candidate.rejection_reasons,
+                    *package["rejection_reasons"],
+                ),
+                metadata={**candidate.metadata, "evaluation": package},
+            )
+        )
+    final_baseline = baseline
+    if "original" in evaluation.candidates:
+        final_baseline = replace(
+            baseline,
+            eligible=baseline.eligible
+            and bool(evaluation.candidates["original"]["eligible"]),
+            rejection_reasons=(
+                *baseline.rejection_reasons,
+                *evaluation.candidates["original"]["rejection_reasons"],
+            ),
+            metadata={
+                **baseline.metadata,
+                "evaluation": evaluation.candidates["original"],
+            },
+        )
+    ranking = rank_candidates(
+        final_baseline,
+        final_candidates,
+        strong_check=strong,
+        allow_unverified_selection=not tests,
+        candidate_order=evaluation.order,
+    )
+    if ranking.selected is None and final_baseline.eligible:
+        # The baseline is eligible only after its own complete Accept gate.
+        ranking = replace(
+            ranking,
+            selected=final_baseline,
+            original_kept=True,
+        )
+    evaluation_evidence: dict[str, Any] = {
+        "candidates": {
+            candidate_id: dict(evidence)
+            for candidate_id, evidence in evaluation.candidates.items()
+        }
+    }
     final_prompt = ranking.final_prompt
     original_kept = final_prompt == plan.prompt
     attribution_by_candidate: dict[str, tuple[dict[str, Any], ...]] = {}
@@ -750,25 +1083,103 @@ def run_round(
             gateway,
             judge_model=settings.judge_model,
             run_id=plan.run_id,
-            budget=AttributionBudget.for_tier(
-                plan.tier,
+            budget=AttributionBudget.for_settings(
+                settings,
                 pair_cap=settings.attribution_pair_cap,
                 dollar_cap=settings.attribution_dollar_cap,
             ),
             decision_policy=plan.decision_policy,
         )
+    # Attribute calls are part of this round's evidence too. Capture only once
+    # all round-local judgments have been issued so the report cannot omit them.
+    round_judgments = round_judgment_provenance(
+        gateway,
+        round_log_start,
+        candidate_prompts,
+        plan.round_number,
+    )
+    # Always-improve policy: keeping the original after verified rounds is a
+    # reported failure, not a success outcome. Without success tests the
+    # evidence differs: a fidelity-gated rewrite is an unproven improvement,
+    # and total rejection is an explicit no-qualified-candidate outcome.
+    reported_failure: Mapping[str, str] | None = None
+    changed_attempts = False
+    if not tests and ranking.selected is not None:
+        status = "improved_unverified"
+        summary = improved_unverified_summary(ranking.selected.strategy)
+    elif original_kept:
+        if not tests:
+            attempts = len(ranking.ranked)
+            status = "no_qualified_candidate"
+            summary = failure_no_qualified_candidate(attempts)["message"]
+            reported_failure = failure_no_qualified_candidate(attempts)
+        else:
+            changed_attempts = any(
+                prompts_differ_meaningfully(working_prompt, item.candidate.text)
+                for item in ranking.ranked
+            )
+            reported_failure = (
+                failure_no_confirmed_improvement()
+                if changed_attempts
+                else failure_unverified()
+            )
+            status = "improvement_not_verified"
+            summary = (
+                no_confirmed_improvement_reason()
+                if changed_attempts
+                else improvement_unverified_summary()
+            )
+    else:
+        status = "improvement_not_verified"
+        summary = no_confirmed_improvement_reason()
+        changed_attempts = True
+        reported_failure = failure_no_confirmed_improvement()
+        if tests:
+            status = "clarified" if ranking.original_kept else "improved"
+            summary = (
+                "Clarifications were included; no verified changed prompt was produced."
+                if ranking.original_kept
+                else "Candidate selected after verification."
+            )
+            reported_failure = None
+        else:
+            # ranking.selected is None here — a selection would have taken
+            # the improved_unverified branch above — so only confirmed
+            # clarifications changed the prompt.
+            status = "clarified"
+            summary = "Clarifications were included; no changed prompt was produced."
+    # Convergence gate (#169): compare the best candidate's score vector to the
+    # previous round's best. When every dimension has met its floor and the
+    # marginal gain has fallen to or below epsilon, the loop stops as converged
+    # — a success outcome, not a failure. Below-floor or still-gaining rounds
+    # keep retrying, informed by this round's losing candidates.
+    vector = (
+        best_candidate_vector({"selection_evidence": ranking.to_dict()})
+        if ranking is not None
+        else None
+    )
+    decision = convergence_decision(
+        vector,
+        previous_vector=plan.prior_vector,
+        epsilon=settings.convergence_epsilon,
+    )
+    convergence = decision.to_dict()
+    if vector is not None:
+        convergence["selected"] = bool(vector.get("selected"))
+        convergence["source"] = vector.get("source", "selected_candidate")
+        convergence["selected_candidate_id"] = vector.get("candidate_id")
+        if not tests:
+            convergence["verification"] = "unverified"
+    if decision.converged:
+        status = CONVERGED_STATUS
+        summary = convergence_summary(
+            decision.scores, decision.floors, gain=decision.gain
+        )
+        reported_failure = None
     return RoundOutcome(
         plan=plan,
-        status="no_change"
-        if original_kept
-        else ("clarified" if ranking.original_kept else "improved"),
-        summary="No candidate beat the original."
-        if original_kept
-        else (
-            "Clarifications were included; no candidate beat the clarified prompt."
-            if ranking.original_kept
-            else "Candidate selected after verification."
-        ),
+        status=status,
+        summary=summary,
         final_prompt=final_prompt,
         original_kept=original_kept,
         tests=tests,
@@ -822,6 +1233,10 @@ def run_round(
             for item in ranking.ranked
             if not item.selected
         ),
+        reported_failure=reported_failure,
+        convergence=convergence,
+        evaluation_evidence=evaluation_evidence,
+        judgment_provenance=round_judgments,
         **_spent(gateway),
     )
 

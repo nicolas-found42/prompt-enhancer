@@ -12,17 +12,17 @@ import {
   checkPromptHealth,
   getActiveJobs,
   getCatalog,
-  getEstimates,
   getJob,
   getProviders,
   getPromptHealthSettings,
   getRunResult,
   getSettings,
   saveSettings,
-  startDeep,
+  startContinue,
   startOptimize,
   startResume,
   startSkip,
+  stopRun,
   updateAssumption,
   type Assumption,
   type Job,
@@ -32,8 +32,7 @@ import {
   type ProviderReport,
   type PromptHealthResult,
   type PromptHealthSettings,
-  type Tier,
-  type TierEstimate,
+  type RunLimits,
 } from "./api";
 import ClarificationPanel, {
   type ClarificationQuestion,
@@ -45,16 +44,21 @@ import ModelPicker from "./ModelPicker";
 import PromptHealthPanel from "./PromptHealthPanel";
 import {
   confirmedGaps,
-  estimateText,
   humanize,
   failureOf,
   outcomeOf,
+  pauseOf,
+  pauseText,
   possibleGapHints,
   record,
-  roughCost,
-  tierDescriptions,
 } from "./outcome";
 import RunReport from "./RunReport";
+import {
+  COMMON_STYLES,
+  MORE_STYLES,
+  STYLE_LABELS,
+  type ImprovementStyle,
+} from "./styles";
 
 const ACTIVE_RUN_KEY = "prompt-enhancer.active-run";
 const LAST_RESULT_KEY = "prompt-enhancer.last-result";
@@ -279,19 +283,6 @@ function clarificationValidationError(
   return { questionId: detail.question_id, message: detail.message };
 }
 
-function deepOfferText(result: OptimizeResult): string {
-  const offer = record(result.report.offer_deep);
-  const multiplier =
-    typeof offer.expected_evaluation_multiplier === "number"
-      ? offer.expected_evaluation_multiplier
-      : null;
-  if (multiplier === null)
-    return "Deep tries more rewrites on more test models. It takes longer and costs more.";
-  const cost = result.cost.total * multiplier;
-  const costText = cost > 0 ? `, ${roughCost(cost)}` : "";
-  return `Deep tries more rewrites on more test models. Expect about ${multiplier.toFixed(1)}× the work of this run${costText}.`;
-}
-
 export default function App() {
   const [initialDraft] = useState(readDraft);
   const [prompt, setPrompt] = useState(initialDraft.prompt);
@@ -311,7 +302,8 @@ export default function App() {
   const lastAssessed = useRef<string | null>(null);
   const pausedDelay = useRef(HEALTH_RETRY_INITIAL_MS);
   const promptField = useRef<HTMLTextAreaElement | null>(null);
-  const [tier, setTier] = useState<Tier>("standard");
+  const [style, setStyle] = useState<ImprovementStyle>("auto");
+  const [spendLimit, setSpendLimit] = useState("");
   const [result, setResult] = useState<OptimizeResult | null>(null);
   const [viewingHistoryResult, setViewingHistoryResult] = useState(false);
   const [historyNavigation, setHistoryNavigation] = useState(0);
@@ -329,10 +321,11 @@ export default function App() {
     strong: string;
   } | null>(null);
   const [providers, setProviders] = useState<ProviderReport | null>(null);
-  const [estimates, setEstimates] = useState<
-    Partial<Record<Tier, TierEstimate>>
-  >({});
-  const lastRequest = useRef<{ prompt: string; tier: Tier } | null>(null);
+  const lastRequest = useRef<{
+    prompt: string;
+    style: ImprovementStyle;
+    spendLimit: string;
+  } | null>(null);
   const composer = useRef<HTMLFormElement | null>(null);
   const draftWasSet = useRef(initialDraft.present);
   const busy = job !== null || saving;
@@ -462,9 +455,6 @@ export default function App() {
     void getProviders(true)
       .then(setProviders)
       .catch(() => setProviders(null));
-    void getEstimates()
-      .then(setEstimates)
-      .catch(() => setEstimates({}));
   }, []);
 
   const finish = useCallback(
@@ -477,9 +467,6 @@ export default function App() {
         const original = originalPromptOf(finishedResult);
         if (original) restoreDraft(original);
       }
-      void getEstimates()
-        .then(setEstimates)
-        .catch(() => undefined);
       void getProviders(false)
         .then(setProviders)
         .catch(() => undefined);
@@ -544,11 +531,26 @@ export default function App() {
         })
         .catch((caught) => {
           if (caught instanceof ApiError && caught.status === 404) {
-            setJob(null);
-            rememberRun(null);
-            setError(
-              "The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again."
-            );
+            // The job is gone, but a budget-paused run survives a restart
+            // in history: offer its Continue/Stop choice instead of loss.
+            void getRunResult(runId)
+              .then((found) => {
+                const resumed = found.result ?? null;
+                setJob(null);
+                rememberRun(null);
+                if (resumed && pauseOf(resumed)) setResult(resumed);
+                else
+                  setError(
+                    "The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again."
+                  );
+              })
+              .catch(() => {
+                setJob(null);
+                rememberRun(null);
+                setError(
+                  "The local engine restarted, so this run was lost. Your prompt is still in the box; press Optimize to try again."
+                );
+              });
           } else {
             setError(
               caught instanceof Error
@@ -586,19 +588,41 @@ export default function App() {
     }
   }
 
+  function runLimits(raw: string): RunLimits | undefined {
+    const trimmed = raw.trim();
+    if (!trimmed) return undefined;
+    const value = Number(trimmed);
+    if (!Number.isFinite(value) || value < 0) return undefined;
+    return { spend_limit_usd: value };
+  }
+
   function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
-    lastRequest.current = { prompt, tier };
-    void begin(() => startOptimize(prompt, tier, selection ?? undefined));
+    if (spendLimit.trim() && !runLimits(spendLimit)) {
+      setError("Spend limit must be a number of dollars, at least 0.");
+      return;
+    }
+    lastRequest.current = { prompt, style, spendLimit };
+    const limits = runLimits(spendLimit);
+    void begin(() =>
+      startOptimize(prompt, style, selection ?? undefined, limits)
+    );
   }
 
   function retry() {
     const previous = lastRequest.current;
     if (previous) {
       changeDraft(previous.prompt);
-      setTier(previous.tier);
+      setStyle(previous.style);
+      setSpendLimit(previous.spendLimit);
+      const limits = runLimits(previous.spendLimit);
       void begin(() =>
-        startOptimize(previous.prompt, previous.tier, selection ?? undefined)
+        startOptimize(
+          previous.prompt,
+          previous.style,
+          selection ?? undefined,
+          limits
+        )
       );
     } else {
       submit();
@@ -613,6 +637,21 @@ export default function App() {
       setError(
         caught instanceof Error ? caught.message : "Unable to cancel the run."
       );
+    }
+  }
+
+  async function stopPaused() {
+    if (!result) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setResult(await stopRun(result.run_id));
+    } catch (caught) {
+      setError(
+        caught instanceof Error ? caught.message : "Unable to stop the run."
+      );
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -764,14 +803,16 @@ export default function App() {
 
   const questions: ClarificationQuestion[] =
     !job && result?.status === "needs_input" ? (result.questions ?? []) : [];
+  const paused = !job && result ? pauseOf(result) : null;
   const assumptions = useMemo(
     () => (result ? reportAssumptions(result) : []),
     [result]
   );
-  const estimate = estimateText(tier, estimates[tier]);
-  const progressEstimate =
-    job?.kind === "deep" ? estimateText("deep", estimates.deep) : estimate;
-  const outcome = result?.status === "completed" ? outcomeOf(result) : null;
+  const outcome =
+    result &&
+    (result.status === "completed" || typeof result.report.outcome === "string")
+      ? outcomeOf(result)
+      : null;
   const gaps =
     result?.status === "completed" && result.original_kept
       ? confirmedGaps(result)
@@ -783,8 +824,6 @@ export default function App() {
   const resultPrompt = result ? originalPromptOf(result) : undefined;
   const resultForEarlierPrompt =
     resultPrompt !== undefined && resultPrompt !== prompt;
-  // Deep only rewrites against a confirmed gap; without one it cannot do more.
-  const offerDeep = Boolean(result?.report.offer_deep) && gaps.length > 0;
 
   return (
     <main className="shell">
@@ -792,8 +831,8 @@ export default function App() {
         <p className="eyebrow">LOCAL PROMPT WORKBENCH</p>
         <h1>Make your prompt clearer.</h1>
         <p className="lede">
-          Paste one prompt, choose how much effort to spend, and get a clean
-          result you can copy.
+          Paste one prompt, choose how to improve it, and get a clean result you
+          can copy.
         </p>
       </header>
 
@@ -873,16 +912,27 @@ export default function App() {
           }}
         />
         <div className="form-actions">
-          <label className="tier-label" htmlFor="tier">
-            Effort
+          <label className="style-label" htmlFor="improvement-style">
+            Improvement style
             <select
-              id="tier"
-              value={tier}
-              onChange={(event) => setTier(event.target.value as Tier)}
+              id="improvement-style"
+              value={style}
+              onChange={(event) =>
+                setStyle(event.target.value as ImprovementStyle)
+              }
             >
-              <option value="fast">Fast</option>
-              <option value="standard">Standard</option>
-              <option value="deep">Deep</option>
+              {COMMON_STYLES.map((value) => (
+                <option key={value} value={value}>
+                  {STYLE_LABELS[value]}
+                </option>
+              ))}
+              <optgroup label="More styles">
+                {MORE_STYLES.map((value) => (
+                  <option key={value} value={value}>
+                    {STYLE_LABELS[value]}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </label>
           <button
@@ -894,14 +944,29 @@ export default function App() {
             {job ? "Optimizing…" : "Optimize prompt"}
           </button>
         </div>
+        <div className="form-actions">
+          <label className="limit-label" htmlFor="spend-limit">
+            Spend limit (USD, optional)
+            <input
+              id="spend-limit"
+              type="number"
+              min={0}
+              step={0.01}
+              inputMode="decimal"
+              value={spendLimit}
+              onChange={(event) => setSpendLimit(event.target.value)}
+              placeholder="No limit"
+            />
+          </label>
+        </div>
         {!prompt.trim() && (
           <p className="composer-hint" id="optimize-hint">
             Enter a prompt to enable Optimize prompt.
           </p>
         )}
-        <p className="effort-estimate">
-          <span>{tierDescriptions[tier]}</span> <span>{estimate.time}</span>{" "}
-          <span>{estimate.cost}</span>
+        <p className="loop-estimate">
+          The loop continues until its quality evidence converges. Time and
+          spend limits pause the run for your approval.
         </p>
         {selection && (
           <ModelPicker
@@ -932,13 +997,38 @@ export default function App() {
         </p>
       )}
 
-      {job && (
-        <RunProgress
-          job={job}
-          estimate={progressEstimate.time}
-          onCancel={() => void cancel()}
-        />
-      )}
+      {job && <RunProgress job={job} onCancel={() => void cancel()} />}
+
+      {paused ? (
+        <section
+          id="paused-panel"
+          className="result paused"
+          aria-live="polite"
+          tabIndex={-1}
+        >
+          <p className="eyebrow">PAUSED</p>
+          <h2>Paused at your limit</h2>
+          <p>{pauseText(paused)}</p>
+          <div className="paused-actions">
+            <button
+              className="primary"
+              type="button"
+              disabled={busy}
+              onClick={() => void begin(() => startContinue(result!.run_id))}
+            >
+              Continue
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              disabled={busy}
+              onClick={() => void stopPaused()}
+            >
+              Stop
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {questions.length > 0 ? (
         <ClarificationPanel
@@ -978,7 +1068,7 @@ export default function App() {
         />
       )}
 
-      {!job && result?.status === "completed" && outcome ? (
+      {!job && outcome && result ? (
         <section
           id="run-outcome"
           className="result"
@@ -989,8 +1079,16 @@ export default function App() {
             <div>
               <p className="eyebrow">RESULT</p>
               <h2>{outcome.headline}</h2>
+              {outcome.appliedStyle && (
+                <p>Applied style: {outcome.appliedStyle}.</p>
+              )}
               {outcome.reason && (
                 <p className="outcome-reason">{outcome.reason}</p>
+              )}
+              {outcome.controlState && (
+                <p className="control-state">
+                  Run state: {outcome.controlState}.
+                </p>
               )}
             </div>
             {result.final_prompt && (
@@ -1031,19 +1129,6 @@ export default function App() {
           )}
           {result.final_prompt && (
             <pre className="final-prompt">{result.final_prompt}</pre>
-          )}
-          {offerDeep && (
-            <div className="deep-offer">
-              <p>{deepOfferText(result)}</p>
-              <button
-                className="secondary"
-                type="button"
-                disabled={busy}
-                onClick={() => void begin(() => startDeep(result.run_id))}
-              >
-                Try a Deep pass
-              </button>
-            </div>
           )}
           <details className="report">
             <summary>View report</summary>

@@ -11,7 +11,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from .models import Tier, TierBudget
+from .config import MAX_CANDIDATES, Settings
+from .models import WorkloadBudget
 
 StrategyKind = Literal["safe", "crutch"]
 
@@ -145,6 +146,8 @@ class CandidateBatchRequest:
     strategies: tuple[RewriteStrategy, ...]
     previous_failures: tuple[str, ...] = ()
     diagnosis: Mapping[str, Any] = field(default_factory=dict)
+    applied_style: str | None = None
+    style_authorization: Mapping[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -152,6 +155,12 @@ class CandidateBatchRequest:
             "strategies": [strategy.to_dict() for strategy in self.strategies],
             "previous_failures": list(self.previous_failures),
             "diagnosis": dict(self.diagnosis),
+            **({"applied_style": self.applied_style} if self.applied_style else {}),
+            **(
+                {"style_authorization": dict(self.style_authorization)}
+                if self.style_authorization
+                else {}
+            ),
         }
 
 
@@ -209,7 +218,7 @@ class StrategySearchResult:
     candidates: tuple[CandidateDraft, ...]
     selected_strategies: tuple[RewriteStrategy, ...]
     rejections: tuple[StrategyRejection, ...]
-    budget: TierBudget
+    budget: WorkloadBudget
     previous_failures: tuple[str, ...] = ()
 
     def __iter__(self):
@@ -388,9 +397,8 @@ def _writer_texts(
 def search_strategies(
     prompt: str,
     diagnosis: Any = None,
-    tier: Tier | str = "standard",
     *,
-    budget: TierBudget | None = None,
+    settings: Settings | None = None,
     strategies: Iterable[RewriteStrategy] = STRATEGY_LIBRARY,
     writer: Any = None,
     previous_failures: Sequence[str] | None = None,
@@ -398,15 +406,32 @@ def search_strategies(
     include_crutch: bool = True,
     recheck: Callable[[RewriteStrategy], Any] | None = None,
     priority_strategy: str | None = None,
+    applied_style: str | None = None,
+    style_authorization: Mapping[str, str] | None = None,
 ) -> StrategySearchResult:
-    """Rank strategies, apply the budget, and generate one candidate each.
+    """Rank strategies, apply the fixed workload, and generate candidates.
 
     ``previous_round_failures`` is an alias accepted for repeat-round callers.
     Rejected strategies are retained in the result for the report rather than
     disappearing silently.
     """
 
-    selected_budget = budget or Tier.parse(tier).budget
+    workload = settings or Settings()
+    selected_budget = WorkloadBudget(
+        candidates=min(workload.candidate_count, MAX_CANDIDATES),
+        models=workload.weak_model_count,
+        samples=workload.weak_samples,
+    )
+    counts = (
+        selected_budget.candidates,
+        selected_budget.models,
+        selected_budget.samples,
+    )
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 1
+        for value in counts
+    ):
+        raise ValueError("fixed workload counts must be positive integers")
     failures = tuple(
         str(item)
         for item in (
@@ -449,7 +474,9 @@ def search_strategies(
                 continue
         if len(eligible) >= selected_budget.candidates:
             rejected.append(
-                StrategyRejection(strategy.name, "outside tier candidate budget", score)
+                StrategyRejection(
+                    strategy.name, "outside fixed candidate budget", score
+                )
             )
             continue
         eligible.append(strategy)
@@ -462,6 +489,8 @@ def search_strategies(
         tuple(eligible),
         failures,
         diagnosis=diagnosis if isinstance(diagnosis, Mapping) else {},
+        applied_style=applied_style,
+        style_authorization=dict(style_authorization or {}),
     )
     generated: list[str] | None = None
     if writer is not None:
@@ -509,16 +538,262 @@ def search_strategies(
     )
 
 
+#: Each named improvement style maps to a deterministic strategy bundle.
+#: Auto never appears here: it resolves to its inferred style's bundle.
+STYLE_STRATEGY_BUNDLES: dict[str, tuple[str, ...]] = {
+    "clearer": (
+        "remove_contradictions",
+        "add_missing_context",
+        "specify_output_format",
+    ),
+    "shorter": ("remove_contradictions", "specify_output_format"),
+    "more_specific": (
+        "add_missing_context",
+        "add_done_criteria",
+        "specify_output_format",
+    ),
+    "add_detail": ("add_missing_context", "add_example", "add_done_criteria"),
+    "structured": ("restructure_lossless", "specify_output_format", "split_into_steps"),
+    "creative": ("add_example", "role_play", "repeated_emphasis"),
+    "decision_ready": (
+        "add_done_criteria",
+        "specify_output_format",
+        "remove_contradictions",
+    ),
+    "research_ready": (
+        "add_missing_context",
+        "specify_output_format",
+        "add_done_criteria",
+    ),
+    "code_ready": ("specify_output_format", "add_done_criteria", "add_example"),
+    "teach_me": ("split_into_steps", "add_example", "add_missing_context"),
+    "audience_fit": ("role_play", "add_missing_context", "specify_output_format"),
+    "tone_voice": ("role_play", "repeated_emphasis", "remove_contradictions"),
+    "persuasive": ("role_play", "repeated_emphasis", "add_example"),
+    "faithful_transform": ("restructure_lossless", "remove_contradictions"),
+    "exact_format": (
+        "specify_output_format",
+        "remove_contradictions",
+        "add_done_criteria",
+    ),
+    "proofread_only": ("remove_contradictions",),
+    "ask_me_first": ("add_missing_context", "add_done_criteria"),
+    "safety_aware": ("remove_contradictions", "repeated_emphasis", "add_done_criteria"),
+    "challenge_it": ("remove_contradictions", "add_done_criteria"),
+    "red_team": ("remove_contradictions", "repeated_emphasis"),
+    "surprise_me": ("add_example", "role_play", "split_into_steps"),
+}
+
+#: Strategies that add scaffolding (examples, personas, steps, emphasis, new
+#: context or criteria) cannot apply where the response must reproduce an
+#: exact literal: only conflict repair, format statements, and lossless
+#: restructuring stay compatible with exact-output hard gates.
+EXACT_OUTPUT_UNSAFE_STRATEGIES = frozenset(
+    {
+        "add_missing_context",
+        "add_done_criteria",
+        "split_into_steps",
+        "add_example",
+        "role_play",
+        "repeated_emphasis",
+    }
+)
+
+
+def compatible_bundle(
+    style: str,
+    *,
+    exact_output: bool,
+    library: Iterable[RewriteStrategy] = CURRENT_STRATEGY_LIBRARY,
+) -> tuple[RewriteStrategy, ...]:
+    """The style's bundle restricted to strategies in the library.
+
+    With exact-output hard gates, scaffolding strategies are dropped; the
+    style applies only where compatible.
+    """
+    names = STYLE_STRATEGY_BUNDLES.get(style, ())
+    available = {strategy.name: strategy for strategy in library}
+    return tuple(
+        available[name]
+        for name in names
+        if name in available
+        and not (exact_output and name in EXACT_OUTPUT_UNSAFE_STRATEGIES)
+    )
+
+
+@dataclass(frozen=True)
+class RouteResult:
+    """The Route stage's bundle choice, with evidence for the report."""
+
+    applied_style: str
+    bundle: str
+    strategies: tuple[str, ...] = ()
+    find_selection: str | None = None
+    decide_compatible: bool | None = None
+    impossible_reason: str | None = None
+    provenance: Mapping[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "applied_style": self.applied_style,
+            "bundle": self.bundle,
+            "strategies": list(self.strategies),
+            "find_selection": self.find_selection,
+            "decide_compatible": self.decide_compatible,
+            "impossible_reason": self.impossible_reason,
+            "provenance": {
+                key: dict(value) if isinstance(value, Mapping) else value
+                for key, value in self.provenance.items()
+            },
+        }
+
+
+def run_route(
+    gateway: Any,
+    prompt: str,
+    *,
+    applied_style: str,
+    hard_constraints: Sequence[str] = (),
+    exact_output: bool = False,
+    library: Iterable[RewriteStrategy] = CURRENT_STRATEGY_LIBRARY,
+    judge_model: str = "",
+    run_id: str | None = None,
+) -> RouteResult:
+    """Pick the compatible strategy bundle with find/decide judgments.
+
+    The applied style's deterministic bundle is proposed; ``find`` may name
+    an alternative bundle when ``decide`` rules the proposal out, and the
+    deterministic exact-output filter always applies. A bundle with nothing
+    compatible left ends ``impossible`` with an explanation.
+    """
+    from . import jev_questions
+    from .jev import ChoiceDecision, NoulDecision, parse_decision
+
+    available = {strategy.name: strategy for strategy in library}
+    proposed = STYLE_STRATEGY_BUNDLES.get(applied_style, ())
+    criteria = {
+        style: jev_questions.route_bundle_description(style, bundle)
+        for style, bundle in STYLE_STRATEGY_BUNDLES.items()
+    }
+    find_raw = gateway.decide(
+        {
+            "model": judge_model,
+            "key": "route:find",
+            "type": "choice",
+            "query": jev_questions.ROUTE_FIND_QUESTION,
+            "criteria": criteria,
+            "state": {
+                "prompt": prompt,
+                "proposed_bundle": applied_style,
+                "hard_constraints": list(hard_constraints),
+                "exact_output": exact_output,
+            },
+        },
+        role="judge",
+        run_id=run_id,
+    )
+    find_decision = parse_decision(find_raw)
+    find_selection = (
+        find_decision.selected if isinstance(find_decision, ChoiceDecision) else None
+    )
+    if find_selection not in STYLE_STRATEGY_BUNDLES:
+        find_selection = None
+
+    decide_raw = gateway.decide(
+        {
+            "model": judge_model,
+            "key": "route:decide",
+            "type": "noul",
+            "query": jev_questions.ROUTE_DECIDE_QUESTION,
+            "state": {
+                "prompt": prompt,
+                "proposed_bundle": applied_style,
+                "bundle_strategies": list(proposed),
+                "hard_constraints": list(hard_constraints),
+                "exact_output": exact_output,
+            },
+        },
+        role="judge",
+        run_id=run_id,
+    )
+    decide_decision = parse_decision(decide_raw)
+    decide_compatible = (
+        decide_decision.probability >= 0.5
+        if isinstance(decide_decision, NoulDecision)
+        else None
+    )
+
+    chosen_style = applied_style
+    filtered = compatible_bundle(
+        applied_style, exact_output=exact_output, library=tuple(available.values())
+    )
+    if (
+        decide_compatible is False
+        and find_selection is not None
+        and find_selection != applied_style
+    ):
+        alternative = compatible_bundle(
+            find_selection,
+            exact_output=exact_output,
+            library=tuple(available.values()),
+        )
+        if alternative:
+            chosen_style = find_selection
+            filtered = alternative
+
+    provenance: Mapping[str, Any] = {
+        "find": {"fired": True, "key": "route:find", "selected": find_selection},
+        "decide": {
+            "fired": True,
+            "key": "route:decide",
+            "compatible": decide_compatible,
+        },
+    }
+    if not filtered:
+        dropped = [name for name in proposed if name in available]
+        reason = (
+            f"The {applied_style} style cannot apply to this prompt: its "
+            f"bundle ({', '.join(dropped) if dropped else 'empty'}) would "
+            f"rewrite the exact literal "
+            f"{' and '.join(repr(item) for item in hard_constraints)} "
+            "the prompt requires verbatim, and no compatible strategy is "
+            "left. No violation was emitted."
+        )
+        return RouteResult(
+            applied_style=applied_style,
+            bundle=applied_style,
+            strategies=(),
+            find_selection=find_selection,
+            decide_compatible=decide_compatible,
+            impossible_reason=reason,
+            provenance=provenance,
+        )
+    return RouteResult(
+        applied_style=applied_style,
+        bundle=chosen_style,
+        strategies=tuple(item.name for item in filtered),
+        find_selection=find_selection,
+        decide_compatible=decide_compatible,
+        impossible_reason=None,
+        provenance=provenance,
+    )
+
+
 __all__ = [
     "CURRENT_STRATEGY_LIBRARY",
+    "EXACT_OUTPUT_UNSAFE_STRATEGIES",
     "LOSSLESS_RESTRUCTURE_STRATEGY",
     "STRATEGIES",
     "STRATEGY_LIBRARY",
+    "STYLE_STRATEGY_BUNDLES",
     "CandidateBatchRequest",
     "CandidateDraft",
     "RewriteStrategy",
+    "RouteResult",
     "StrategyKind",
     "StrategyRejection",
     "StrategySearchResult",
+    "compatible_bundle",
+    "run_route",
     "search_strategies",
 ]

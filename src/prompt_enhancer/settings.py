@@ -75,12 +75,27 @@ class ModelDefaults:
 @dataclass(frozen=True, slots=True)
 class Settings:
     defaults: ModelDefaults = ModelDefaults()
+    score_floors: Mapping[str, float] | None = None
+    floor_calibration: Mapping[str, Any] | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {"models": self.defaults.to_dict(), "judge": JEV_MODEL}
+        return {
+            "models": self.defaults.to_dict(),
+            "judge": JEV_MODEL,
+            **({"score_floors": dict(self.score_floors)} if self.score_floors else {}),
+            **(
+                {"floor_calibration": dict(self.floor_calibration)}
+                if self.floor_calibration
+                else {}
+            ),
+        }
 
     def with_overrides(self, overrides: Mapping[str, Any] | None) -> Settings:
-        return Settings(defaults=self.defaults.merged(overrides))
+        return Settings(
+            defaults=self.defaults.merged(overrides),
+            score_floors=self.score_floors,
+            floor_calibration=self.floor_calibration,
+        )
 
     resolve = with_overrides
 
@@ -107,7 +122,15 @@ class SettingsStore:
             return Settings(self._defaults)
         # Accept both {models: {...}} and the bare model map for easy migration.
         model_payload = payload.get("models", payload)
-        return Settings(ModelDefaults.from_dict(model_payload))
+        floors = payload.get("score_floors")
+        calibration = payload.get("floor_calibration")
+        return Settings(
+            defaults=ModelDefaults.from_dict(model_payload),
+            score_floors=dict(floors) if isinstance(floors, Mapping) else None,
+            floor_calibration=(
+                dict(calibration) if isinstance(calibration, Mapping) else None
+            ),
+        )
 
     def load(self) -> Settings:
         with self._lock:
@@ -119,9 +142,17 @@ class SettingsStore:
         if isinstance(settings, Settings):
             normalized = settings
         elif isinstance(settings, ModelDefaults):
-            normalized = Settings(settings)
+            normalized = Settings(
+                settings,
+                self._settings.score_floors,
+                self._settings.floor_calibration,
+            )
         else:
-            normalized = Settings(ModelDefaults.from_dict(settings))
+            normalized = Settings(
+                ModelDefaults.from_dict(settings),
+                self._settings.score_floors,
+                self._settings.floor_calibration,
+            )
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             fd, temporary = tempfile.mkstemp(prefix=".settings-", dir=self.path.parent)
@@ -147,6 +178,19 @@ class SettingsStore:
     def update_defaults(self, **roles: Any) -> Settings:
         with self._lock:
             return self.save(self._settings.defaults.merged(roles))
+
+    def update_score_floors(
+        self, floors: Mapping[str, float], calibration: Mapping[str, Any]
+    ) -> Settings:
+        """Persist calibrated floors and their sample/movement audit record."""
+        with self._lock:
+            return self.save(
+                Settings(
+                    defaults=self._settings.defaults,
+                    score_floors=dict(floors),
+                    floor_calibration=dict(calibration),
+                )
+            )
 
     def resolve(self, overrides: Mapping[str, Any] | None = None) -> Settings:
         return self.load().with_overrides(overrides)

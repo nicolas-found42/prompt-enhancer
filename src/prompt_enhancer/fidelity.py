@@ -14,6 +14,7 @@ from .diagnosis import split_sentences
 from .gateway import Gateway, ProviderError
 from .jev import ChoiceDecision, JevResponseError, NoulDecision, parse_decision
 from .lossless_restructuring import verify_lossless_proof
+from .styles import validated_style_authorization
 
 FIDELITY_THRESHOLD = 0.8
 DECISION_BATCH_LIMIT = 40
@@ -237,8 +238,19 @@ def _confinement(
     restructuring = strategy.get("restructures") is True
     failures: list[dict[str, Any]] = []
 
+    # Always-improve policy: when this strategy has no authorized edit channel
+    # (no diagnosed spans and no gap slots it may fill), edit confinement would
+    # authorize no change at all. Writers may then rewrite any sentence, but
+    # every changed sentence still needs Jev sentence support and the whole
+    # prompt must preserve its meaning; lossless restructuring works as before.
+    whole_prompt_latitude = (
+        not restructuring and not diagnosed_ids and not authorized_gap_keys
+    )
+
     for edit in edits:
         operation = str(edit.get("operation", ""))
+        if whole_prompt_latitude:
+            continue
         source_ids = {str(item) for item in edit.get("source_sentence_ids", ())}
         if operation in {"replace", "delete"} and not restructuring:
             if not source_ids or not source_ids.issubset(diagnosed_ids):
@@ -295,6 +307,7 @@ def _confinement(
         "confirmed_gap_keys": sorted(confirmed_gap_keys),
         "authorized_gap_keys": sorted(authorized_gap_keys),
         "restructuring_authorized": restructuring,
+        **({"whole_prompt_latitude": True} if whole_prompt_latitude else {}),
         "failures": failures,
     }
 
@@ -321,6 +334,10 @@ def check_candidate_fidelity(
     support_prompt: str | None = None,
     preservation_proof: Mapping[str, Any] | None = None,
     legacy_protocol: bool = False,
+    candidate_id: str | None = None,
+    round_number: int | None = None,
+    applied_style: str | None = None,
+    style_authorization: Mapping[str, Any] | None = None,
 ) -> FidelityResult:
     """Check deterministic edit confinement, then semantic support and meaning.
 
@@ -329,6 +346,7 @@ def check_candidate_fidelity(
     sentence and one whole-prompt meaning decision. Responses follow ADR-0001:
     the Gateway returns raw values and this caller parses them fail-closed.
     """
+    authorization = validated_style_authorization(applied_style, style_authorization)
     if legacy_protocol:
         stable_diagnosis = deepcopy(dict(diagnosis))
         request_evidence = stable_diagnosis.get("request_evidence")
@@ -342,6 +360,8 @@ def check_candidate_fidelity(
             "candidate_prompt": candidate_prompt,
             "diagnosis": stable_diagnosis,
             "strategy": str(getattr(strategy, "name", strategy)),
+            **({"candidate_id": candidate_id} if candidate_id is not None else {}),
+            **({"round_number": round_number} if round_number is not None else {}),
         }
         requests = [
             {
@@ -360,7 +380,9 @@ def check_candidate_fidelity(
                 not isinstance(answer, NoulDecision) for answer in decisions
             ):
                 raise JevResponseError("incomplete fidelity response")
-        except (ProviderError, JevResponseError) as exc:
+        except ProviderError:
+            raise
+        except JevResponseError as exc:
             return FidelityResult(False, False, False, {"error": type(exc).__name__})
         probabilities = {
             name: decision.probability
@@ -445,6 +467,11 @@ def check_candidate_fidelity(
     state = {
         "original_prompt": support_prompt or original_prompt,
         "candidate_prompt": candidate_prompt,
+        **(
+            {"applied_style": applied_style, "style_authorization": authorization}
+            if authorization
+            else {}
+        ),
         "confirmed_assumptions": confirmed_assumptions,
         "changed_sentences": {
             change_id: {
@@ -452,6 +479,8 @@ def check_candidate_fidelity(
             }
             for change_id, edit in changed_sentences.items()
         },
+        **({"candidate_id": candidate_id} if candidate_id is not None else {}),
+        **({"round_number": round_number} if round_number is not None else {}),
     }
     requests: list[dict[str, Any]] = []
     support_edit_by_key: dict[str, Mapping[str, Any]] = {}
@@ -497,7 +526,11 @@ def check_candidate_fidelity(
             raw_answers.extend(batch_answers)
         if len(raw_answers) != len(requests):
             raise JevResponseError("incomplete fidelity response")
-    except (ProviderError, JevResponseError) as exc:
+    except ProviderError:
+        # A provider outage is an operational stop, not candidate-quality
+        # evidence for another iteration of the uncapped convergence loop.
+        raise
+    except JevResponseError as exc:
         reason = f"fidelity checks unavailable or incomplete ({type(exc).__name__})"
         evidence["reasons"] = [reason]
         evidence["request_count"] = len(requests)
@@ -528,11 +561,17 @@ def check_candidate_fidelity(
         except JevResponseError:
             decision = None
         accepted = bool(
-            selected in {"supported_by_original", "supported_by_assumption"}
+            selected
+            in {
+                "supported_by_original",
+                "supported_by_assumption",
+                "authorized_style_presentation",
+            }
             and probability >= FIDELITY_THRESHOLD
             and not (
                 selected == "supported_by_assumption" and not confirmed_assumptions
             )
+            and not (selected == "authorized_style_presentation" and not authorization)
         )
         support = {
             "change_id": edit["change_id"],
@@ -548,11 +587,17 @@ def check_candidate_fidelity(
         }
         if selected == "supported_by_assumption" and not confirmed_assumptions:
             support["reason"] = "no confirmed user answer was available"
+        elif selected == "authorized_style_presentation" and not authorization:
+            support["reason"] = "no matching catalog style authorization was available"
         elif selected == "new_requirement":
             support["reason"] = "new requirement"
         elif selected == "unknown":
             support["reason"] = "support unknown"
-        elif selected not in {"supported_by_original", "supported_by_assumption"}:
+        elif selected not in {
+            "supported_by_original",
+            "supported_by_assumption",
+            "authorized_style_presentation",
+        }:
             support["reason"] = "malformed or missing support answer"
         elif probability < FIDELITY_THRESHOLD:
             support["reason"] = "supported option probability below 0.80"

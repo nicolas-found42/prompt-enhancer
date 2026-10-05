@@ -12,11 +12,31 @@ from prompt_enhancer.evaluation.calibration import (
     DecisionPolicy,
     runtime_question_identity,
 )
-from prompt_enhancer.evaluation.harness import default_engine_factory
+from prompt_enhancer.evaluation.harness import HarnessOptions, default_engine_factory
 from prompt_enhancer.evaluation.recording import RecordingGateway
 from prompt_enhancer.gateway import ReplayGateway, ScriptedGateway
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.store import RunStore
+
+
+def _echo_writer(_model, messages, *, role, **_kwargs):
+    """Attempt a rewrite, retaining the already-sufficient recorded baseline."""
+    if role == "writer":
+        state = json.loads(messages[1]["content"])
+        if "strategies" in state:
+            return json.dumps(
+                {item["name"]: state["prompt"] for item in state["strategies"]}
+            )
+        return '{"tests":[]}'
+    return "pass"
+
+
+def test_harness_sends_settings_only_when_supplied_for_a_custom_engine() -> None:
+    assert "settings" not in HarnessOptions().optimize_options()
+    assert HarnessOptions(settings={"custom_knob": 2}).optimize_options()[
+        "settings"
+    ] == {"custom_knob": 2}
+    assert HarnessOptions().to_dict()["settings"] == {}
 
 
 def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
@@ -37,7 +57,12 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     )
 
     report = json.loads(output.read_text())
+    # These recorded prompts independently meet every baseline floor. Keeping
+    # that measured baseline now converges successfully; it does not imply a
+    # changed prompt or success-test verification that the recording lacks.
     assert [case["status"] for case in report["cases"]] == ["completed"] * 3
+    assert all(case["error"] is None for case in report["cases"])
+    assert all(case["original_kept"] is True for case in report["cases"])
     assert report["diagnosis"]["excluded_failed_cases"] == 0
     assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
     assert report["diagnosis"]["problem_sentences"]["precision"] is None
@@ -284,17 +309,26 @@ def test_replay_restores_its_question_thresholds(tmp_path: Path) -> None:
 def test_recorded_live_gateway_replays_the_same_public_run(tmp_path: Path) -> None:
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            choice = (
+                "same"
+                if str(request.get("key", "")).endswith(":verbosity_direction")
+                else "none"
+            )
             return {
                 "type": "choice",
-                "choice": "none",
-                "probabilities": {"none": 1.0},
+                "choice": choice,
+                "probabilities": {choice: 1.0},
                 "confidence": 1.0,
             }
+        if str(request.get("key", "")).startswith(
+            ("score:", "evaluate:", "strategy_recheck:")
+        ):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 0.9}
         return {"type": "noul", "probability_true": 0.1, "confidence": 0.9}
 
     path = tmp_path / "recorded.json"
     gateway = RecordingGateway(
-        ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide),
+        ScriptedGateway(chat=_echo_writer, decision=decide),
         path,
     )
     prompt = "Summarize the supplied article in three bullets."
@@ -305,12 +339,17 @@ def test_recorded_live_gateway_replays_the_same_public_run(tmp_path: Path) -> No
     assert provenance
     assert {entry["answered_by"] for entry in provenance.values()} == {JEV_MODEL}
     replayed = PromptOptimizer(
-        gateway=ReplayGateway(responses), store=RunStore(":memory:")
+        gateway=ReplayGateway(responses, decision_provenance=provenance),
+        store=RunStore(":memory:"),
     ).optimize(prompt)
 
     assert responses
-    assert replayed["status"] == original["status"]
+    assert replayed["status"] == original["status"], json.dumps(
+        replayed.get("report", {}).get("failure")
+    )
     assert replayed["final_prompt"] == original["final_prompt"]
+    assert original["status"] == "completed"
+    assert original["report"]["convergence"]["status"] == "converged"
     assert original["report"]["jev_snapshot"] == [JEV_MODEL]
     assert all(
         answer["answered_by"] == JEV_MODEL
@@ -348,13 +387,23 @@ def test_versioned_legacy_recording_replays_without_existence_questions(
                 "probabilities": {"none": 1.0},
                 "confidence": 1.0,
             }
+        if request.get("type") == "choice":
+            choice = "same" if key.endswith(":verbosity_direction") else "none"
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        if key.startswith(("score:", "evaluate:", "strategy_recheck:")):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
         probability = 0.95 if key.startswith("problem:vagueness:") else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     prompt = "The answer should fit in a tweet."
     path = tmp_path / "legacy-sentence-protocol.json"
     gateway = RecordingGateway(
-        ScriptedGateway(chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide),
+        ScriptedGateway(chat=_echo_writer, decision=decide),
         path,
     )
     gateway.sentence_diagnosis_version = 1
@@ -364,15 +413,16 @@ def test_versioned_legacy_recording_replays_without_existence_questions(
         store=RunStore(":memory:"),
         sentence_diagnosis_version=1,
         task_taxonomy_version=1,
-    ).optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    ).optimize(prompt, {"clarification_allowed": False})
 
     replay = default_engine_factory(path)
-    result = replay.optimize(prompt, {"tier": "fast", "clarification_allowed": False})
+    result = replay.optimize(prompt, {"clarification_allowed": False})
 
     assert json.loads(path.read_text())["sentence_diagnosis_version"] == 1
     assert json.loads(path.read_text())["task_taxonomy_version"] == 1
     assert replay.sentence_diagnosis_version == 1
     assert replay.task_taxonomy_version == 1
+    assert original["status"] == result["status"] == "completed"
     assert (
         original["report"]["diagnosis"]["problem_sentences"]
         == result["report"]["diagnosis"]["problem_sentences"]
@@ -394,9 +444,7 @@ def test_replay_rejects_mismatched_jev_snapshot_unless_overridden(
         default_engine_factory(path)
     engine = default_engine_factory(path, allow_snapshot_mismatch=True)
     engine.store = RunStore(":memory:")
-    replayed = engine.optimize(
-        "Original request", {"tier": "fast", "clarification_allowed": False}
-    )
+    replayed = engine.optimize("Original request", {"clarification_allowed": False})
     assert replayed["final_prompt"] == original["final_prompt"]
     assert replayed["report"]["jev_snapshot"] == [pin]
 
@@ -725,9 +773,38 @@ def test_failed_cases_are_excluded_from_diagnosis_accuracy() -> None:
 
 
 def _candidate_gateway() -> ScriptedGateway:
+    rewrites = {
+        "add_missing_context": "Context rewrite",
+        "specify_output_format": "Format rewrite",
+        "add_done_criteria": "Done rewrite",
+    }
+
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
-            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Context rewrite","specify_output_format":"Format rewrite","add_done_criteria":"Done rewrite"}'
+            # Echo every routed strategy so the bundle never hits an
+            # omitted-strategy error; unknown names get a benign rewrite.
+            names: list[str] = []
+            try:
+                body = messages[1]["content"] if len(messages) > 1 else ""
+                names = [
+                    str(item.get("name"))
+                    for item in json.loads(body).get("strategies", [])
+                    if isinstance(item, dict) and item.get("name")
+                ]
+            except (ValueError, AttributeError, TypeError):
+                names = []
+            payload: dict[str, object] = {
+                "tests": [
+                    {
+                        "question": "Does the output answer?",
+                        "kind": "noul",
+                        "expected": "yes",
+                    }
+                ]
+            }
+            for name in names or list(rewrites):
+                payload[name] = rewrites.get(name, f"{name} rewrite")
+            return json.dumps(payload)
         return {
             "choices": [
                 {
@@ -745,6 +822,10 @@ def _candidate_gateway() -> ScriptedGateway:
         if request.get("type") == "choice":
             if key == "task_type":
                 choice = "general"
+            elif key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                choice = "same"
             elif key.startswith("pointer:vagueness:"):
                 choice = "s0001"
             elif key.startswith("fidelity:sentence:"):
@@ -794,17 +875,13 @@ def _record_candidate_run(path: Path, version: int, *, pin: str = JEV_MODEL) -> 
         writer_instruction_version=version,
         faithfulness_threshold=gateway.faithfulness_threshold,
     )
-    return optimizer.optimize(
-        "Original request", {"tier": "fast", "clarification_allowed": False}
-    )
+    return optimizer.optimize("Original request", {"clarification_allowed": False})
 
 
 def _replay(path: Path) -> dict:
     engine = default_engine_factory(path)
     engine.store = RunStore(":memory:")
-    return engine.optimize(
-        "Original request", {"tier": "fast", "clarification_allowed": False}
-    )
+    return engine.optimize("Original request", {"clarification_allowed": False})
 
 
 def test_unversioned_historical_recording_replays_with_original_writer_request(

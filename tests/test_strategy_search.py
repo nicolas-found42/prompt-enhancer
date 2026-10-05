@@ -1,12 +1,17 @@
 """Public behavior tests for strategy search, weak-panel evaluation, and ranking."""
 
+import pytest
+
+from prompt_enhancer.config import Settings
+from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.grading import GradeReport
+from prompt_enhancer.runner import run_candidates
 from prompt_enhancer.selector import RankingCandidate, rank_candidates
 from prompt_enhancer.strategies import search_strategies
 from prompt_enhancer.strong_check import StrongCheckOutcome, StrongCheckReport
 
 
-def test_search_strategies_returns_multiple_named_candidates_and_tier_budgets():
+def test_search_strategies_uses_settings_backed_fixed_candidate_workload():
     calls = []
 
     def writer(request):
@@ -16,27 +21,36 @@ def test_search_strategies_returns_multiple_named_candidates_and_tier_budgets():
             for strategy in request.strategies
         }
 
-    fast = search_strategies("Explain the result", tier="fast", writer=writer)
-    deep = search_strategies("Explain the result", tier="deep", writer=writer)
-
-    assert len(fast.candidates) == 3
-    assert len(deep.candidates) == 6
-    assert len(calls) == 2
-    assert len({candidate.strategy_kind for candidate in deep.candidates}) == 2
-    assert any(candidate.is_crutch for candidate in deep.candidates)
-    assert all(
-        candidate.candidate_id.startswith("candidate-") for candidate in deep.candidates
+    default = search_strategies("Explain the result", writer=writer)
+    smaller = search_strategies(
+        "Explain the result", settings=Settings(candidate_count=3), writer=writer
     )
-    assert deep.budget.models == 5
-    assert deep.budget.samples == 3
-    assert deep.budget.max_rounds == 3
+    oversized = search_strategies(
+        "Explain the result", settings=Settings(candidate_count=20), writer=writer
+    )
+
+    assert len(default.candidates) == 6
+    assert len(smaller.candidates) == 3
+    assert len(oversized.candidates) == 6
+    assert len(calls) == 3
+    assert len(Settings().weak_models) == 5
+    assert len(set(Settings().weak_models)) == 5
+    assert "muse-spark-1.3-contributor" not in Settings().weak_models
+    assert len({candidate.strategy_kind for candidate in default.candidates}) == 2
+    assert any(candidate.is_crutch for candidate in default.candidates)
+    assert all(
+        candidate.candidate_id.startswith("candidate-")
+        for candidate in default.candidates
+    )
+    assert default.budget.candidates == 6
+    assert default.budget.models == 5
+    assert default.budget.samples == 3
 
 
 def test_search_strategies_uses_previous_failures_to_target_a_strategy():
     result = search_strategies(
         "Make a plan",
         diagnosis={"gaps": ["planning"]},
-        tier="deep",
         previous_round_failures=["split_into_steps did not help"],
     )
 
@@ -57,9 +71,56 @@ def test_candidate_writer_receives_confirmed_diagnosis():
         captured.append(request.to_dict())
         return {strategy.name: request.prompt for strategy in request.strategies}
 
-    search_strategies("Plan the trip", diagnosis=diagnosis, tier="fast", writer=writer)
+    search_strategies("Plan the trip", diagnosis=diagnosis, writer=writer)
 
     assert captured[0]["diagnosis"] == diagnosis
+
+
+def test_run_candidates_uses_five_settings_models_and_three_samples_by_default():
+    calls = []
+    gateway = ScriptedGateway(
+        chat=lambda _model, messages, *, role, **_kwargs: (
+            calls.append((role, messages[0]["content"])) or "answer"
+        )
+    )
+    search = search_strategies("Explain the result")
+
+    result = run_candidates(
+        search.candidates[:1], Settings().weak_models, gateway, original="original"
+    )
+
+    assert result.models == Settings().weak_models[:5]
+    assert len(result.models) == 5
+    assert result.samples == 3
+    assert len(result.results) == 30  # Original plus one candidate, 5 × 3 each.
+    assert len(calls) == 30
+
+    overridden = run_candidates(
+        search.candidates[:1],
+        Settings().weak_models,
+        gateway,
+        original="original",
+        samples=2,
+    )
+    assert overridden.samples == 2
+    assert len(overridden.results) == 20
+
+
+def test_run_candidates_rejects_short_or_duplicate_panels_before_gateway_calls():
+    calls = []
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: calls.append("called") or "answer"
+    )
+    candidates = search_strategies("Explain the result").candidates[:1]
+
+    for models in (
+        ("one", "two", "three", "four"),
+        ("one", "two", "two", "four", "five"),
+    ):
+        with pytest.raises(ValueError):
+            run_candidates(candidates, models, gateway)
+
+    assert calls == []
 
 
 def _grade(worst: float, mean: float = 0.0, spread: float = 0.0) -> GradeReport:
@@ -155,10 +216,34 @@ def test_selector_does_not_claim_an_unrun_strong_check_failed():
     assert result.ranked[0].to_dict()["metadata"]["fidelity"] == {"passed": False}
 
 
-def test_selector_keeps_original_when_no_candidate_beats_it():
+def test_selector_selects_an_equally_good_changed_candidate():
     result = rank_candidates(
         _original("original", _grade(0.8, 0.8)),
         [_candidate("candidate", "a longer candidate", _grade(0.8, 0.8))],
+    )
+
+    assert not result.original_kept
+    assert result.selected_candidate_id == "candidate"
+    assert result.final_prompt == "a longer candidate"
+    assert result.rejection_reasons == {}
+
+
+def test_selector_rejects_a_candidate_that_never_changed_the_prompt():
+    result = rank_candidates(
+        _original("same", _grade(0.8, 0.8)),
+        [_candidate("mirror", "Same.", _grade(1.0, 1.0, 0.0))],
+    )
+
+    assert result.original_kept
+    assert result.selected_candidate_id is None
+    assert result.final_prompt == "same"
+    assert "always-improve policy" in result.rejection_reasons["mirror"][0]
+
+
+def test_selector_keeps_original_when_every_candidate_is_strictly_worse():
+    result = rank_candidates(
+        _original("original", _grade(0.9, 0.9)),
+        [_candidate("candidate", "a candidate", _grade(0.5, 0.5))],
     )
 
     assert result.original_kept
@@ -174,3 +259,59 @@ def test_selector_prefers_shorter_prompt_when_grades_are_equal():
     )
 
     assert result.selected_candidate_id == "candidate"
+
+
+def test_semantic_order_applies_only_after_binding_eligibility_gates():
+    baseline = _original("original prompt", _grade(0.0, 0.0))
+    zero_pass = _candidate("zero", "rewrite with zero passes", _grade(0.0, 0.0))
+    fidelity_rejected = _candidate(
+        "fidelity",
+        "rewrite failing fidelity",
+        _grade(0.9, 0.9),
+        eligible=False,
+        reasons=("candidate failed fidelity checks",),
+    )
+    semantic_winner = _candidate(
+        "semantic", "eligible semantic winner", _grade(0.6, 0.6)
+    )
+    robust_winner = _candidate("robust", "eligible robust winner", _grade(0.8, 0.7))
+
+    result = rank_candidates(
+        baseline,
+        [zero_pass, fidelity_rejected, semantic_winner, robust_winner],
+        candidate_order={
+            "zero": 1.0,
+            "fidelity": 0.99,
+            "semantic": 0.95,
+            "robust": 0.8,
+        },
+    )
+
+    assert result.selected_candidate_id == "semantic"
+    assert [item.candidate.candidate_id for item in result.ranked if item.rank] == [
+        "semantic",
+        "robust",
+    ]
+    assert "zero pass" in result.rejection_reasons["zero"][0]
+    assert result.rejection_reasons["fidelity"] == ("candidate failed fidelity checks",)
+
+
+def test_semantic_order_ties_use_existing_robust_then_stable_id_order():
+    baseline = _original("original prompt", _grade(0.2, 0.2))
+    candidates = [
+        _candidate("z-short", "short rewrite", _grade(0.8, 0.7)),
+        _candidate("a-long", "a much longer rewrite", _grade(0.9, 0.7)),
+        _candidate("m-long", "another longer rewrite", _grade(0.9, 0.7)),
+    ]
+
+    result = rank_candidates(
+        baseline,
+        candidates,
+        candidate_order={candidate.candidate_id: 0.8 for candidate in candidates},
+    )
+
+    assert [item.candidate.candidate_id for item in result.ranked if item.rank] == [
+        "a-long",
+        "m-long",
+        "z-short",
+    ]

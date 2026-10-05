@@ -59,7 +59,6 @@ EngineFactory = Callable[[Path | None], Engine]
 class HarnessOptions:
     """Configuration sent to the engine and included in the run identity."""
 
-    tier: str = "standard"
     seed: int = 0
     clarification_allowed: bool = False
     model_overrides: Mapping[str, Any] = field(default_factory=dict)
@@ -68,9 +67,6 @@ class HarnessOptions:
     fail_fast: bool = False
 
     def __post_init__(self) -> None:
-        tier = self.tier.strip().lower()
-        if tier not in {"fast", "standard", "deep"}:
-            raise EvaluationError("tier must be fast, standard, or deep")
         if not isinstance(self.seed, int):
             raise EvaluationError("seed must be an integer")
         for name in ("model_overrides", "settings", "extra"):
@@ -81,17 +77,15 @@ class HarnessOptions:
 
     def optimize_options(self) -> dict[str, Any]:
         return {
-            "tier": self.tier,
             "seed": self.seed,
             "clarification_allowed": self.clarification_allowed,
             "model_overrides": dict(self.model_overrides),
-            "settings": dict(self.settings),
+            **({"settings": dict(self.settings)} if self.settings else {}),
             **dict(self.extra),
         }
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "tier": self.tier,
             "seed": self.seed,
             "clarification_allowed": self.clarification_allowed,
             "model_overrides": dict(self.model_overrides),
@@ -610,7 +604,7 @@ class EvaluationHarness:
             restructuring = report.get("lossless_restructuring")
             if isinstance(restructuring, Mapping):
                 observation.lossless_restructuring = dict(restructuring)
-            strong = _as_mapping(report.get("strong_check", {}))
+            strong = _as_mapping(report.get("strong_check") or {})
             strong_candidates = strong.get("candidates")
             if isinstance(strong_candidates, list):
                 for candidate in strong_candidates:
@@ -679,9 +673,18 @@ class EvaluationHarness:
                     observation.latency_ms = (perf_counter() - started) * 1000
             observation.status = _status(result)
             if observation.status == "failed":
-                observation.error = (
-                    _optional_string(report.get("error")) or "engine returned failed"
+                failure = result.get("failure") or report.get("failure")
+                failure = failure if isinstance(failure, Mapping) else {}
+                improvement_unverified = (
+                    failure.get("kind") == "improvement_not_verified"
                 )
+                observation.error = (
+                    _optional_string(report.get("error"))
+                    or _optional_string(failure.get("message"))
+                    or "engine returned failed"
+                )
+                if improvement_unverified:
+                    observation.error = f"improvement_not_verified: {observation.error}"
         except Exception as exc:
             if options.fail_fast:
                 raise
@@ -1255,7 +1258,15 @@ def _attribution_harness_summary(cases: Sequence[CaseEvaluation]) -> dict[str, A
 
 
 def _restructuring_summary(cases: Sequence[CaseEvaluation]) -> RestructuringSummary:
-    usable = [case for case in cases if case.status not in {"failed", "error"}]
+    # An improvement_not_verified failure still carries complete restructuring
+    # and strong-check evidence, so it remains a usable observation here; only
+    # crashes and provider errors drop out.
+    usable = [
+        case
+        for case in cases
+        if case.status not in {"failed", "error"}
+        or "improvement_not_verified" in str(case.error or "")
+    ]
     selected = sum(bool(case.lossless_restructuring) for case in usable)
     built = sum(
         case.lossless_restructuring.get("outcome") == "candidate_built"

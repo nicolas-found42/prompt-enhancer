@@ -6,11 +6,10 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getActiveJobs,
   getCatalog,
-  getEstimates,
   getJob,
   getProviders,
   getSettings,
@@ -29,7 +28,6 @@ vi.mock("./api", async (importOriginal) => {
     ...actual,
     getActiveJobs: vi.fn(),
     getCatalog: vi.fn(),
-    getEstimates: vi.fn(),
     getJob: vi.fn(),
     getProviders: vi.fn(),
     getSettings: vi.fn(),
@@ -91,7 +89,6 @@ beforeEach(() => {
   window.localStorage.clear();
   vi.mocked(getActiveJobs).mockResolvedValue([]);
   vi.mocked(getCatalog).mockResolvedValue(catalog);
-  vi.mocked(getEstimates).mockResolvedValue({});
   vi.mocked(getProviders).mockResolvedValue(providers);
   vi.mocked(getSettings).mockResolvedValue(settings);
 });
@@ -416,4 +413,135 @@ it("cues and describes the disabled Optimize prompt button until a prompt is ent
   await waitFor(() => expect(optimize).toBeEnabled());
   expect(optimize).not.toHaveAttribute("aria-describedby");
   expect(document.getElementById("optimize-hint")).toBeNull();
+});
+
+describe("improvement style selector", () => {
+  const commonLabels = [
+    "Auto",
+    "Clearer",
+    "Shorter",
+    "More specific",
+    "Add useful detail",
+    "Structured/actionable",
+    "Creative",
+  ];
+  const moreLabels = [
+    "Decision-ready",
+    "Research-ready",
+    "Code-ready",
+    "Teach me",
+    "Audience-fit",
+    "Tone/voice",
+    "Persuasive",
+    "Faithful transform",
+    "Exact format",
+    "Proofread only",
+    "Ask-me-first",
+    "Safety-aware",
+    "Challenge it",
+    "Red-team",
+    "Surprise me",
+  ];
+
+  it("replaces the Effort control with a single-select style control defaulting to Auto", async () => {
+    render(<App />);
+
+    expect(
+      await screen.findByLabelText("Improvement style")
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Effort")).not.toBeInTheDocument();
+    expect(screen.queryByText("Fast")).not.toBeInTheDocument();
+    expect(screen.queryByText("Standard")).not.toBeInTheDocument();
+
+    const select = screen.getByLabelText(
+      "Improvement style"
+    ) as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect(select).toHaveValue("auto");
+    const options = within(select).getAllByRole("option");
+    const values = options.map((option) => (option as HTMLOptionElement).value);
+    // Exactly one control, one option per style, no duplicates.
+    expect(values).toHaveLength(commonLabels.length + moreLabels.length);
+    expect(new Set(values).size).toBe(values.length);
+    for (const label of [...commonLabels, ...moreLabels]) {
+      expect(
+        within(select).getByRole("option", { name: label })
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("groups the remaining lenses under a More styles group", async () => {
+    render(<App />);
+    const select = await screen.findByLabelText("Improvement style");
+    const group = within(select as HTMLElement).getByRole("group", {
+      name: "More styles",
+    });
+    const grouped = within(group)
+      .getAllByRole("option")
+      .map((option) => option.textContent);
+    expect(grouped).toHaveLength(moreLabels.length);
+    for (const label of moreLabels) {
+      expect(grouped).toContain(label);
+    }
+  });
+
+  it("submits the selected style and restores it on retry", async () => {
+    trackScrolling();
+    const user = userEvent.setup();
+    vi.mocked(startOptimize).mockResolvedValue(runningJob);
+    vi.mocked(getJob).mockResolvedValue(
+      finishedJob({
+        status: "failed",
+        run_id: "run-1",
+        original_prompt: "Write a note to my neighbour.",
+        report: {
+          failure: {
+            kind: "internal",
+            headline: "The run stopped before finishing",
+            hint: "Try again.",
+            message: "",
+          },
+        },
+        cost: { total: 0 },
+        timing: { total_ms: 1 },
+      })
+    );
+    render(<App />);
+    await user.type(
+      await screen.findByLabelText("Your prompt"),
+      "Write a note to my neighbour."
+    );
+    await user.selectOptions(
+      await screen.findByLabelText("Improvement style"),
+      "shorter"
+    );
+    await user.click(screen.getByRole("button", { name: "Optimize prompt" }));
+
+    await waitFor(() =>
+      expect(startOptimize).toHaveBeenCalledWith(
+        "Write a note to my neighbour.",
+        "shorter",
+        expect.anything(),
+        undefined
+      )
+    );
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    await user.selectOptions(
+      screen.getByLabelText("Improvement style"),
+      "creative"
+    );
+    expect(screen.getByLabelText("Improvement style")).toHaveValue("creative");
+
+    await user.click(retry);
+
+    await waitFor(() => expect(startOptimize).toHaveBeenCalledTimes(2));
+    expect(startOptimize).toHaveBeenNthCalledWith(
+      2,
+      "Write a note to my neighbour.",
+      "shorter",
+      expect.anything(),
+      undefined
+    );
+    expect(screen.getByLabelText("Improvement style")).toHaveValue("shorter");
+  });
 });

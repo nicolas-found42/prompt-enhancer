@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from . import jev_questions
+from .config import Settings
 from .diagnosis import split_sentences
 from .evaluation.calibration import DecisionPolicy, runtime_question_identity
 from .gateway import Gateway, ProviderError
@@ -21,7 +22,6 @@ from .jev import (
     batch_decision_payload,
     parse_decision,
 )
-from .models import Tier
 from .runner import PanelResult
 
 ATTRIBUTION_KIND_OPTIONS = jev_questions.FAILURE_ATTRIBUTION_KINDS
@@ -34,17 +34,30 @@ class AttributionBudget:
     dollar_cap: float
 
     @classmethod
-    def for_tier(
+    def for_settings(
         cls,
-        tier: Tier,
+        settings: Settings,
         *,
         pair_cap: int | None = None,
         dollar_cap: float | None = None,
     ) -> AttributionBudget:
-        defaults = tier.budget
+        configured_pair_cap = settings.attribution_pair_cap
+        configured_dollar_cap = settings.attribution_dollar_cap
         budget = cls(
-            defaults.attribution_pairs if pair_cap is None else pair_cap,
-            defaults.attribution_dollars if dollar_cap is None else dollar_cap,
+            (
+                pair_cap
+                if pair_cap is not None
+                else configured_pair_cap
+                if configured_pair_cap is not None
+                else 30
+            ),
+            (
+                dollar_cap
+                if dollar_cap is not None
+                else configured_dollar_cap
+                if configured_dollar_cap is not None
+                else 0.03
+            ),
         )
         if (
             budget.pair_cap < 0

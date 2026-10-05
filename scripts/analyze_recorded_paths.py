@@ -85,7 +85,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dataset", type=Path)
     parser.add_argument("--replay", type=Path, required=True)
-    parser.add_argument("--tier", choices=("fast", "standard", "deep"), default="fast")
     parser.add_argument("--writer-model")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -93,7 +92,7 @@ def main() -> None:
     report = analyze(
         args.dataset,
         args.replay,
-        HarnessOptions(tier=args.tier, model_overrides=overrides),
+        HarnessOptions(model_overrides=overrides),
     )
     rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
     if args.output:

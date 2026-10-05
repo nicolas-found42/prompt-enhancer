@@ -1,4 +1,5 @@
-import type { Failure, OptimizeResult, Tier, TierEstimate } from "./api";
+import type { Failure, OptimizeResult } from "./api";
+import { STYLE_LABELS, type ImprovementStyle } from "./styles";
 
 export function record(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -48,14 +49,6 @@ export function confirmedGaps(result: OptimizeResult): Gap[] {
   }));
 }
 
-function originalPassRates(result: OptimizeResult): number[] {
-  const selection = record(result.report.selection_evidence);
-  const perModel = record(record(selection.original_score).per_model);
-  return Object.values(perModel).filter(
-    (value): value is number => typeof value === "number"
-  );
-}
-
 const possibleGapText: Record<string, string> = {
   outside_reference: "It may depend on details only you know",
 };
@@ -91,116 +84,119 @@ export function failureOf(result: OptimizeResult): Failure {
   };
 }
 
-export type Outcome = { headline: string; reason: string | null };
+export type Pause = {
+  reason: string;
+  limit: number | null;
+  spent_usd: number;
+  elapsed_ms: number;
+  completed_rounds: number;
+};
 
-/** Choose the result headline from the evidence rather than from `original_kept` alone. */
-export function outcomeOf(result: OptimizeResult): Outcome {
-  const status = String(result.report.status ?? "");
-  if (status === "edited") return { headline: "Updated prompt", reason: null };
-  // Without a verified test the run cannot claim an improvement, even when
-  // the user's confirmed clarification answers were appended to the prompt.
-  if (status === "unverified") {
-    return {
-      headline: "We couldn't test this prompt",
-      reason: result.original_kept
-        ? "No reliable way to check the answers was found, so your prompt is returned as it was."
-        : "No reliable way to check the answers was found, so nothing was tested. The only change is the details you confirmed.",
-    };
-  }
-  if (!result.original_kept)
-    return { headline: "Optimized prompt", reason: null };
-  const gaps = confirmedGaps(result);
-  const rates = originalPassRates(result);
-  const weakest = rates.length > 0 ? Math.min(...rates) : null;
-  // No pass rates means the prompt was never run on a test model, so there is
-  // no evidence that it works, only that nothing was clearly missing.
-  if (gaps.length === 0 && weakest === null) {
-    return {
-      headline: "We didn't find anything to fix",
-      reason:
-        "Nothing was clearly missing, so no rewrite was tried. Your prompt wasn't tested on other models.",
-    };
-  }
-  if (gaps.length === 0 && weakest !== null && weakest >= 0.8) {
-    return {
-      headline: "Your prompt already works well",
-      reason: `It passed at least ${Math.round(weakest * 100)}% of checks on every test model, so it is returned unchanged.`,
-    };
-  }
-  const reasons: string[] = [];
-  if (gaps.length > 0) {
-    reasons.push(
-      `It is missing ${gaps.map((gap) => gap.label).join(", ")}. Adding that yourself will likely help more than any rewrite.`
-    );
-  }
-  if (weakest !== null && weakest < 0.8) {
-    reasons.push(
-      `Your prompt passed only ${Math.round(weakest * 100)}% of checks on the weakest test model, but no rewrite did better without changing your meaning.`
-    );
-  }
+/** A budget pause awaiting approval, or null when the run is not paused. */
+export function pauseOf(result: OptimizeResult): Pause | null {
+  if (result.status !== "needs_input") return null;
+  if (String(result.report.status ?? "") !== "awaiting_approval") return null;
+  const pause = record(result.report.pause);
+  const spent = typeof pause.spent_usd === "number" ? pause.spent_usd : NaN;
+  if (!Number.isFinite(spent)) return null;
+  const limit = typeof pause.limit === "number" ? pause.limit : null;
+  const elapsed =
+    typeof pause.elapsed_ms === "number" ? Math.max(0, pause.elapsed_ms) : 0;
+  const rounds =
+    typeof pause.completed_rounds === "number"
+      ? Math.max(0, Math.floor(pause.completed_rounds))
+      : 0;
   return {
-    headline: "We couldn't safely improve this",
-    reason: reasons.join(" "),
+    reason: typeof pause.reason === "string" ? pause.reason : "limit",
+    limit,
+    spent_usd: spent,
+    elapsed_ms: elapsed,
+    completed_rounds: rounds,
   };
 }
 
-// Runs are bimodal: under a minute when nothing needs fixing, several minutes
-// when rewrites are written and tested.
-export const fallbackEstimates: Record<Tier, string> = {
-  fast: "Under a minute if nothing needs fixing, up to 4 min with rewrites.",
-  standard:
-    "Under a minute if nothing needs fixing, up to 10 min with rewrites.",
-  deep: "Under a minute if nothing needs fixing, up to 30 min with rewrites.",
-};
-
-// Every run is billed to the user's own provider keys (README: the private
-// .env holds OPENCODE_GO_KEY and OPENROUTER_API_KEY), so the cost line names
-// that account rather than leaving the dollars unattributed.
-const fallbackCosts: Record<Tier, string> = {
-  fast: "About $0.001–$0.01, billed to your own OpenCode Go and OpenRouter accounts.",
-  standard:
-    "About $0.005–$0.03, billed to your own OpenCode Go and OpenRouter accounts.",
-  deep: "About $0.03–$0.15, billed to your own OpenCode Go and OpenRouter accounts.",
-};
-
-export const tierDescriptions: Record<Tier, string> = {
-  fast: "Fast: one round of rewrites, tried on 2 test models.",
-  standard: "Standard: up to 2 rounds of rewrites, tried on 3 test models.",
-  deep: "Deep: up to 3 rounds with more rewrites, tried on 5 test models.",
-};
-
-function durationRange(low: number, high: number): string {
-  const top = Math.max(high, low);
-  if (top < 1) return "Usually under a minute.";
-  if (low < 1) return `Usually under a minute, up to ${Math.round(top)} min.`;
-  const [lowText, highText] = [Math.round(low), Math.round(top)];
-  return lowText === highText
-    ? `About ${lowText} min.`
-    : `Usually ${lowText}–${highText} min.`;
+export function pauseText(pause: Pause): string {
+  const limit =
+    pause.reason === "spend_limit" && pause.limit !== null
+      ? `spend limit of $${pause.limit.toFixed(2)}`
+      : pause.reason === "time_limit" && pause.limit !== null
+        ? `time limit of ${pause.limit}s`
+        : "limit";
+  const rounds = `${pause.completed_rounds} completed round${pause.completed_rounds === 1 ? "" : "s"}`;
+  return `Paused after ${rounds} at your ${limit} ($${pause.spent_usd.toFixed(4)} spent).`;
 }
 
-/**
- * The two cost/time statements under the Effort control. Time and cost are
- * always separate sentences, and `cost` always names whose account is billed.
- */
-export type EffortEstimate = { time: string; cost: string };
+export type CanonicalOutcome =
+  | "converged"
+  | "improved_tested"
+  | "improved_unverified"
+  | "impossible"
+  | "failed_operational";
 
-const BILLED_ACCOUNT = "billed to your own OpenCode Go and OpenRouter accounts";
+export type ControlState = "awaiting_approval" | "stopped" | "cancelled";
 
-export function estimateText(
-  tier: Tier,
-  estimate?: TierEstimate
-): EffortEstimate {
-  if (!estimate || estimate.runs < 3)
+export const OUTCOME_LABELS: Record<CanonicalOutcome, string> = {
+  converged: "Converged",
+  improved_tested: "Improved (tested)",
+  improved_unverified: "Improved (unverified)",
+  impossible: "Impossible",
+  failed_operational: "Failed (operational)",
+};
+
+const CONTROL_LABELS: Record<ControlState, string> = {
+  awaiting_approval: "Paused for approval",
+  stopped: "Stopped",
+  cancelled: "Cancelled",
+};
+
+export function isCanonicalOutcome(value: unknown): value is CanonicalOutcome {
+  return typeof value === "string" && Object.hasOwn(OUTCOME_LABELS, value);
+}
+
+export function controlLabel(value: unknown): string | null {
+  return typeof value === "string" && Object.hasOwn(CONTROL_LABELS, value)
+    ? CONTROL_LABELS[value as ControlState]
+    : null;
+}
+
+export type Outcome = {
+  headline: string;
+  reason: string | null;
+  appliedStyle: string | null;
+  controlState: string | null;
+};
+
+/** Render only the outcome and style recorded by the engine. */
+export function outcomeOf(result: OptimizeResult): Outcome {
+  const value = result.report.outcome;
+  if (!isCanonicalOutcome(value)) {
+    const editedEvidenceSummary =
+      result.report.status === "edited" &&
+      !result.report.legacy_metadata &&
+      typeof result.report.summary === "string" &&
+      result.report.summary.trim()
+        ? result.report.summary
+        : null;
     return {
-      time: fallbackEstimates[tier],
-      cost: `${fallbackCosts[tier]} (Rough estimate.)`,
+      headline: result.report.legacy_metadata
+        ? "Legacy run"
+        : "Outcome not established",
+      reason: editedEvidenceSummary,
+      appliedStyle: null,
+      controlState: controlLabel(result.report.control_state),
     };
-  const [low, high] = estimate.minutes;
-  const [lowCost, highCost] = estimate.cost;
+  }
+  const style = result.report.applied_style;
+  const appliedStyle =
+    typeof style === "string" && Object.hasOwn(STYLE_LABELS, style)
+      ? STYLE_LABELS[style as ImprovementStyle]
+      : null;
+  const reason = result.report.outcome_reason;
   return {
-    time: durationRange(low, high),
-    cost: `About $${lowCost.toFixed(3)}–$${Math.max(highCost, lowCost).toFixed(3)}, ${BILLED_ACCOUNT} — from your last ${estimate.runs} ${tier} runs.`,
+    headline: OUTCOME_LABELS[value],
+    reason: typeof reason === "string" && reason.trim() ? reason : null,
+    appliedStyle,
+    controlState: controlLabel(result.report.control_state),
   };
 }
 

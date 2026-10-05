@@ -33,14 +33,14 @@ def test_optimize_endpoint_returns_result_and_lists_local_run() -> None:
         "/api/optimize",
         json={
             "prompt": "Explain recursion to a beginner in one paragraph.",
-            "tier": "standard",
+            "time_limit_s": 0,
         },
     )
 
     assert response.status_code == 200
     result = response.json()
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "unverified"
+    assert result["report"]["control_state"] == "awaiting_approval"
     assert result["cost"]["total"] == 0.0
 
     runs = client.get("/api/runs")
@@ -120,13 +120,11 @@ def test_catalog_exposes_gateway_models_without_credentials() -> None:
     assert catalog.json()["judge"]["id"] == "typesafe/jev-1.13-20260917"
 
 
-def test_resume_and_deep_return_client_errors_for_invalid_run_state() -> None:
+def test_resume_returns_client_errors_for_invalid_run_state() -> None:
     client = TestClient(create_app(store=RunStore(":memory:"), settings=Settings()))
 
     missing = client.post("/api/runs/missing/resume", json={"answers": {}})
     assert missing.status_code == 404
-    missing_deep = client.post("/api/runs/missing/deep")
-    assert missing_deep.status_code == 404
 
     completed = client.post(
         "/api/optimize", json={"prompt": "Explain recursion."}
@@ -135,3 +133,39 @@ def test_resume_and_deep_return_client_errors_for_invalid_run_state() -> None:
         f"/api/runs/{completed['run_id']}/resume", json={"answers": {}}
     )
     assert repeated.status_code == 409
+
+
+def test_public_optimize_contract_exposes_style_without_tier_or_deep_estimates() -> (
+    None
+):
+    client = TestClient(create_app(store=RunStore(":memory:"), settings=Settings()))
+    schema = client.get("/openapi.json").json()
+    properties = schema["components"]["schemas"]["OptimizeRequest"]["properties"]
+
+    assert "improvement_style" in properties
+    assert "tier" not in properties
+
+
+def test_retired_run_option_is_rejected_before_calls_or_persistence() -> None:
+    calls: list[str] = []
+    store = RunStore(":memory:")
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: calls.append("chat") or "{}",
+        decision=lambda *_args, **_kwargs: calls.append("decision") or {},
+    )
+    client = TestClient(
+        create_app(optimizer=PromptOptimizer(store=store, gateway=gateway))
+    )
+
+    response = client.post(
+        "/api/optimize",
+        json={"prompt": "Explain recursion.", "options": {"tier": "fast"}},
+    )
+
+    assert response.status_code == 422
+    assert "unknown run option(s): tier" in response.json()["detail"]
+    assert calls == []
+    assert store.list_runs() == []
+    assert client.post("/api/runs/missing/deep").status_code == 404
+    assert client.post("/api/jobs/missing/deep").status_code == 404
+    assert client.get("/api/estimates").status_code == 404

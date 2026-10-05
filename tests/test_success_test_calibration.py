@@ -106,7 +106,11 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
     )
 
     def chat(*_args, **_kwargs):
-        return {"choices": [{"message": {"content": json.dumps(next(writer_replies))}}]}
+        # Compilation and description repair consume the two scripted replies;
+        # the required candidate-writing attempt then returns no candidates.
+        return {
+            "choices": [{"message": {"content": json.dumps(next(writer_replies, {}))}}]
+        }
 
     def decide(request, **_kwargs):
         if request["key"] == "task_type":
@@ -141,12 +145,18 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
 
     gateway = ScriptedGateway(chat=chat, decision=decide)
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        "Ask for context before answering."
+        "Ask for context before answering.",
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
 
-    assert result["report"]["status"] == "no_change"
-    assert len(result["report"]["tests"]) == 1
-    assert result["report"]["tests"][0]["option_descriptions"] == {
+    # Deficient evidence cannot terminate the healthy loop automatically. The
+    # explicit user budget pauses after the first recorded round.
+    assert result["status"] == "needs_input"
+    assert result["report"]["control_state"] == "awaiting_approval"
+    assert len(result["report"]["history"]) == 1
+    evidence = result["report"]["history"][0]["evidence"]
+    assert len(evidence["tests"]) == 1
+    assert evidence["tests"][0]["option_descriptions"] == {
         "asks": "Requests missing context before answering.",
         "guesses": "Invents the missing context.",
         "unknown": "The output does not give enough evidence to choose another option.",
@@ -295,7 +305,7 @@ def test_noul_expected_requires_explicit_yes_or_no_polarity() -> None:
     assert yes[0].expected == "yes"
 
 
-def test_choice_with_missing_description_after_repair_is_unverified() -> None:
+def test_choice_with_missing_description_after_repair_has_no_tests() -> None:
     writer_replies = iter(
         [
             '{"tests":[{"id":"helpful","question":"Which helps?","kind":"choice",'
@@ -317,17 +327,21 @@ def test_choice_with_missing_description_after_repair_is_unverified() -> None:
         return {"type": "noul", "noul": 0.01, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: next(writer_replies),
+        chat=lambda *_args, **_kwargs: next(writer_replies, "{}"),
         decision=decide,
     )
 
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
-        "Ask for context first."
+        "Ask for context first.",
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
 
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "unverified"
-    assert len(result["report"]["tests"]) == 0
+    assert result["status"] == "needs_input"
+    assert result["report"]["control_state"] == "awaiting_approval"
+    assert len(result["report"]["history"]) == 1
+    assert result["report"]["history"][0]["status"] == "no_qualified_candidate"
+    assert result["report"]["history"][0]["evidence"]["tests"] == []
 
 
 def test_historical_writer_versions_keep_the_original_instruction_and_parsing() -> None:

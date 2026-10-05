@@ -1,11 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OptimizeResult } from "./api";
-import {
-  estimateText,
-  outcomeOf,
-  roughCost,
-  tierDescriptions,
-} from "./outcome";
+import { outcomeOf, roughCost } from "./outcome";
 
 function result(report: Record<string, unknown>): OptimizeResult {
   return {
@@ -19,107 +14,84 @@ function result(report: Record<string, unknown>): OptimizeResult {
 }
 
 describe("outcomeOf", () => {
-  it("does not call an untested prompt good", () => {
-    const outcome = outcomeOf(result({ diagnosis: { confirmed_gaps: [] } }));
-    expect(outcome.headline).toBe("We didn't find anything to fix");
-    expect(outcome.reason).toContain("wasn't tested");
-  });
+  it.each([
+    ["converged", "Converged"],
+    ["improved_tested", "Improved (tested)"],
+    ["improved_unverified", "Improved (unverified)"],
+    ["impossible", "Impossible"],
+    ["failed_operational", "Failed (operational)"],
+  ])(
+    "renders the canonical %s outcome and evidence reason",
+    (status, label) => {
+      const outcome = outcomeOf(
+        result({
+          outcome: status,
+          outcome_reason:
+            "The accepted prompt met the recorded evidence checks.",
+          applied_style: "clearer",
+        })
+      );
+      expect(outcome.headline).toBe(label);
+      expect(outcome.reason).toBe(
+        "The accepted prompt met the recorded evidence checks."
+      );
+      expect(outcome.appliedStyle).toBe("Clearer");
+    }
+  );
 
-  it("does not call an untested prompt with confirmed details optimized", () => {
-    const outcome = outcomeOf({
-      ...result({ status: "unverified" }),
-      original_kept: false,
-    });
-    expect(outcome.headline).toBe("We couldn't test this prompt");
-    expect(outcome.reason).toContain("details you confirmed");
-  });
-
-  it("still calls a verified rewrite optimized", () => {
-    expect(
-      outcomeOf({ ...result({ status: "selected" }), original_kept: false })
-        .headline
-    ).toBe("Optimized prompt");
-    expect(
-      outcomeOf({ ...result({ status: "edited" }), original_kept: false })
-        .headline
-    ).toBe("Updated prompt");
-  });
-
-  it("uses the weakest model when describing evidence", () => {
+  it("keeps a run-control state separate from its canonical outcome", () => {
     const outcome = outcomeOf(
       result({
-        diagnosis: { confirmed_gaps: [] },
-        selection_evidence: {
-          original_score: { per_model: { first: 0.95, second: 0.82 } },
-        },
+        outcome: "improved_tested",
+        outcome_reason: "Accepted prompt passed the tests.",
+        applied_style: "shorter",
+        control_state: "stopped",
       })
     );
-    expect(outcome.headline).toBe("Your prompt already works well");
-    expect(outcome.reason).toContain("82% of checks on every test model");
+    expect(outcome.headline).toBe("Improved (tested)");
+    expect(outcome.controlState).toBe("Stopped");
+  });
+
+  it("does not infer a canonical outcome or style for a legacy row", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "legacy_status",
+        legacy_metadata: { source: "old_schema" },
+      })
+    );
+    expect(outcome.headline).toBe("Legacy run");
+    expect(outcome.appliedStyle).toBeNull();
+  });
+
+  it("shows when an assumption edit invalidates the prior quality outcome", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "edited",
+        summary:
+          "Assumption corrected; performance evidence is from the original optimization.",
+      })
+    );
+    expect(outcome.headline).toBe("Outcome not established");
+    expect(outcome.reason).toBe(
+      "Assumption corrected; performance evidence is from the original optimization."
+    );
+  });
+
+  it("does not treat inherited object keys as outcomes, controls, or styles", () => {
+    const outcome = outcomeOf(
+      result({
+        outcome: "constructor",
+        control_state: "toString",
+        applied_style: "__proto__",
+      })
+    );
+    expect(outcome.headline).toBe("Outcome not established");
+    expect(outcome.controlState).toBeNull();
+    expect(outcome.appliedStyle).toBeNull();
   });
 });
 
 it("keeps sub-cent costs legible", () => {
   expect(roughCost(0.005)).toBe("under $0.01");
   expect(roughCost(0.026)).toBe("roughly $0.03");
-});
-
-describe("estimateText", () => {
-  const billedAccount =
-    "billed to your own OpenCode Go and OpenRouter accounts";
-
-  it("splits the fallback estimate into a time statement and a billed cost statement", () => {
-    const { time, cost } = estimateText("standard");
-    expect(time).toBe(
-      "Under a minute if nothing needs fixing, up to 10 min with rewrites."
-    );
-    // Time and cost are separate strings: neither contains a dollar amount.
-    expect(time).not.toMatch(/\$/);
-    expect(cost).toContain("$0.005–$0.03");
-    expect(cost).toContain(billedAccount);
-    expect(cost).toContain("Rough estimate.");
-  });
-
-  it("keeps every fallback figure and the rounds/test-model description", () => {
-    const { time, cost } = estimateText("deep");
-    expect(time).toContain("Under a minute");
-    expect(time).toContain("30 min");
-    expect(cost).toContain("$0.03");
-    expect(cost).toContain("$0.15");
-    expect(tierDescriptions.deep).toContain("3 rounds");
-    expect(tierDescriptions.deep).toContain("5 test models");
-  });
-
-  it("uses the fallback when fewer than 3 runs are recorded", () => {
-    const { cost } = estimateText("fast", {
-      runs: 2,
-      minutes: [0.5, 8],
-      cost: [0.001, 0.02],
-    });
-    expect(cost).toContain("Rough estimate");
-  });
-
-  it("splits the recorded-range estimate and names the billed account", () => {
-    const { time, cost } = estimateText("standard", {
-      runs: 4,
-      minutes: [0.3, 6.6],
-      cost: [0.001, 0.012],
-    });
-    expect(time).toBe("Usually under a minute, up to 7 min.");
-    expect(time).not.toMatch(/\$/);
-    expect(cost).toBe(
-      `About $0.001–$0.012, ${billedAccount} — from your last 4 standard runs.`
-    );
-  });
-
-  it("keeps the recorded-range provenance and both bounds", () => {
-    const { cost } = estimateText("deep", {
-      runs: 12,
-      minutes: [4, 12],
-      cost: [0.002, 0.05],
-    });
-    expect(cost).toContain("from your last 12 deep runs.");
-    expect(cost).toContain("$0.002");
-    expect(cost).toContain("$0.050");
-  });
 });

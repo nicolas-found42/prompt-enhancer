@@ -1,7 +1,7 @@
 """Local prompt optimizer package."""
 
 from .config import Settings
-from .models import CostBreakdown, OptimizeResult, RunStatus, Tier, Timing
+from .models import CostBreakdown, OptimizeResult, RunStatus, Timing
 from .optimizer import PromptOptimizer, RunNotFoundError
 from .store import RunRepository, RunStore
 
@@ -14,6 +14,5 @@ __all__ = [
     "RunStatus",
     "RunStore",
     "Settings",
-    "Tier",
     "Timing",
 ]

@@ -36,9 +36,22 @@ class BatchGateway(ScriptedGateway):
         self.pointer = pointer
         self.root = root
         super().__init__(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}',
+            chat=self._chat,
             decision=self._answer,
         )
+
+    @staticmethod
+    def _chat(_model, messages, *, role, **_kwargs):
+        if role != "writer":
+            return "pass"
+        state = json.loads(messages[1]["content"])
+        strategies = state.get("strategies")
+        if isinstance(strategies, list):
+            prompt = str(state.get("prompt", ""))
+            # Echo each candidate so the run terminates only after the real
+            # baseline vector and Accept judgment establish convergence.
+            return json.dumps({strategy["name"]: prompt for strategy in strategies})
+        return '{"tests":[]}'
 
     def decide_batch(self, requests, *, role="judge", run_id=None):
         self.batches.append([dict(request) for request in requests])
@@ -46,7 +59,19 @@ class BatchGateway(ScriptedGateway):
 
     def _answer(self, request, **_kwargs):
         key = str(request.get("key", ""))
-        if key == "task_type":
+        if key.endswith(":verbosity_direction"):
+            selected = "same"
+            return {
+                "type": "choice",
+                "choice": selected,
+                "probabilities": {selected: 1.0},
+                "confidence": 1.0,
+            }
+        if key == "route:find":
+            selected = "clearer"
+        elif key == "strategy_choice":
+            selected = "add_missing_context"
+        elif key == "task_type":
             selected = self.root
         elif key.startswith("task_type:"):
             selected = "writing" if key.endswith("communication") else "unknown"
@@ -61,11 +86,35 @@ class BatchGateway(ScriptedGateway):
                 "probabilities": {selected: 1.0},
                 "confidence": 1.0,
             }
-        return {
-            "type": "noul",
-            "probability_true": 0.99 if key == "existence:vagueness:0" else 0.01,
-            "confidence": 1.0,
-        }
+        if key.startswith("score:") or key.startswith(
+            ("evaluate:", "fidelity:", "strategy_recheck:")
+        ):
+            probability = 0.99
+        else:
+            probability = 0.99 if key == "existence:vagueness:0" else 0.01
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+
+def _diagnosis_batches(gateway: BatchGateway) -> list[list[dict]]:
+    """Batches carrying diagnosis keys, excluding other pipeline judgments."""
+    return [
+        batch
+        for batch in gateway.batches
+        if batch
+        and all(
+            str(request.get("key", "")).startswith(
+                (
+                    "task_type",
+                    "gap:",
+                    "pointer:",
+                    "existence:",
+                    "problem:",
+                    "rubric:",
+                )
+            )
+            for request in batch
+        )
+    ]
 
 
 def _run(
@@ -83,7 +132,7 @@ def _run(
         observe_sequential_diagnosis=observe_sequential,
     ).optimize(
         "Write a brief note. Keep it clear.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
 
 
@@ -96,7 +145,7 @@ def test_normal_fanout_uses_one_request_without_pointer_and_matches_sequential()
     current = _run(fanout)
     baseline = _run(sequential, speculative=False, observe_sequential=True)
 
-    assert len(fanout.batches) == 1
+    assert len(_diagnosis_batches(fanout)) == 1
     assert current["report"]["diagnosis"]["request_evidence"]["provider_requests"] == 1
     assert baseline["report"]["diagnosis"]["request_evidence"]["provider_requests"] > 1
     assert (
@@ -111,7 +160,7 @@ def test_normal_fanout_uses_one_request_without_pointer_and_matches_sequential()
         current["report"]["diagnosis"]["problem_sentences"]
         == baseline["report"]["diagnosis"]["problem_sentences"]
     )
-    keys = {str(request["key"]) for request in fanout.batches[0]}
+    keys = {str(request["key"]) for request in _diagnosis_batches(fanout)[0]}
     assert {
         "task_type",
         "task_type:communication",
@@ -128,8 +177,8 @@ def test_surviving_pointer_uses_one_confirmation_request() -> None:
     result = _run(gateway)
     baseline = _run(sequential, speculative=False)
 
-    assert len(gateway.batches) == 2
-    assert {str(request["key"]) for request in gateway.batches[1]} == {
+    assert len(_diagnosis_batches(gateway)) == 2
+    assert {str(request["key"]) for request in _diagnosis_batches(gateway)[1]} == {
         "problem:vagueness:s0001"
     }
     evidence = result["report"]["diagnosis"]["request_evidence"]
@@ -225,12 +274,12 @@ def test_active_rubric_question_joins_the_first_provider_request(
         rubric_store=rubric_store,
     ).optimize(
         "Write a brief note.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
 
-    assert len(gateway.batches) == 1
+    assert len(_diagnosis_batches(gateway)) == 1
     assert "rubric:missing-audience" in {
-        str(request["key"]) for request in gateway.batches[0]
+        str(request["key"]) for request in _diagnosis_batches(gateway)[0]
     }
     assert result["report"]["diagnosis"]["request_evidence"]["complete"] is True
 
@@ -277,7 +326,7 @@ def test_fanout_uses_selected_models_current_context_limit() -> None:
         evidence["provider_requests"]
         <= diagnosis_module.MAX_DIAGNOSIS_PROVIDER_REQUESTS
     )
-    for batch in gateway.batches:
+    for batch in _diagnosis_batches(gateway):
         _, envelope = batch_decision_payload(batch, model=JEV_MODEL)
         assert len(json.dumps(envelope, ensure_ascii=False).encode()) <= 7_168
 
@@ -349,7 +398,7 @@ def test_over_character_cap_returns_incomplete_without_inference() -> None:
     prompt = "x" * (diagnosis_module.MAX_DIAGNOSIS_INPUT_CHARACTERS + 1)
 
     result = PromptOptimizer(gateway=gateway, store=RunStore(":memory:")).optimize(
-        prompt, {"tier": "fast"}
+        prompt, {}
     )
 
     assert gateway.batches == []
@@ -443,14 +492,14 @@ def test_fanout_recording_strictly_replays_and_old_sequential_bundle_still_loads
             observe_sequential_diagnosis=observe_sequential,
         ).optimize(
             "Write a brief note. Keep it clear.",
-            {"tier": "fast", "clarification_allowed": False},
+            {"clarification_allowed": False},
         )
 
         replay = default_engine_factory(path)
         replay.store = RunStore(":memory:")
         restored = replay.optimize(
             "Write a brief note. Keep it clear.",
-            {"tier": "fast", "clarification_allowed": False},
+            {"clarification_allowed": False},
         )
 
         assert replay.speculative_diagnosis is speculative
@@ -479,7 +528,7 @@ def test_recording_replays_the_provider_limit_and_diagnosis_protocols(
         task_taxonomy_version=2,
     ).optimize(
         "Write a brief note. Keep it clear.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
     bundle = json.loads(path.read_text())
     assert bundle["diagnosis_request_byte_limit"] == 7_168
@@ -490,7 +539,7 @@ def test_recording_replays_the_provider_limit_and_diagnosis_protocols(
     replay.store = RunStore(":memory:")
     restored = replay.optimize(
         "Write a brief note. Keep it clear.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
     restored_evidence = restored["report"]["diagnosis"]["request_evidence"]
     original_evidence = original["report"]["diagnosis"]["request_evidence"]
@@ -545,7 +594,7 @@ def test_recorded_http_retry_reservation_matches_bounded_diagnosis_replay(
         writer_instruction_version=6,
     ).optimize(
         "Write a brief note. Keep it clear.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
     bundle = json.loads(path.read_text())
     assert bundle["diagnosis_retry_reservation_multiplier"] == 2
@@ -556,7 +605,7 @@ def test_recorded_http_retry_reservation_matches_bounded_diagnosis_replay(
     replay.store = RunStore(":memory:")
     restored = replay.optimize(
         "Write a brief note. Keep it clear.",
-        {"tier": "fast", "clarification_allowed": False},
+        {"clarification_allowed": False},
     )
 
     assert restored["status"] == original["status"]

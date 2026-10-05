@@ -7,11 +7,13 @@ module owns those decisions), so this module never duplicates either policy.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from .grading import GradeReport
+from .improve import prompts_differ_meaningfully
 from .strong_check import StrongCheckReport
 
 
@@ -157,18 +159,51 @@ def _key(candidate: RankingCandidate) -> tuple[float, float, float, int]:
     return (-grade.worst, -grade.mean, grade.spread, len(candidate.text))
 
 
+def _worse_than_baseline(
+    candidate: RankingCandidate, baseline: RankingCandidate
+) -> bool:
+    """True only when the candidate is strictly worse than the original.
+
+    Comparison follows the robust ranking order: worst pass rate, then mean
+    pass rate, then sample spread. Length never makes a candidate worse; at
+    equality a shorter candidate wins in the final ordering.
+    """
+    if baseline.grade is None or candidate.grade is None:
+        return False
+    if baseline.grade.worst > candidate.grade.worst:
+        return True
+    if candidate.grade.worst > baseline.grade.worst:
+        return False
+    if baseline.grade.mean > candidate.grade.mean:
+        return True
+    if candidate.grade.mean > baseline.grade.mean:
+        return False
+    return candidate.grade.spread > baseline.grade.spread
+
+
 def rank_candidates(
     original: RankingCandidate,
     candidates: Sequence[RankingCandidate],
     *,
     strong_check: StrongCheckReport | None = None,
+    allow_unverified_selection: bool = False,
+    candidate_order: Mapping[str, float] | None = None,
 ) -> RankingResult:
-    """Rank eligible candidates by worst, mean, spread, then prompt length.
+    """Rank changed candidates by worst, mean, spread, then prompt length.
 
-    The original is retained unless the best eligible candidate is strictly
-    better on worst, mean, spread, or length. ``strong_check`` is the strong
-    check's report; this function only consumes each candidate's verdict and
-    never repeats the strong-model comparison.
+    The always-improve policy: an eligible candidate that changed the prompt
+    beats the unchanged original when it is at least as good on worst and
+    mean (ties break toward the shorter prompt). A candidate that is strictly
+    worse than the original is never selected; candidates that do not
+    meaningfully differ from the original are rejected as unchanged; and a
+    zero-pass-rate candidate never displaces the original, because a rewrite
+    that passes nothing is not an improvement.
+    ``strong_check`` is the strong check's report; this function only consumes
+    each candidate's verdict and never repeats the strong-model comparison.
+    ``allow_unverified_selection`` covers runs with no success tests: pass
+    rates do not exist (they are not zero), so the best fidelity-eligible
+    changed candidate wins and the unverified evidence status — recorded by
+    the caller — carries the uncertainty instead of the selection floor.
     """
 
     baseline = original
@@ -179,19 +214,60 @@ def rank_candidates(
         candidate_reasons = list(candidate.rejection_reasons)
         if not candidate.eligible and not candidate_reasons:
             candidate_reasons.append("candidate marked ineligible by an upstream check")
+        if not prompts_differ_meaningfully(baseline.text, candidate.text):
+            candidate_reasons.append(
+                "candidate did not change the prompt (always-improve policy)"
+            )
         strong_passed, strong_reason = _strong_decision(candidate, strong_check)
         if strong_passed is False:
             candidate_reasons.append(strong_reason or "strong check did not pass")
         if not candidate_reasons and candidate.grade is None:
             candidate_reasons.append("candidate has no grading report")
+        if (
+            not candidate_reasons
+            and not allow_unverified_selection
+            and candidate.grade is not None
+            and candidate.grade.worst <= 0.0
+        ):
+            candidate_reasons.append("candidate has zero pass rate")
+        if not candidate_reasons and _worse_than_baseline(candidate, baseline):
+            candidate_reasons.append("does not beat the original under robust ranking")
         if candidate_reasons:
             reasons[candidate.candidate_id] = candidate_reasons
         else:
             eligible.append(candidate)
 
-    eligible.sort(key=lambda candidate: (_key(candidate), candidate.candidate_id))
+    semantic_scores: dict[str, float] = {}
+    if candidate_order is not None:
+        for candidate in eligible:
+            try:
+                score = float(candidate_order[candidate.candidate_id])
+            except (KeyError, TypeError, ValueError):
+                semantic_scores.clear()
+                break
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                semantic_scores.clear()
+                break
+            semantic_scores[candidate.candidate_id] = score
+    if eligible and len(semantic_scores) == len(eligible):
+        eligible.sort(
+            key=lambda candidate: (
+                -semantic_scores[candidate.candidate_id],
+                _key(candidate),
+                candidate.candidate_id,
+            )
+        )
+    else:
+        # Incomplete rerank evidence is ranking-only; retain the established
+        # deterministic order instead of inventing scores for missing answers.
+        eligible.sort(key=lambda candidate: (_key(candidate), candidate.candidate_id))
+    # A changed candidate wins ties with the original only when it actually
+    # passes something: a zero-pass-rate rewrite is indistinguishable from a
+    # broken prompt, so it never displaces the original. Runs without success
+    # tests have no pass rates at all, so the floor cannot apply there; the
+    # caller opts into selecting the best eligible candidate instead.
     best = eligible[0] if eligible else None
-    selected = best if best is not None and _key(best) < _key(baseline) else None
+    selected = best
     selected_id = selected.candidate_id if selected else None
 
     ranked: list[RankedCandidate] = []

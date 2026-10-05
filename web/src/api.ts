@@ -1,5 +1,3 @@
-export type Tier = "fast" | "standard" | "deep";
-
 export type ClarificationQuestion = {
   id: string;
   prompt: string;
@@ -92,6 +90,15 @@ export type PromptHealthResult = {
 };
 export type ModelSelection = { writer: string; strong: string; weak: string[] };
 
+export type RunOutcome =
+  | "converged"
+  | "improved_tested"
+  | "improved_unverified"
+  | "impossible"
+  | "failed_operational";
+
+export type RunControlState = "awaiting_approval" | "stopped" | "cancelled";
+
 export type OptimizeResult = {
   status: "completed" | "needs_input" | "failed";
   run_id: string;
@@ -99,7 +106,15 @@ export type OptimizeResult = {
   final_prompt?: string;
   original_kept?: boolean;
   questions?: ClarificationQuestion[];
-  report: Record<string, unknown>;
+  report: Record<string, unknown> & {
+    outcome?: RunOutcome | null;
+    outcome_reason?: string | null;
+    applied_style?: string | null;
+    control_state?: RunControlState | null;
+    evaluation_evidence?: EvaluationEvidence;
+    judgment_provenance?: JudgmentProvenance[];
+    capabilities_fired?: CapabilitySummary;
+  };
   cost: {
     total: number;
     by_role?: Record<
@@ -118,16 +133,18 @@ export type OptimizeResult = {
   timing: { total_ms: number };
 };
 
-export type JobRound = { round?: number; max_rounds?: number };
+export type JobRound = { round?: number };
 export type Job = {
   run_id: string;
-  kind: "optimize" | "resume" | "skip" | "deep";
+  kind: "optimize" | "resume" | "skip" | "continue";
   prompt?: string;
   state: "queued" | "running" | "done";
   stage: string | null;
   round: JobRound;
   stages_seen: string[];
   elapsed_ms: number;
+  /** Accumulated provider cost in USD from the run's progress events. */
+  cost_total?: number;
   cancel_requested: boolean;
   result: OptimizeResult | null;
 };
@@ -142,10 +159,71 @@ export type ProviderReport = {
   fallback: { writer: string; strong: string };
 };
 
-export type TierEstimate = {
-  runs: number;
-  minutes: [number, number];
-  cost: [number, number];
+export type JudgmentCapability =
+  | "verify"
+  | "screen"
+  | "noul"
+  | "find"
+  | "rerank"
+  | "classify"
+  | "decide"
+  | "compare"
+  | "extract"
+  | "audit"
+  | "review"
+  | "gate";
+
+export type JudgmentProvenance = {
+  capability: JudgmentCapability | null;
+  stage: string;
+  candidate_id: string | null;
+  round_number: number | null;
+  source_round: number | null;
+  question_key: string;
+  model: string | null;
+  raw_answer: unknown;
+  usable: boolean;
+  probability?: number;
+  selected?: string;
+};
+
+export type CapabilitySummary = Record<
+  JudgmentCapability,
+  { count: number; ran: boolean; stages: Record<string, number> }
+>;
+
+export type JudgmentEvidence = {
+  raw_answer: unknown;
+  usable: boolean;
+  probability?: number;
+  selected?: string;
+};
+
+export type EvaluationCandidateEvidence = {
+  candidate_id: string;
+  round_number: number;
+  comparison: Record<string, JudgmentEvidence>;
+  verification: Record<string, JudgmentEvidence>;
+  audit: Record<string, JudgmentEvidence>;
+  rerank: JudgmentEvidence;
+  review: JudgmentEvidence;
+  score_vector: unknown;
+  fidelity: unknown;
+  strong_check: unknown;
+  downstream_verification: "verified" | "unverified";
+  success_tests: unknown[];
+  success_test_outputs: unknown[];
+  success_test_grade: unknown;
+  accept: JudgmentEvidence & {
+    threshold: number;
+    accepted: boolean;
+  };
+  eligible: boolean;
+  rejection_reasons: string[];
+};
+
+export type EvaluationEvidence = {
+  candidates: Record<string, EvaluationCandidateEvidence>;
 };
 
 /** An HTTP error from the local API, with the server's `detail` when present. */
@@ -207,15 +285,27 @@ function postJson<T>(url: string, body?: unknown): Promise<T> {
   });
 }
 
+export type RunLimits = {
+  time_limit_s?: number;
+  spend_limit_usd?: number;
+};
+
 export function startOptimize(
   prompt: string,
-  tier: Tier,
-  modelOverrides?: ModelSelection
+  improvementStyle: string,
+  modelOverrides?: ModelSelection,
+  limits?: RunLimits
 ): Promise<Job> {
   return postJson<Job>("/api/jobs/optimize", {
     prompt,
-    tier,
+    improvement_style: improvementStyle,
     model_overrides: modelOverrides,
+    ...(limits?.time_limit_s != null
+      ? { time_limit_s: limits.time_limit_s }
+      : {}),
+    ...(limits?.spend_limit_usd != null
+      ? { spend_limit_usd: limits.spend_limit_usd }
+      : {}),
   });
 }
 
@@ -232,8 +322,21 @@ export function startSkip(runId: string): Promise<Job> {
   return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/skip`);
 }
 
-export function startDeep(runId: string): Promise<Job> {
-  return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/deep`);
+export function startContinue(runId: string, limits?: RunLimits): Promise<Job> {
+  return postJson<Job>(`/api/jobs/${encodeURIComponent(runId)}/continue`, {
+    ...(limits?.time_limit_s != null
+      ? { time_limit_s: limits.time_limit_s }
+      : {}),
+    ...(limits?.spend_limit_usd != null
+      ? { spend_limit_usd: limits.spend_limit_usd }
+      : {}),
+  });
+}
+
+export function stopRun(runId: string): Promise<OptimizeResult> {
+  return postJson<OptimizeResult>(
+    `/api/runs/${encodeURIComponent(runId)}/stop`
+  );
 }
 
 export function getJob(runId: string): Promise<Job> {
@@ -260,10 +363,6 @@ export function getProviders(probe: boolean): Promise<ProviderReport> {
   return requestJson<ProviderReport>(
     `/api/providers?probe=${probe ? "true" : "false"}`
   );
-}
-
-export function getEstimates(): Promise<Partial<Record<Tier, TierEstimate>>> {
-  return requestJson<Partial<Record<Tier, TierEstimate>>>("/api/estimates");
 }
 
 export function getCatalog(): Promise<ModelCatalog> {

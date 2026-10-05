@@ -1,9 +1,24 @@
 # Prompt Enhancer
 
-A local prompt workbench that diagnoses a request with Jev, checks proposed
-success tests, tries bounded rewrites when a material gap is confirmed, and
-shows the original or selected prompt with its evidence. Runs and feedback
-are stored in a local SQLite database.
+A local prompt workbench that diagnoses a request with Jev, resolves the
+requested improvement style, and evaluates up to six candidates per bounded
+round. An early routing or writing decision can end a round before panel
+requests; generated candidates are tested on five distinct models with three
+samples per model, then fidelity, score-floor, and acceptance checks decide
+which qualify. The Perfect Prompt Loop repeats rounds until its score evidence meets the quality
+floors and stops gaining, or a separate run-control or provider condition
+interrupts it. When those details are available, a result names its applied
+style and gives a brief explanation grounded in the run evidence. The five
+outcomes are converged,
+improved (tested), improved (unverified), impossible, and failed (operational).
+Pauses, cancellations, and a user's decision to stop are reported as control
+states, separate from the outcome. Runs and feedback are stored in a local
+SQLite database.
+
+Recorded keep/reject labels can explicitly recalibrate the per-dimension
+quality floors. Recalibration requires 12 linked labels (at least three of each
+decision); see [quality floor feedback calibration](docs/quality-floor-feedback.md)
+for the rule and `POST /api/quality/floors/recalibrate` endpoint.
 
 ## Open the app
 
@@ -40,7 +55,11 @@ anyway shows what went wrong and what to do next.
 The web app starts runs in the background (`POST /api/jobs/optimize`, then
 poll `GET /api/jobs/{run_id}`), so it shows each stage and elapsed time, can
 cancel a run, and reattaches after a reload. The synchronous
-`POST /api/optimize` endpoint remains for API clients.
+`POST /api/optimize` endpoint remains for API clients. It blocks until a result
+or budget pause and has no job cancellation handle; clients needing cancellation
+should use the job endpoints. Synchronous callers can set `time_limit_s` or
+`spend_limit_usd` explicitly to pause at a completed-round boundary. Limits are
+optional, and a healthy run has no automatic attempt or stagnation cap.
 
 ## Check the implementation
 

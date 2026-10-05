@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from . import jev_questions
+from .config import Settings
 from .criterion_checks import check_criterion
 from .criterion_reading import (
     CriterionReader,
@@ -34,25 +35,36 @@ class CascadeBudget:
     judge_reservation_usd: float = 0.001
 
     @classmethod
-    def for_tier(
+    def for_settings(
         cls,
-        tier: str,
+        settings: Settings,
         *,
         pair_cap: int | None = None,
         dollar_cap: float | None = None,
-        judge_reservation_usd: float = 0.001,
+        judge_reservation_usd: float | None = None,
     ) -> CascadeBudget:
-        from .models import Tier
-
-        defaults = Tier.parse(tier).budget
+        configured_pair_cap = settings.grading_cascade_pair_cap
+        configured_dollar_cap = settings.grading_cascade_dollar_cap
         resolved = cls(
-            pair_cap=defaults.grading_confirmation_pairs
-            if pair_cap is None
-            else pair_cap,
-            dollar_cap=defaults.grading_cascade_dollars
-            if dollar_cap is None
-            else dollar_cap,
-            judge_reservation_usd=judge_reservation_usd,
+            pair_cap=(
+                pair_cap
+                if pair_cap is not None
+                else configured_pair_cap
+                if configured_pair_cap is not None
+                else 30
+            ),
+            dollar_cap=(
+                dollar_cap
+                if dollar_cap is not None
+                else configured_dollar_cap
+                if configured_dollar_cap is not None
+                else 0.05
+            ),
+            judge_reservation_usd=(
+                settings.grading_confirmation_reservation_usd
+                if judge_reservation_usd is None
+                else judge_reservation_usd
+            ),
         )
         if (
             resolved.pair_cap < 0
@@ -354,6 +366,7 @@ def resolve_uncertain_grades(
     ineligible_pairs: Mapping[tuple[int, int], Mapping[str, Any]] | None = None,
     uncertainty_bands: Mapping[tuple[int, int], tuple[float, float]] | None = None,
     read_criteria: bool = False,
+    round_number: int | None = None,
 ) -> tuple[
     dict[tuple[int, int], float], set[int], list[dict[str, Any]], dict[str, Any]
 ]:
@@ -448,6 +461,8 @@ def resolve_uncertain_grades(
         state = {
             "prompt": run.prompt,
             "output": run.output,
+            **({"candidate_id": run.candidate_id} if round_number is not None else {}),
+            **({"round_number": round_number} if round_number is not None else {}),
             "criterion": test.get("question", ""),
             "prompt_spans": _source_spans(run.prompt),
             "output_spans": _source_spans(run.output),
@@ -575,6 +590,16 @@ def resolve_uncertain_grades(
                     evidence_state = {
                         "prompt": run.prompt,
                         "output": run.output,
+                        **(
+                            {"candidate_id": run.candidate_id}
+                            if round_number is not None
+                            else {}
+                        ),
+                        **(
+                            {"round_number": round_number}
+                            if round_number is not None
+                            else {}
+                        ),
                         "criterion": str(test.get("question", "")),
                         "prompt_spans": _source_spans(run.prompt),
                         "output_spans": _source_spans(run.output),

@@ -93,7 +93,6 @@ def _run_screened_round(
     record_path: Path | None = None,
     writer_instruction_version: int = 5,
     output_screen: Mapping[str, float | None] | None = None,
-    tier: str = "fast",
     grade_pass_probability: float = 1.0,
     confirmation_answers: tuple[float, float, float] | None = None,
     generated_test_count: int = 3,
@@ -105,6 +104,8 @@ def _run_screened_round(
     settings: Settings | None = None,
     confirmation_provider_error: bool = False,
     retry_count: int = 0,
+    score_probability: float = 1.0,
+    pause_after_round: bool = False,
 ) -> tuple[dict[str, Any], list[list[dict[str, Any]]]]:
     batches: list[list[dict[str, Any]]] = []
     prompt = "Read the background notes. Summarize the report."
@@ -140,7 +141,11 @@ def _run_screened_round(
     def decide(request: Mapping[str, Any], **_kwargs: Any) -> dict[str, Any]:
         key = str(request.get("key", ""))
         if request.get("type") == "choice":
-            if key == "strategy_choice":
+            if key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                choice = "same"
+            elif key == "strategy_choice":
                 choice = "restructure_lossless"
             elif key.startswith("restructure_lossless:role:"):
                 choice = (
@@ -197,6 +202,10 @@ def _run_screened_round(
             ("gap:goal", "strategy_recheck:restructure_lossless", "fidelity:meaning")
         ):
             probability = 1.0
+        elif key.startswith("score:"):
+            probability = score_probability
+        elif key.startswith("evaluate:"):
+            probability = 0.99
         else:
             probability = 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
@@ -265,11 +274,30 @@ def _run_screened_round(
         config=settings or Settings(),
         writer_instruction_version=writer_instruction_version,
         decision_policy=decision_policy,
-    ).optimize(prompt, {"tier": tier, "clarification_allowed": False})
+    ).optimize(
+        prompt,
+        {
+            "clarification_allowed": False,
+            **({"time_limit_s": 0} if pause_after_round else {}),
+            # The recheck stub admits only restructure_lossless, which lives
+            # in the faithful_transform bundle.
+            "improvement_style": "faithful_transform",
+        },
+    )
+    if pause_after_round and result["status"] == "needs_input":
+        # Keep the public pause status while exposing first-round evidence to
+        # assertions that exercise screening, grading, and candidate selection.
+        report = dict(result["report"])
+        history = report.get("history") or []
+        if history:
+            report.update(history[0].get("evidence") or {})
+        result = {**result, "report": report}
     return result, batches
 
 
-def test_new_optimizer_screens_three_tests_and_groups_four_outputs() -> None:
+def test_new_optimizer_screens_three_tests_across_five_models_and_three_samples() -> (
+    None
+):
     result, batches = _run_screened_round()
 
     assert result["status"] == "completed"
@@ -287,12 +315,18 @@ def test_new_optimizer_screens_three_tests_and_groups_four_outputs() -> None:
         for batch in batches[:fidelity_index]
         if batch and str(batch[0]["key"]).startswith("grade_")
     ]
-    assert len(grade_batches) == 4
+    assert len(grade_batches) == 30  # original + candidate, 5 models × 3 samples
     assert all(len(batch) == 3 for batch in grade_batches)
     for batch in grade_batches:
         _, envelope = batch_decision_payload(batch, model=gateway_model(batch))
         assert "items" not in envelope["state"]
-        assert list(envelope["state"]) == ["prompt", "output", "success_tests"]
+        assert list(envelope["state"]) == [
+            "prompt",
+            "output",
+            "candidate_id",
+            "round_number",
+            "success_tests",
+        ]
         assert len(envelope["state"]["success_tests"]) == 3
         assert all(question["state"] == envelope["state"] for question in batch)
         assert all(
@@ -305,14 +339,17 @@ def gateway_model(batch: Sequence[Mapping[str, Any]]) -> str:
     return str(batch[0]["model"])
 
 
-def test_screened_out_or_unknown_tests_cannot_claim_an_improvement() -> None:
+def test_screened_out_or_unknown_tests_yield_unverified_improvement_only() -> None:
     for options, expected_reason in (
         ({"evaluator_hazard": True}, "evaluator_instructions"),
         ({"incomplete_screen": True}, "incomplete_screening"),
         ({"screen_provider_error": True}, "screen_provider_error"),
     ):
         result, batches = _run_screened_round(**options)
-        assert result["original_kept"] is True
+        # Uncertain tests never force a no-op: the fidelity-passing rewrite
+        # is returned, but the run cannot claim a verified improvement.
+        assert result["report"]["status"] == "converged"
+        assert result["report"]["convergence"]["verification"] == "unverified"
         assert result["report"]["tests"] == []
         assert all(
             check["reason"] == expected_reason
@@ -323,12 +360,16 @@ def test_screened_out_or_unknown_tests_cannot_claim_an_improvement() -> None:
         )
 
 
-def test_partial_or_oversized_grading_keeps_original_without_human_prompt() -> None:
+def test_partial_or_oversized_grading_keeps_original_and_pauses_at_user_limit() -> None:
     for options in ({"partial_grading": True}, {"oversized_output": True}):
-        result, batches = _run_screened_round(**options)
-        assert result["status"] == "completed"
+        result, batches = _run_screened_round(**options, pause_after_round=True)
+        # The user time limit pauses after one round. Incomplete grading still
+        # rejects every changed candidate and keeps the original prompt.
+        assert result["status"] == "needs_input"
         assert result["original_kept"] is True
-        rejected = result["report"]["selection_evidence"]["rejected_candidates"]
+        rejected = result["report"]["history"][0]["evidence"]["selection_evidence"][
+            "rejected_candidates"
+        ]
         assert any(
             "weak-panel grading was incomplete or oversized"
             in item["rejection_reasons"]
@@ -443,7 +484,10 @@ def test_current_screening_and_grading_protocol_strictly_replays(
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "fast", "clarification_allowed": False},
+        {
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert replayed["status"] == "completed"

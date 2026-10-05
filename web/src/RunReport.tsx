@@ -1,5 +1,13 @@
 import type { OptimizeResult } from "./api";
-import { humanize, items, plainReason, record } from "./outcome";
+import {
+  humanize,
+  isCanonicalOutcome,
+  items,
+  outcomeOf,
+  plainReason,
+  record,
+} from "./outcome";
+import { STYLE_LABELS, type ImprovementStyle } from "./styles";
 
 function text(value: unknown): string {
   return typeof value === "string"
@@ -124,8 +132,93 @@ function highlightedPrompt(
   return parts;
 }
 
+const jevCapabilities = [
+  "verify",
+  "screen",
+  "noul",
+  "find",
+  "rerank",
+  "classify",
+  "decide",
+  "compare",
+  "extract",
+  "audit",
+  "review",
+  "gate",
+] as const;
+
+const comparisonLabels: Record<string, string> = {
+  task_preserved: "Task preserved",
+  no_invented_detail: "No invented detail",
+  structure_added: "Structure added",
+  verbosity_direction: "Verbosity direction",
+};
+
+function jsonText(value: unknown): string {
+  if (value === undefined || value === null) return "No raw answer recorded";
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function judgmentText(value: unknown): string {
+  const judgment = record(value);
+  const usable =
+    judgment.usable === true
+      ? "Usable"
+      : judgment.usable === false
+        ? "Not usable"
+        : "Usability not recorded";
+  const probability =
+    typeof judgment.probability === "number"
+      ? `; probability ${score(judgment.probability)}`
+      : "";
+  const rawAnswer = record(judgment.raw_answer);
+  const selected =
+    judgment.usable === true
+      ? typeof judgment.selected === "string"
+        ? judgment.selected
+        : typeof rawAnswer.choice === "string"
+          ? rawAnswer.choice
+          : null
+      : null;
+  return `${usable}${selected ? `; selected: ${selected}` : ""}${probability}`;
+}
+
+function judgmentList(
+  value: unknown,
+  labels?: Record<string, string>
+): Record<string, unknown>[] {
+  return Object.entries(record(value)).map(([key, judgment]) => ({
+    key,
+    label: labels?.[key] ?? humanize(key),
+    judgment,
+  }));
+}
+
+function evidenceDetails(label: string, value: unknown) {
+  if (value === undefined || value === null) return null;
+  return (
+    <details>
+      <summary>{label}</summary>
+      <pre>{jsonText(value)}</pre>
+    </details>
+  );
+}
+
 export default function RunReport({ result }: { result: OptimizeResult }) {
   const report = result.report;
+  const evaluationEvidence = record(report.evaluation_evidence);
+  const evaluationCandidates = record(evaluationEvidence.candidates);
+  const judgmentProvenance = items(report.judgment_provenance);
+  const capabilitiesFired = record(report.capabilities_fired);
+  const hasEvaluationEvidence =
+    Object.keys(evaluationEvidence).length > 0 ||
+    judgmentProvenance.length > 0 ||
+    Object.keys(capabilitiesFired).length > 0;
   const diagnosis = record(report.diagnosis);
   const diagnosisRequests = record(diagnosis.request_evidence);
   const calibration = record(diagnosis.calibration);
@@ -183,16 +276,236 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
     );
   const originalPrompt = result.original_prompt ?? "";
   const diff = text(report.diff);
+  const appliedStyle = text(report.applied_style);
+  const appliedLabel = Object.hasOwn(STYLE_LABELS, appliedStyle)
+    ? STYLE_LABELS[appliedStyle as ImprovementStyle]
+    : appliedStyle;
+  const canonicalOutcome = isCanonicalOutcome(report.outcome)
+    ? outcomeOf(result)
+    : null;
 
   return (
     <div className="report-content">
       <p>{text(report.summary)}</p>
+      {canonicalOutcome && (
+        <section aria-label="Run outcome">
+          <p>
+            <strong>Outcome:</strong> {canonicalOutcome.headline}
+          </p>
+          {canonicalOutcome.reason && (
+            <p className="outcome-reason">{canonicalOutcome.reason}</p>
+          )}
+          {canonicalOutcome.controlState && (
+            <p>Run state: {canonicalOutcome.controlState}.</p>
+          )}
+        </section>
+      )}
+      {appliedStyle && (
+        <p>
+          Applied style: {appliedLabel}
+          {report.improvement_style === "auto" &&
+            " (inferred — your style was Auto)"}
+          .
+        </p>
+      )}
       {originalPrompt && (
         <section>
           <h3>Original prompt</h3>
           <p className="original-prompt">
             {highlightedPrompt(originalPrompt, problems)}
           </p>
+        </section>
+      )}
+      {hasEvaluationEvidence && (
+        <section aria-labelledby="evaluation-acceptance-heading">
+          <h3 id="evaluation-acceptance-heading">Evaluation and acceptance</h3>
+          {Object.keys(evaluationCandidates).length > 0 && (
+            <ul>
+              {Object.entries(evaluationCandidates).map(([key, value]) => {
+                const candidate = record(value);
+                const candidateId = text(candidate.candidate_id || key);
+                const acceptance = record(candidate.accept);
+                const eligible =
+                  candidate.eligible === true
+                    ? "Eligible"
+                    : candidate.eligible === false
+                      ? "Not eligible"
+                      : "Eligibility not recorded";
+                const accepted =
+                  acceptance.accepted === true
+                    ? "Accepted by the acceptance check"
+                    : acceptance.accepted === false
+                      ? "Rejected by the acceptance check"
+                      : "Acceptance check not recorded";
+                const rejectionReasons = Array.isArray(
+                  candidate.rejection_reasons
+                )
+                  ? candidate.rejection_reasons.map(String)
+                  : [];
+                const comparisons = judgmentList(
+                  candidate.comparison,
+                  comparisonLabels
+                );
+                const verification = judgmentList(candidate.verification);
+                const audit = judgmentList(candidate.audit);
+
+                return (
+                  <li key={candidateId}>
+                    <strong>{candidateId}</strong> — round{" "}
+                    {typeof candidate.round_number === "number"
+                      ? candidate.round_number
+                      : "not recorded"}
+                    . {eligible}. {accepted}
+                    {typeof acceptance.probability === "number" && (
+                      <>
+                        : {score(acceptance.probability)} probability against a{" "}
+                        {score(acceptance.threshold)} threshold
+                      </>
+                    )}
+                    .
+                    {rejectionReasons.length > 0 && (
+                      <>
+                        <p>Reasons: {rejectionReasons.join("; ")}</p>
+                      </>
+                    )}
+                    {rejectionReasons.length === 0 &&
+                      candidate.eligible === true && (
+                        <p>No eligibility rejection reasons recorded.</p>
+                      )}
+                    {comparisons.length > 0 && (
+                      <>
+                        <h4>Comparisons</h4>
+                        <ul>
+                          {comparisons.map((item) => (
+                            <li key={String(item.key)}>
+                              {text(item.label)}: {judgmentText(item.judgment)}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {verification.length > 0 && (
+                      <>
+                        <h4>Verification</h4>
+                        <ul>
+                          {verification.map((item) => (
+                            <li key={String(item.key)}>
+                              {text(item.label)}: {judgmentText(item.judgment)}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    {audit.length > 0 && (
+                      <>
+                        <h4>Audit</h4>
+                        <ul>
+                          {audit.map((item) => (
+                            <li key={String(item.key)}>
+                              {text(item.label)}: {judgmentText(item.judgment)}
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    )}
+                    <p>
+                      Rerank: {judgmentText(candidate.rerank)}. Review:{" "}
+                      {judgmentText(candidate.review)}.
+                    </p>
+                    {evidenceDetails(
+                      "Score vector evidence",
+                      candidate.score_vector
+                    )}
+                    {evidenceDetails(
+                      "Success-test grade evidence",
+                      candidate.success_test_grade
+                    )}
+                    <details>
+                      <summary>Acceptance answer</summary>
+                      <p>{judgmentText(acceptance)}</p>
+                      <pre>{jsonText(acceptance.raw_answer)}</pre>
+                    </details>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {Object.keys(capabilitiesFired).length > 0 && (
+            <>
+              <h4>Jev capability calls</h4>
+              <ul>
+                {jevCapabilities.map((capability) => {
+                  const evidence = record(capabilitiesFired[capability]);
+                  if (!Object.keys(evidence).length) {
+                    return (
+                      <li key={capability}>{capability}: count not recorded</li>
+                    );
+                  }
+                  const stages = Object.entries(record(evidence.stages))
+                    .map(
+                      ([stage, count]) => `${humanize(stage)} ${text(count)}`
+                    )
+                    .join(", ");
+                  return (
+                    <li key={capability}>
+                      {capability}: {text(evidence.count)} times;{" "}
+                      {evidence.ran === true
+                        ? "ran"
+                        : evidence.ran === false
+                          ? "did not run"
+                          : "run status not recorded"}
+                      {stages && `; stages: ${stages}`}.
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+          {judgmentProvenance.length > 0 && (
+            <details>
+              <summary>
+                Judgment provenance ({judgmentProvenance.length})
+              </summary>
+              <ul>
+                {judgmentProvenance.map((item, index) => {
+                  const capability = text(item.capability) || "not recorded";
+                  const candidateId =
+                    typeof item.candidate_id === "string"
+                      ? item.candidate_id
+                      : "run-level";
+                  const round =
+                    typeof item.round_number === "number"
+                      ? `current round ${item.round_number}`
+                      : "current round not recorded";
+                  const sourceRound =
+                    typeof item.source_round === "number"
+                      ? `, source round ${item.source_round}`
+                      : ", source round not recorded";
+                  return (
+                    <li key={`${text(item.question_key)}-${index}`}>
+                      <strong>{capability}</strong> /{" "}
+                      {text(item.stage) || "stage not recorded"}: {candidateId};{" "}
+                      {round}
+                      {sourceRound}; question{" "}
+                      {text(item.question_key) || "not recorded"}; model{" "}
+                      {text(item.model) || "not recorded"};{" "}
+                      {item.usable === true
+                        ? "usable"
+                        : item.usable === false
+                          ? "not usable"
+                          : "usability not recorded"}
+                      {typeof item.probability === "number" &&
+                        `; probability ${score(item.probability)}`}
+                      <details>
+                        <summary>Raw answer</summary>
+                        <pre>{jsonText(item.raw_answer)}</pre>
+                      </details>
+                    </li>
+                  );
+                })}
+              </ul>
+            </details>
+          )}
         </section>
       )}
       <section>

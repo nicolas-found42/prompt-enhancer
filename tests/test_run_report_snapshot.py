@@ -30,7 +30,7 @@ def _normalized(value: Any, run_ids: set[str]) -> Any:
         return {
             key: _normalized(item, run_ids)
             for key, item in value.items()
-            if key not in {"timing", "classification_latency_ms"}
+            if key not in {"timing", "classification_latency_ms", "elapsed_ms"}
         }
     if isinstance(value, list):
         return [_normalized(item, run_ids) for item in value]
@@ -61,11 +61,12 @@ def test_scenario_results_are_unchanged(name: str, tmp_path: Path) -> None:
 
     if os.environ.get("UPDATE_REPORT_SNAPSHOT"):
         pinned = json.loads(FIXTURE.read_text()) if FIXTURE.exists() else {}
+        pinned = {key: value for key, value in pinned.items() if key in SCENARIOS}
         pinned[name] = digest
         FIXTURE.write_text(json.dumps(pinned, indent=2, sort_keys=True) + "\n")
 
     actual = tmp_path / f"{name}.json"
     actual.write_text(rendered + "\n")
-    assert digest == json.loads(FIXTURE.read_text())[name], (
-        f"results changed; actual results are in {actual}"
-    )
+    pinned = json.loads(FIXTURE.read_text())
+    assert set(pinned) == set(SCENARIOS), "report snapshot contains stale scenarios"
+    assert digest == pinned[name], f"results changed; actual results are in {actual}"

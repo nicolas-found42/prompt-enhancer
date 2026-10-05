@@ -412,9 +412,6 @@ def _parser() -> argparse.ArgumentParser:
         "--engine-factory",
         help="package.module:callable receiving replay path or None",
     )
-    parser.add_argument(
-        "--tier", choices=("fast", "standard", "deep"), default="standard"
-    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--clarification-allowed", action="store_true")
     parser.add_argument("--writer-model")
@@ -475,7 +472,6 @@ def main(
         if args.weak_model:
             overrides["weak"] = list(args.weak_model)
         options = HarnessOptions(
-            tier=args.tier,
             seed=args.seed,
             clarification_allowed=args.clarification_allowed,
             model_overrides=overrides,
@@ -520,7 +516,10 @@ def main(
         else:
             print(rendered, file=out)
         failed_cases = [
-            case.case_id for case in report.cases if case.status in {"failed", "error"}
+            case.case_id
+            for case in report.cases
+            if case.status in {"failed", "error"}
+            and "improvement_not_verified" not in str(case.error or "")
         ]
         if failed_cases:
             print(

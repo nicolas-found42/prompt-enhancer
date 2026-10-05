@@ -1,8 +1,6 @@
 {
-  "clarify_resume_edit": "d0dbdcb9efe59b6cf4dfa09a9247054bb8ac83b3c950d952758a3d3df655c845",
-  "deep_pass": "6f212639dbf700d63c319c14bedae69d8da42c99e64d2ac5e5d3685a3b07b615",
-  "deep_pass_after_kept": "cce66b583dd501053ebc4d041f2060face0eb850f4a8a6f8c9b58264d8def87e",
-  "full_pipeline": "07a42061be521a5a298ad45aaed7f00fa34886658013ddcd992b642c462f1d10",
-  "kept_over_two_rounds": "eefaa2d473db32b5f109d3a089d0794fcd4ecea24ff170b4cd31d0bdc41c2ae6",
-  "no_strategy": "49bd26f5052fcaf1aaf87a19f5b128183377a570bf46681abb3d4c6c2505e30b"
+  "clarify_resume_edit": "d9104046086188de10275302647504f8f7c7f68862bb1a7984f8c5d129b56450",
+  "full_pipeline": "9da38c7a74a51e30dc4fb45be11bbb742e6f488ccf35503cf786723de15265b0",
+  "kept_original_converged": "5f002a0b390cf4b104819f6fb2b46600b37386aee87d8de1c9ddd4d79e85aac4",
+  "no_strategy": "bd0043e73f2d632a86d2ed02c083b0a0e736a7db6bef98eca2efd997978ba1d5"
 }

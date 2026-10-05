@@ -3,14 +3,14 @@ import { expect, test } from "@playwright/test";
 const cancelledRun = {
   run_id: "cancelled-run",
   status: "failed",
-  outcome: "cancelled",
+  control_state: "cancelled",
   prompt: "Keep the original prompt.",
 };
 
 const failedRun = {
   run_id: "failed-run",
   status: "failed",
-  outcome: "failed",
+  outcome: "failed_operational",
   prompt: "Write a useful reply.",
 };
 
@@ -32,11 +32,19 @@ test("History shows cancelled runs neutrally in the list and opened details", as
     route.fulfill({
       json: {
         ...cancelledRun,
-        report: { status: "cancelled", failure: cancellationFailure },
+        report: {
+          status: "cancelled",
+          control_state: "cancelled",
+          failure: cancellationFailure,
+        },
         result: {
           status: "failed",
           run_id: "cancelled-run",
-          report: { status: "cancelled", failure: cancellationFailure },
+          report: {
+            status: "cancelled",
+            control_state: "cancelled",
+            failure: cancellationFailure,
+          },
           cost: { total: 0 },
           timing: { total_ms: 10 },
         },
@@ -50,20 +58,26 @@ test("History shows cancelled runs neutrally in the list and opened details", as
   const cancelledRow = history.getByRole("button", {
     name: /Keep the original prompt/,
   });
-  await expect(cancelledRow.locator(".badge")).toHaveText("Cancelled");
-  await expect(cancelledRow.locator(".badge")).toHaveClass(/badge-neutral/);
+  await expect(
+    cancelledRow.locator(".badge:not(.badge-control-state)")
+  ).toHaveText("Outcome not established");
+  await expect(cancelledRow.locator(".badge-control-state")).toHaveText(
+    "Cancelled"
+  );
 
   const failedRow = history.getByRole("button", {
     name: /Write a useful reply/,
   });
-  await expect(failedRow.locator(".badge")).toHaveText("Failed");
+  await expect(failedRow.locator(".badge")).toHaveText("Failed (operational)");
   await expect(failedRow.locator(".badge")).toHaveClass(/badge-bad/);
 
   await cancelledRow.click();
 
   const details = page.getByRole("article", { name: "Run details" });
-  await expect(details.locator(".badge")).toHaveText("Cancelled");
-  await expect(details.locator(".badge")).toHaveClass(/badge-neutral/);
+  await expect(details.locator(".badge:not(.badge-control-state)")).toHaveText(
+    "Outcome not established"
+  );
+  await expect(details.locator(".badge-control-state")).toHaveText("Cancelled");
   await expect(
     details.getByRole("heading", { name: "Run cancelled" })
   ).toBeVisible();

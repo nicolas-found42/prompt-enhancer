@@ -5,6 +5,7 @@ import type { OptimizeResult } from "./api";
 import History, {
   BADGE_EXPLANATIONS,
   badgeFor,
+  controlLabelFor,
   type BadgeLabel,
   type RunDetail,
   type RunSummary,
@@ -211,31 +212,65 @@ it("shows one final prompt with additions highlighted when the original was kept
   ).toHaveTextContent("Clarifications: Keep it under 120 words.");
 });
 
-it("does not label an untested run with confirmed details as improved", async () => {
+it("shows weak dimensions linked to a rejected winner in history", async () => {
   await openRunDetails({
     ...savedRun,
     status: "completed",
-    outcome: "unverified",
+    original_prompt: savedRun.prompt,
+    final_prompt: "Write a concise reply.",
+    feedback: "reject",
+    feedback_labels: {
+      status: "linked",
+      weak_dimensions: ["clarity", "specificity"],
+    },
+  });
+
+  expect(
+    screen.getByText("Weak dimensions: clarity, specificity.")
+  ).toBeVisible();
+});
+
+it("shows canonical unverified outcome, style, and reason in feedback context", async () => {
+  await openRunDetails({
+    ...savedRun,
+    status: "completed",
+    outcome: "improved_unverified",
+    outcome_reason: "Answer quality could not be tested.",
+    applied_style: "clearer",
     original_prompt: savedRun.prompt,
     final_prompt: `${savedRun.prompt}\n\nClarifications:\nContext: my notes`,
     original_kept: false,
-    report: { status: "unverified" },
   });
 
-  expect(screen.queryByText("Improved")).not.toBeInTheDocument();
-  expect(screen.getAllByText("Not tested").length).toBeGreaterThanOrEqual(2);
+  expect(
+    screen.getAllByText("Improved (unverified)").length
+  ).toBeGreaterThanOrEqual(2);
+  expect(screen.getByText("Applied style: Clearer · — · —")).toBeVisible();
+  expect(
+    screen.getAllByText("Answer quality could not be tested.")
+  ).toHaveLength(2);
+  expect(
+    screen.getByText(/Improved \(unverified\) · Clearer — Answer quality/)
+  ).toBeVisible();
 });
 
-it("states that an unchanged original was kept and shows it once", async () => {
+it("shows a converged unchanged original with its applied style and reason", async () => {
   await openRunDetails({
     ...savedRun,
     status: "completed",
+    outcome: "converged",
+    applied_style: "clearer",
+    outcome_reason: "The original already met every quality floor.",
     original_prompt: savedRun.prompt,
     final_prompt: savedRun.prompt,
     original_kept: true,
   });
 
-  expect(screen.getByText("Your prompt was kept as-is.")).toBeVisible();
+  expect(screen.getAllByText("Converged")).toHaveLength(2);
+  expect(screen.getByText("Applied style: Clearer · — · —")).toBeVisible();
+  expect(
+    screen.getAllByText("The original already met every quality floor.")
+  ).toHaveLength(2);
   expect(screen.getAllByRole("heading", { name: "Your prompt" })).toHaveLength(
     1
   );
@@ -368,17 +403,17 @@ it("does not let an older search response replace a newer applied query", async 
   expect(screen.queryByText("Older result")).not.toBeInTheDocument();
 });
 
-it("shows cancelled runs with neutral status in the list and opened details", async () => {
+it("shows cancellation as a control state separate from the legacy outcome", async () => {
   const cancelledRun = {
     run_id: "cancelled-run",
     status: "failed",
-    outcome: "cancelled",
+    control_state: "cancelled",
     prompt: "Keep the original prompt.",
   };
   const failedRun = {
     run_id: "failed-run",
     status: "failed",
-    outcome: "failed",
+    outcome: "failed_operational",
     prompt: "Write a useful reply.",
   };
   vi.stubGlobal(
@@ -424,9 +459,11 @@ it("shows cancelled runs with neutral status in the list and opened details", as
 
   render(<History />);
 
-  const cancelledBadge = await screen.findByText("Cancelled");
-  expect(cancelledBadge).toHaveClass("badge-neutral");
-  expect(screen.getByText("Failed")).toHaveClass("badge-bad");
+  expect(await screen.findByText("Outcome not established")).toHaveClass(
+    "badge-neutral"
+  );
+  expect(screen.getByText("Cancelled")).toHaveClass("badge-warn");
+  expect(screen.getByText("Failed (operational)")).toHaveClass("badge-bad");
 
   await user.click(
     screen.getByRole("button", { name: /Keep the original prompt/ })
@@ -435,51 +472,64 @@ it("shows cancelled runs with neutral status in the list and opened details", as
   expect(
     await screen.findByRole("heading", { name: "Run details" })
   ).toBeVisible();
-  const cancelledBadges = screen.getAllByText("Cancelled");
-  expect(cancelledBadges).toHaveLength(2);
-  for (const badge of cancelledBadges)
-    expect(badge).toHaveClass("badge-neutral");
+  expect(screen.getAllByText("Cancelled")).toHaveLength(2);
   expect(screen.getByRole("heading", { name: "Run cancelled" })).toBeVisible();
 });
 
-/**
- * The six labels `badgeFor` can produce, and a run that produces each one.
- * Kept as a literal table so a seventh label added to `badgeFor` without an
- * explanation fails the completeness test below.
- */
+/** The five canonical outcome labels and a deliberately legacy row. */
 const labelCases: { label: BadgeLabel; run: RunSummary }[] = [
   {
-    label: "Cancelled",
-    run: { run_id: "c", prompt: "Case cancelled.", outcome: "cancelled" },
+    label: "Converged",
+    run: { run_id: "cv", prompt: "Case converged.", outcome: "converged" },
   },
   {
-    label: "Failed",
-    run: { run_id: "f", prompt: "Case failed.", status: "failed" },
-  },
-  {
-    label: "Waiting for answers",
-    run: { run_id: "w", prompt: "Case waiting.", status: "needs_input" },
-  },
-  {
-    label: "Not tested",
+    label: "Improved (tested)",
     run: {
-      run_id: "n",
-      prompt: "Case not tested.",
-      outcome: "unverified",
-      original_kept: false,
+      run_id: "it",
+      prompt: "Case tested.",
+      outcome: "improved_tested",
     },
   },
   {
-    label: "Improved",
-    run: { run_id: "i", prompt: "Case improved.", original_kept: false },
+    label: "Improved (unverified)",
+    run: {
+      run_id: "iu",
+      prompt: "Case unverified.",
+      outcome: "improved_unverified",
+    },
   },
   {
-    label: "Unchanged",
-    run: { run_id: "u", prompt: "Case unchanged.", original_kept: true },
+    label: "Impossible",
+    run: { run_id: "im", prompt: "Case impossible.", outcome: "impossible" },
+  },
+  {
+    label: "Failed (operational)",
+    run: {
+      run_id: "fo",
+      prompt: "Case failed.",
+      outcome: "failed_operational",
+    },
+  },
+  {
+    label: "Outcome not established",
+    run: {
+      run_id: "paused",
+      prompt: "Case paused before an outcome.",
+      control_state: "awaiting_approval",
+    },
+  },
+  {
+    label: "Legacy run",
+    run: {
+      run_id: "legacy",
+      prompt: "Case legacy.",
+      status: "completed",
+      legacy_metadata: { source_schema: "old" },
+    },
   },
 ];
 
-it("explains all six badgeFor labels in words, not by colour", () => {
+it("explains all badgeFor labels in words, not by colour", () => {
   expect(Object.keys(BADGE_EXPLANATIONS).sort()).toEqual(
     labelCases.map((entry) => entry.label).sort()
   );
@@ -493,6 +543,17 @@ it("explains all six badgeFor labels in words, not by colour", () => {
     expect(explanation).toMatch(/^[A-Z].*[.]$/);
     expect(explanation.split(" ").length).toBeGreaterThan(6);
   }
+});
+
+it("shows stop control state separately from the outcome pill", () => {
+  const run = {
+    run_id: "stopped",
+    prompt: "Case stopped after an accepted prompt.",
+    outcome: "improved_tested",
+    control_state: "stopped",
+  } as RunSummary;
+  expect(badgeFor(run).label).toBe("Improved (tested)");
+  expect(controlLabelFor(run)).toBe("Stopped");
 });
 
 it("gives every list pill a title for the pointer and a description for the keyboard", async () => {
@@ -547,12 +608,13 @@ it("explains the pill in the opened run details to keyboard and pointer", async 
     ...savedRun,
     run_id: "failed-details",
     status: "failed",
-    report: { status: "failed", failure },
+    outcome: "failed_operational",
+    report: { status: "failed_operational", failure },
     result: {
       status: "failed",
       run_id: "failed-details",
       original_prompt: savedRun.prompt,
-      report: { status: "failed", failure },
+      report: { status: "failed_operational", failure },
       cost: { total: 0 },
       timing: { total_ms: 10 },
     } as OptimizeResult,
@@ -563,9 +625,14 @@ it("explains the pill in the opened run details to keyboard and pointer", async 
     .parentElement as HTMLElement;
   const pill = details.querySelector(".badge") as HTMLElement;
 
-  expect(pill).toHaveTextContent("Failed");
-  expect(pill).toHaveAttribute("title", BADGE_EXPLANATIONS.Failed);
-  expect(pill).toHaveAccessibleDescription(BADGE_EXPLANATIONS.Failed);
+  expect(pill).toHaveTextContent("Failed (operational)");
+  expect(pill).toHaveAttribute(
+    "title",
+    BADGE_EXPLANATIONS["Failed (operational)"]
+  );
+  expect(pill).toHaveAccessibleDescription(
+    BADGE_EXPLANATIONS["Failed (operational)"]
+  );
   // Reachable from the keyboard (it is in the tab order), not only by pointer.
   expect(pill).toHaveAttribute("tabindex", "0");
   pill.focus();

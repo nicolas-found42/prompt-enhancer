@@ -739,7 +739,14 @@ class HttpGateway:
             envelope,
             role=role,
         )
-        answer = _decision_answers(response, [key])[0]
+        try:
+            answer = _decision_answers(response, [key])[0]
+        except ProviderError:
+            self._record_received_decision_answers([request], [key], response)
+            raise
+        model = response.get("model") if isinstance(response, Mapping) else None
+        if not isinstance(model, str) or not model:
+            self._record_received_decision_answers([request], [key], response)
         self.decision_log.append(self._decision_entry(request, answer, response))
         return answer
 
@@ -767,12 +774,50 @@ class HttpGateway:
             envelope,
             role=role,
         )
-        answers = _decision_answers(response, keys)
+        try:
+            answers = _decision_answers(response, keys)
+        except ProviderError:
+            self._record_received_decision_answers(requests, keys, response)
+            raise
+        model = response.get("model") if isinstance(response, Mapping) else None
+        if not isinstance(model, str) or not model:
+            self._record_received_decision_answers(requests, keys, response)
         self.decision_log.extend(
             self._decision_entry(request, answer, response)
             for request, answer in zip(requests, answers, strict=True)
         )
         return answers
+
+    def _record_received_decision_answers(
+        self,
+        requests: Sequence[Mapping[str, Any]],
+        keys: Sequence[str],
+        response: Any,
+    ) -> None:
+        """Log actual received answers when a response fails validation.
+
+        This diagnostic path deliberately does not turn a partial or
+        unidentified response into a successful return value. If the provider
+        omitted its model snapshot, ``None`` records that identity as unknown;
+        the caller still receives the original strict-validation error.
+        """
+        raw_answers = response.get("answers") if isinstance(response, Mapping) else None
+        if not isinstance(raw_answers, Mapping):
+            return
+        model = response.get("model") if isinstance(response, Mapping) else None
+        answered_by = model if isinstance(model, str) and model else None
+        usage = response.get("usage") if isinstance(response, Mapping) else None
+        usage_record = dict(usage) if isinstance(usage, Mapping) else {}
+        for request, key in zip(requests, keys, strict=True):
+            if key in raw_answers:
+                self.decision_log.append(
+                    {
+                        "question": dict(request),
+                        "answer": raw_answers[key],
+                        "answered_by": answered_by,
+                        "usage": usage_record,
+                    }
+                )
 
     def _decisions_route(self, run_id: str | None) -> RouteDecision:
         route = self.route_model(self.config.jev_model, run_id=run_id)

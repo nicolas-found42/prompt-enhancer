@@ -194,6 +194,7 @@ def grade_panel_with_jev(
     cascade_strong_model: str = "",
     pair_outcomes_out: list[dict[str, Any]] | None = None,
     read_criteria: bool = False,
+    round_number: int | None = None,
 ) -> tuple[dict[str, GradeReport], list[dict[str, Any]]]:
     """Grade panel outputs using a compatible persisted order-bias policy.
 
@@ -218,6 +219,8 @@ def grade_panel_with_jev(
         shared = {
             "prompt": run.prompt,
             "output": run.output,
+            **({"candidate_id": run.candidate_id} if round_number is not None else {}),
+            **({"round_number": round_number} if round_number is not None else {}),
             "success_tests": {
                 str(test.get("id", f"t{index}")): {
                     **{key: value for key, value in test.items() if key != "question"},
@@ -237,7 +240,21 @@ def grade_panel_with_jev(
             state = (
                 shared
                 if shared_state
-                else {"prompt": run.prompt, "output": run.output, "test": dict(test)}
+                else {
+                    "prompt": run.prompt,
+                    "output": run.output,
+                    "test": dict(test),
+                    **(
+                        {"candidate_id": run.candidate_id}
+                        if round_number is not None
+                        else {}
+                    ),
+                    **(
+                        {"round_number": round_number}
+                        if round_number is not None
+                        else {}
+                    ),
+                }
             )
             kind = str(test.get("kind", "noul"))
             options = tuple(
@@ -686,6 +703,7 @@ def grade_panel_with_jev(
                 ineligible_pairs=ineligible_pairs,
                 uncertainty_bands=uncertainty_bands,
                 read_criteria=read_criteria,
+                round_number=round_number,
             )
         )
         for output_index, run in enumerate(panel):

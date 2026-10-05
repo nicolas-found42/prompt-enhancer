@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { expect, it } from "vitest";
-import type { OptimizeResult } from "./api";
+import type { CapabilitySummary, OptimizeResult } from "./api";
 import RunReport from "./RunReport";
 
 const baseResult: OptimizeResult = {
@@ -90,6 +90,315 @@ it("renders historical reports without attribution", () => {
   render(<RunReport result={baseResult} />);
   expect(
     screen.queryByRole("region", { name: "Failure attribution" })
+  ).not.toBeInTheDocument();
+});
+
+it("shows candidate evaluation, acceptance reasons, and usable versus raw judgments", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          judgment_provenance: [
+            {
+              capability: "compare",
+              stage: "evaluate",
+              candidate_id: "candidate-a",
+              round_number: 3,
+              source_round: 2,
+              question_key: "compare:structure_added",
+              model: "typesafe/jev-test",
+              raw_answer: { choice: "added" },
+              usable: true,
+            },
+            {
+              capability: "compare",
+              stage: "evaluate",
+              candidate_id: "candidate-a",
+              round_number: 3,
+              source_round: 2,
+              question_key: "compare:verbosity_direction",
+              model: "typesafe/jev-test",
+              raw_answer: { choice: "shorter" },
+              usable: true,
+            },
+          ],
+          evaluation_evidence: {
+            candidates: {
+              "candidate-a": {
+                candidate_id: "candidate-a",
+                round_number: 3,
+                comparison: {
+                  task_preserved: {
+                    raw_answer: { probability_true: 0.94 },
+                    usable: true,
+                    probability: 0.94,
+                  },
+                  no_invented_detail: {
+                    raw_answer: { error: "missing probability" },
+                    usable: false,
+                  },
+                  structure_added: {
+                    raw_answer: { choice: "added" },
+                    usable: true,
+                    selected: "added",
+                  },
+                  verbosity_direction: {
+                    raw_answer: { choice: "shorter" },
+                    usable: true,
+                    selected: "shorter",
+                  },
+                },
+                verification: {
+                  success_test: {
+                    raw_answer: { probability_true: 0.88 },
+                    usable: true,
+                    probability: 0.88,
+                  },
+                },
+                audit: {
+                  safety: {
+                    raw_answer: { probability_true: 0.99 },
+                    usable: true,
+                    probability: 0.99,
+                  },
+                },
+                rerank: {
+                  raw_answer: { probability: 0.7 },
+                  usable: true,
+                  probability: 0.7,
+                },
+                review: {
+                  raw_answer: { decision: "retain" },
+                  usable: true,
+                },
+                score_vector: { scores: { clarity: 0.9 }, passed: true },
+                fidelity: { passed: true },
+                strong_check: { passed: true },
+                downstream_verification: "verified",
+                success_tests: [{ id: "summary" }],
+                success_test_outputs: [{ test_id: "summary", output: "..." }],
+                success_test_grade: { worst: 0.8 },
+                accept: {
+                  raw_answer: { probability_true: 0.92 },
+                  usable: true,
+                  probability: 0.92,
+                  threshold: 0.8,
+                  accepted: true,
+                },
+                eligible: true,
+                rejection_reasons: [],
+              },
+              "candidate-b": {
+                candidate_id: "candidate-b",
+                round_number: 4,
+                comparison: {},
+                verification: {},
+                audit: {},
+                rerank: { raw_answer: null, usable: false },
+                review: { raw_answer: null, usable: false },
+                score_vector: null,
+                fidelity: null,
+                strong_check: null,
+                downstream_verification: "unverified",
+                success_tests: [],
+                success_test_outputs: [],
+                success_test_grade: null,
+                accept: {
+                  raw_answer: { probability_true: 0.2 },
+                  usable: true,
+                  probability: 0.2,
+                  threshold: 0.8,
+                  accepted: false,
+                },
+                eligible: false,
+                rejection_reasons: ["safety floor breached"],
+              },
+            },
+          },
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", {
+    name: "Evaluation and acceptance",
+  });
+  const acceptedCandidate = within(section)
+    .getByText("candidate-a")
+    .closest("li");
+  expect(acceptedCandidate).toHaveTextContent(/round 3.*Eligible/i);
+  expect(
+    within(section).getByText(/Accepted by the acceptance check/i)
+  ).toBeInTheDocument();
+  const comparisonItems = within(section)
+    .getAllByRole("listitem")
+    .filter((item) =>
+      [
+        "Task preserved",
+        "No invented detail",
+        "Structure added",
+        "Verbosity direction",
+      ].some((label) => item.textContent?.trim().startsWith(`${label}:`))
+    );
+  expect(
+    comparisonItems.find((item) => item.textContent?.includes("Task preserved"))
+  ).toHaveTextContent(/usable.*94%/i);
+  expect(
+    comparisonItems.find((item) =>
+      item.textContent?.includes("No invented detail")
+    )
+  ).toHaveTextContent(/not usable/i);
+  expect(
+    comparisonItems.find((item) =>
+      item.textContent?.startsWith("Structure added:")
+    )
+  ).toHaveTextContent(/^Structure added: Usable.*added$/i);
+  expect(
+    comparisonItems.find((item) =>
+      item.textContent?.startsWith("Verbosity direction:")
+    )
+  ).toHaveTextContent(/^Verbosity direction: Usable.*shorter$/i);
+  expect(within(section).getByText(/success test.*88%/i)).toBeInTheDocument();
+  expect(within(section).getByText(/safety.*99%/i)).toBeInTheDocument();
+  expect(
+    within(section).getByText(/safety floor breached/i)
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(/Rejected by the acceptance check/i)
+  ).toBeInTheDocument();
+  expect(within(section).getAllByText(/Not usable/i).length).toBeGreaterThan(0);
+  expect(
+    within(section).getByText(/Judgment provenance \(2\)/i)
+  ).toBeInTheDocument();
+});
+
+it("shows all twelve capability counts and provenance across current and source rounds", () => {
+  const capabilityNames = [
+    "verify",
+    "screen",
+    "noul",
+    "find",
+    "rerank",
+    "classify",
+    "decide",
+    "compare",
+    "extract",
+    "audit",
+    "review",
+    "gate",
+  ];
+  const summaryEntry = (
+    count: number,
+    ran: boolean,
+    stages: Record<string, number>
+  ) => ({
+    count,
+    ran,
+    stages,
+  });
+  const emptySummary = summaryEntry(0, false, {});
+  const capabilities: CapabilitySummary = {
+    verify: emptySummary,
+    screen: emptySummary,
+    noul: emptySummary,
+    find: emptySummary,
+    rerank: emptySummary,
+    classify: emptySummary,
+    decide: emptySummary,
+    compare: emptySummary,
+    extract: emptySummary,
+    audit: emptySummary,
+    review: emptySummary,
+    gate: emptySummary,
+  };
+  capabilities.verify = summaryEntry(2, true, { evaluate: 1, verification: 1 });
+  capabilities.gate = summaryEntry(1, true, { accept: 1 });
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          capabilities_fired: capabilities,
+          judgment_provenance: [
+            {
+              capability: "compare",
+              stage: "evaluate",
+              candidate_id: "candidate-a",
+              round_number: 4,
+              source_round: 2,
+              question_key: "compare:task_preserved",
+              model: "typesafe/jev-test",
+              raw_answer: { probability_true: 0.94 },
+              usable: true,
+              probability: 0.94,
+            },
+            {
+              capability: "audit",
+              stage: "verification",
+              candidate_id: "candidate-b",
+              round_number: 4,
+              source_round: null,
+              question_key: "audit:safety",
+              model: null,
+              raw_answer: { malformed: true },
+              usable: false,
+            },
+            {
+              capability: "gate",
+              stage: "accept",
+              candidate_id: "candidate-b",
+              round_number: 4,
+              source_round: null,
+              question_key: "accept:candidate",
+              model: "typesafe/jev-test",
+              raw_answer: { choice: "reject" },
+              usable: true,
+            },
+          ],
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", {
+    name: "Evaluation and acceptance",
+  });
+  for (const capability of capabilityNames) {
+    expect(
+      within(section).getByText(
+        new RegExp(
+          `${capability}.*${capability === "verify" ? "2" : capability === "gate" ? "1" : "0"} times`,
+          "i"
+        )
+      )
+    ).toBeInTheDocument();
+  }
+  expect(
+    within(section).getByText(/stages: Evaluate 1, Verification 1/i)
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(/gate: 1 times.*ran.*stages: Accept 1/i)
+  ).toBeInTheDocument();
+  expect(
+    within(section).getByText(/candidate-a.*current round 4.*source round 2/i)
+  ).toBeInTheDocument();
+  expect(
+    within(section).getAllByText(
+      /candidate-b.*current round 4.*source round not recorded/i
+    )
+  ).toHaveLength(2);
+  expect(within(section).getByText(/model not recorded/i)).toBeInTheDocument();
+  expect(within(section).getByText(/not usable/i)).toBeInTheDocument();
+  expect(within(section).getAllByText("Raw answer")).toHaveLength(3);
+});
+
+it("keeps the evaluation section absent for historical reports without provenance", () => {
+  render(<RunReport result={baseResult} />);
+  expect(
+    screen.queryByRole("region", { name: "Evaluation and acceptance" })
   ).not.toBeInTheDocument();
 });
 
@@ -551,4 +860,22 @@ it("shows discarded criteria and measured grading request counts", () => {
   const grading = screen.getByRole("region", { name: "Grading requests" });
   expect(grading).toHaveTextContent("4 requests for 4 outputs");
   expect(grading).toHaveTextContent("Estimated serialized input: 5410 bytes");
+});
+
+it("shows the applied style, marking Auto inference", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          ...baseResult.report,
+          improvement_style: "auto",
+          applied_style: "shorter",
+        },
+      }}
+    />
+  );
+
+  expect(document.body.textContent).toContain("Applied style: Shorter");
+  expect(document.body.textContent).toContain("your style was Auto");
 });

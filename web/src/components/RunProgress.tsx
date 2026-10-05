@@ -3,7 +3,6 @@ import { elapsedText, stageLabels, stageOrder } from "../outcome";
 
 type Props = {
   job: Job;
-  estimate: string;
   onCancel: () => void;
 };
 
@@ -11,15 +10,18 @@ const kindTitles: Record<Job["kind"], string> = {
   optimize: "Improving your prompt",
   resume: "Continuing with your answers",
   skip: "Continuing without answers",
-  deep: "Running a Deep pass",
+  continue: "Continuing after your approval",
 };
 
-export default function RunProgress({ job, estimate, onCancel }: Props) {
+function spentText(costTotal: number | undefined): string | null {
+  if (typeof costTotal !== "number" || !Number.isFinite(costTotal)) return null;
+  return `$${costTotal.toFixed(4)} spent`;
+}
+
+export default function RunProgress({ job, onCancel }: Props) {
   const current = job.stage ? stageOrder.indexOf(job.stage) : -1;
-  const round =
-    job.round.round && job.round.max_rounds && job.round.max_rounds > 1
-      ? ` · round ${job.round.round} of ${job.round.max_rounds}`
-      : "";
+  const round = job.round.round ? ` · round ${job.round.round}` : "";
+  const spent = spentText(job.cost_total);
 
   return (
     <section
@@ -37,7 +39,8 @@ export default function RunProgress({ job, estimate, onCancel }: Props) {
             <span className="elapsed">
               {elapsedText(job.elapsed_ms)} elapsed
             </span>
-            {round} · {estimate}
+            {spent && <span className="spent"> · {spent}</span>}
+            {round}
           </p>
         </div>
         <button

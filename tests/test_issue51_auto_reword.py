@@ -222,7 +222,14 @@ def test_equivalent_reword_adopts_without_human_identity_and_rolls_back(
             chat=lambda *_args, **_kwargs: '{"tests":[]}',
             decision=runtime_answer,
         ),
-    ).optimize("Draft the note.", {"clarification_allowed": False})
+    ).optimize(
+        "Draft the note.",
+        {"clarification_allowed": False, "time_limit_s": 0},
+    )
+    assert optimized["status"] == "needs_input"
+    assert optimized["report"]["status"] == "awaiting_approval"
+    assert optimized["report"]["pause"]["reason"] == "time_limit"
+    assert len(optimized["report"]["history"]) == 1
     assert (
         optimized["report"]["diagnosis"]["rubric_version"]
         == result["adopted_version_id"]

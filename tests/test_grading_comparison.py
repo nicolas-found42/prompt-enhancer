@@ -13,9 +13,12 @@ from prompt_enhancer.evaluation.grading_comparison import compare_grading_result
 def test_paired_comparison_separates_estimates_charges_and_independent_labels() -> None:
     after, _ = _run_screened_round()
     before = deepcopy(after)
+    # Synthetic per-test baseline for the same 30 outputs and three approved
+    # tests. These estimates and charges exercise comparison arithmetic; they
+    # are not a measured provider-cost or latency improvement.
     before["report"]["grading_observation"] = {
-        "gateway_batch_calls": 12,
-        "serialized_input_bytes_estimate": 8000,
+        "gateway_batch_calls": 90,
+        "serialized_input_bytes_estimate": 80000,
         "judge_cost_usd_measured": 0.01,
     }
     before["report"].pop("test_screening")
@@ -33,7 +36,7 @@ def test_paired_comparison_separates_estimates_charges_and_independent_labels() 
     )
 
     case = report["cases"][0]
-    assert case["grading_requests"] == {"before": 12.0, "after": 4.0, "delta": -8.0}
+    assert case["grading_requests"] == {"before": 90.0, "after": 30.0, "delta": -60.0}
     assert case["serialized_input_bytes_estimate"]["delta"] < 0
     assert case["grading_agreement"]["rate"] == 1.0
     assert case["per_role_cost_usd_measured"]["before"] == {"judge": 0.01}

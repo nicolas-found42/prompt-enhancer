@@ -31,14 +31,14 @@ class RunStore:
                 run_id TEXT PRIMARY KEY,
                 created_at TEXT NOT NULL,
                 prompt TEXT NOT NULL,
-                tier TEXT NOT NULL,
                 options_json TEXT NOT NULL,
                 result_json TEXT NOT NULL,
                 cost_json TEXT NOT NULL,
                 timing_json TEXT NOT NULL,
                 feedback_json TEXT,
                 feedback_at TEXT,
-                evidence_json TEXT
+                evidence_json TEXT,
+                legacy_metadata_json TEXT NOT NULL DEFAULT '{}'
             )
             """
         )
@@ -46,16 +46,122 @@ class RunStore:
             row[1]
             for row in self._connection.execute("PRAGMA table_info(runs)").fetchall()
         }
+        if "tier" in columns:
+            self._migrate_tier_rows()
+            columns = {
+                row[1]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(runs)"
+                ).fetchall()
+            }
         if "feedback_json" not in columns:
             self._connection.execute("ALTER TABLE runs ADD COLUMN feedback_json TEXT")
         if "feedback_at" not in columns:
             self._connection.execute("ALTER TABLE runs ADD COLUMN feedback_at TEXT")
         if "evidence_json" not in columns:
             self._connection.execute("ALTER TABLE runs ADD COLUMN evidence_json TEXT")
+        if "legacy_metadata_json" not in columns:
+            self._connection.execute(
+                "ALTER TABLE runs ADD COLUMN legacy_metadata_json TEXT NOT NULL DEFAULT '{}'"
+            )
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS runs_created_at_idx ON runs(created_at DESC)"
         )
         self._connection.commit()
+
+    def _migrate_tier_rows(self) -> None:
+        """Copy the pre-consolidation schema without rewriting historical JSON."""
+        old_rows = self._connection.execute("SELECT * FROM runs").fetchall()
+        self._connection.execute("BEGIN")
+        self._connection.execute("ALTER TABLE runs RENAME TO runs_legacy")
+        self._connection.execute(
+            """
+            CREATE TABLE runs (
+                run_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                prompt TEXT NOT NULL,
+                options_json TEXT NOT NULL,
+                result_json TEXT NOT NULL,
+                cost_json TEXT NOT NULL,
+                timing_json TEXT NOT NULL,
+                feedback_json TEXT,
+                feedback_at TEXT,
+                evidence_json TEXT,
+                legacy_metadata_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        try:
+            for row in old_rows:
+                values = dict(row)
+                raw_options = json.loads(values.get("options_json") or "{}")
+                raw_result = json.loads(values.get("result_json") or "{}")
+                raw_evidence = (
+                    json.loads(values["evidence_json"])
+                    if values.get("evidence_json") is not None
+                    else {}
+                )
+                report = (
+                    raw_result.get("report") if isinstance(raw_result, dict) else None
+                )
+                legacy = {
+                    "tier": values.get("tier"),
+                    "options": raw_options,
+                    "result": raw_result,
+                    "cost": json.loads(values.get("cost_json") or "{}"),
+                    "timing": json.loads(values.get("timing_json") or "{}"),
+                    "feedback": (
+                        json.loads(values["feedback_json"])
+                        if values.get("feedback_json") is not None
+                        else None
+                    ),
+                    "feedback_at": values.get("feedback_at"),
+                    "evidence": raw_evidence,
+                }
+                if isinstance(report, dict):
+                    if isinstance(report.get("outcome"), str):
+                        legacy["recorded_outcome"] = report["outcome"]
+                    if isinstance(report.get("applied_style"), str):
+                        legacy["recorded_applied_style"] = report["applied_style"]
+                current_options = dict(raw_options)
+                current_options.pop("tier", None)
+                historical_result: dict[str, Any] = {
+                    "status": "legacy",
+                    "legacy": True,
+                }
+                if isinstance(raw_result, dict):
+                    final_prompt = raw_result.get("final_prompt")
+                    if isinstance(final_prompt, str):
+                        historical_result["final_prompt"] = final_prompt
+                    if isinstance(raw_result.get("original_kept"), bool):
+                        historical_result["original_kept"] = raw_result["original_kept"]
+                self._connection.execute(
+                    """
+                    INSERT INTO runs (
+                        run_id, created_at, prompt, options_json, result_json, cost_json,
+                        timing_json, feedback_json, feedback_at, evidence_json,
+                        legacy_metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        values["run_id"],
+                        values["created_at"],
+                        values["prompt"],
+                        json.dumps(current_options, ensure_ascii=False),
+                        json.dumps(historical_result, ensure_ascii=False),
+                        values.get("cost_json") or "{}",
+                        values.get("timing_json") or "{}",
+                        values.get("feedback_json"),
+                        values.get("feedback_at"),
+                        "{}",
+                        json.dumps(legacy, ensure_ascii=False),
+                    ),
+                )
+            self._connection.execute("DROP TABLE runs_legacy")
+            self._connection.commit()
+        except BaseException:
+            self._connection.rollback()
+            raise
 
     def save_run(self, record: dict[str, Any]) -> str:
         run_id = str(record["run_id"])
@@ -78,21 +184,21 @@ class RunStore:
             "timing",
             "feedback",
             "feedback_at",
+            "legacy_metadata",
         }
         evidence = {key: value for key, value in record.items() if key not in known}
         with self._lock:
             self._connection.execute(
                 """
                 INSERT OR REPLACE INTO runs
-                    (run_id, created_at, prompt, tier, options_json,
-                     result_json, cost_json, timing_json, feedback_json, feedback_at, evidence_json)
+                    (run_id, created_at, prompt, options_json, result_json, cost_json,
+                     timing_json, feedback_json, feedback_at, evidence_json, legacy_metadata_json)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
                     created_at,
                     str(record["prompt"]),
-                    str(record.get("tier", "standard")),
                     json.dumps(record.get("options") or {}, ensure_ascii=False),
                     json.dumps(result, ensure_ascii=False),
                     json.dumps(
@@ -108,6 +214,7 @@ class RunStore:
                     else None,
                     str(feedback_at) if feedback_at is not None else None,
                     json.dumps(evidence, ensure_ascii=False),
+                    json.dumps(record.get("legacy_metadata") or {}, ensure_ascii=False),
                 ),
             )
             self._connection.commit()
@@ -149,7 +256,6 @@ class RunStore:
             "run_id": row["run_id"],
             "created_at": row["created_at"],
             "prompt": row["prompt"],
-            "tier": row["tier"],
             "options": json.loads(row["options_json"]),
             "result": json.loads(row["result_json"]),
             "cost": json.loads(row["cost_json"]),
@@ -159,8 +265,15 @@ class RunStore:
             record["feedback"] = json.loads(row["feedback_json"])
         if "feedback_at" in keys and row["feedback_at"] is not None:
             record["feedback_at"] = row["feedback_at"]
-        if "evidence_json" in keys and row["evidence_json"] is not None:
+        legacy: dict[str, Any] = {}
+        if "legacy_metadata_json" in keys and row["legacy_metadata_json"]:
+            parsed_legacy = json.loads(row["legacy_metadata_json"])
+            if isinstance(parsed_legacy, dict):
+                legacy = parsed_legacy
+        if "evidence_json" in keys and row["evidence_json"] is not None and not legacy:
             record.update(json.loads(row["evidence_json"]))
+        if legacy:
+            record["legacy_metadata"] = legacy
         return record
 
 

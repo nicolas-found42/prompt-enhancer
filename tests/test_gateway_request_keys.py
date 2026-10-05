@@ -25,9 +25,34 @@ FIXTURE = Path(__file__).parent / "fixtures" / "gateway_request_keys.json"
 
 
 def _pipeline_gateway() -> ScriptedGateway:
+    rewrites = {
+        "add_missing_context": "Invented rewrite",
+        "specify_output_format": "Safe rewrite",
+        "add_done_criteria": "Other rewrite",
+    }
+
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
-            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Invented rewrite","specify_output_format":"Safe rewrite","add_done_criteria":"Other rewrite"}'
+            try:
+                names = [
+                    str(item.get("name"))
+                    for item in json.loads(messages[1]["content"]).get("strategies", [])
+                    if isinstance(item, dict) and item.get("name")
+                ]
+            except (ValueError, AttributeError, TypeError, IndexError):
+                names = []
+            payload: dict[str, object] = {
+                "tests": [
+                    {
+                        "question": "Does the output answer?",
+                        "kind": "noul",
+                        "expected": "yes",
+                    }
+                ]
+            }
+            for name in names or list(rewrites):
+                payload[name] = rewrites.get(name, f"{name} rewrite")
+            return json.dumps(payload)
         prompt = messages[0]["content"]
         return {
             "choices": [
@@ -41,6 +66,16 @@ def _pipeline_gateway() -> ScriptedGateway:
 
     def decide(request, **_kwargs):
         if request.get("type") == "choice":
+            if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+                request.get("key", "")
+            ).endswith(":verbosity_direction"):
+                choice = "same"
+                return {
+                    "type": "choice",
+                    "choice": choice,
+                    "probabilities": {choice: 1.0},
+                    "confidence": 1.0,
+                }
             choice = "general" if request.get("key") == "task_type" else "none"
             return {
                 "type": "choice",
@@ -65,24 +100,6 @@ def _pipeline_gateway() -> ScriptedGateway:
     return ScriptedGateway(chat=chat, decision=decide)
 
 
-def _deep_gateway() -> ScriptedGateway:
-    def decide(request, **_kwargs):
-        if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
-            return {
-                "type": "choice",
-                "choice": choice,
-                "probabilities": {choice: 1.0},
-                "confidence": 1.0,
-            }
-        probability = 0.99 if request.get("key") == "gap:goal" else 0.01
-        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
-
-    return ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
-    )
-
-
 def _clarification_gateway() -> ScriptedGateway:
     def chat(_model, _messages, **_kwargs):
         return '{"gaps":{"goal":{"question":"What should the assistant do?","options":[{"value":"summarize","label":"Summarize"},{"value":"analyze","label":"Analyze"}]}},"tests":[]}'
@@ -104,6 +121,15 @@ def _clarification_gateway() -> ScriptedGateway:
                 "confidence": 1.0,
             }
         if request.get("type") == "choice":
+            if str(key).startswith("evaluate:compare:") and str(key).endswith(
+                ":verbosity_direction"
+            ):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             return {
                 "type": "choice",
                 "choice": "none",
@@ -112,6 +138,8 @@ def _clarification_gateway() -> ScriptedGateway:
             }
         if "updated_prompt" in request.get("state", {}):
             return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
+        if str(key).startswith(("score:", "evaluate:")):
+            return {"type": "noul", "probability_true": 1.0, "confidence": 1.0}
         probability = 0.99 if key == "gap:goal" else 0.01
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
@@ -121,15 +149,12 @@ def _clarification_gateway() -> ScriptedGateway:
 def _no_candidate_beats_gateway() -> ScriptedGateway:
     base = _pipeline_gateway().decision_handler
 
-    def decide(request, **kwargs):
-        return base(request, **kwargs)
-
     def only_original_passes(_model, messages, *, role, **_kwargs):
         if role == "writer":
             return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Rewrite one","specify_output_format":"Rewrite two","add_done_criteria":"Rewrite three","remove_contradictions":"Rewrite four","add_example":"Rewrite five","split_into_steps":"Rewrite six"}'
         return "pass" if messages[0]["content"] == "Original request" else "fail"
 
-    return ScriptedGateway(chat=only_original_passes, decision=decide)
+    return ScriptedGateway(chat=only_original_passes, decision=base)
 
 
 def _no_strategy_gateway() -> ScriptedGateway:
@@ -144,43 +169,32 @@ def _no_strategy_gateway() -> ScriptedGateway:
     return ScriptedGateway(chat=gateway.chat_handler, decision=reject_every_strategy)
 
 
-def _kept_over_two_rounds(optimizer: PromptOptimizer) -> list[Any]:
-    return [
-        optimizer.optimize(
-            "Original request", {"tier": "standard", "clarification_allowed": False}
-        )
-    ]
-
-
-def _deep_pass_after_kept(optimizer: PromptOptimizer) -> list[Any]:
-    # The Deep pass rebuilds its first round's failures from the stored run.
-    kept = optimizer.optimize(
-        "Original request", {"tier": "standard", "clarification_allowed": False}
-    )
-    return [kept, optimizer.start_deep_pass(kept["run_id"])]
+def _kept_original_converged(optimizer: PromptOptimizer) -> list[Any]:
+    return [optimizer.optimize("Original request", {"clarification_allowed": False})]
 
 
 def _no_strategy(optimizer: PromptOptimizer) -> list[Any]:
     return [
         optimizer.optimize(
-            "Original request", {"tier": "fast", "clarification_allowed": False}
+            "Original request",
+            {"clarification_allowed": False, "time_limit_s": 0},
         )
     ]
 
 
 def _full_pipeline(optimizer: PromptOptimizer) -> list[Any]:
+    # The scripted candidates fail fidelity. Stop at a user budget boundary so
+    # this request-key fixture inspects one rejection round without inventing
+    # a terminal outcome for transient candidate evidence.
     return [
         optimizer.optimize(
-            "Original request", {"tier": "fast", "clarification_allowed": False}
+            "Original request",
+            {
+                "clarification_allowed": False,
+                "time_limit_s": 0,
+            },
         )
     ]
-
-
-def _deep_pass(optimizer: PromptOptimizer) -> list[Any]:
-    first = optimizer.optimize(
-        "Write a clear report.", {"tier": "fast", "clarification_allowed": False}
-    )
-    return [first, optimizer.start_deep_pass(first["run_id"])]
 
 
 def _clarify_resume_edit(optimizer: PromptOptimizer) -> list[Any]:
@@ -197,10 +211,8 @@ SCENARIOS: dict[
     str, tuple[Callable[[], ScriptedGateway], Callable[[PromptOptimizer], list[Any]]]
 ] = {
     "full_pipeline": (_pipeline_gateway, _full_pipeline),
-    "deep_pass": (_deep_gateway, _deep_pass),
     "clarify_resume_edit": (_clarification_gateway, _clarify_resume_edit),
-    "kept_over_two_rounds": (_no_candidate_beats_gateway, _kept_over_two_rounds),
-    "deep_pass_after_kept": (_no_candidate_beats_gateway, _deep_pass_after_kept),
+    "kept_original_converged": (_no_candidate_beats_gateway, _kept_original_converged),
     "no_strategy": (_no_strategy_gateway, _no_strategy),
 }
 
@@ -226,8 +238,10 @@ def test_gateway_request_keys_are_unchanged(tmp_path: Path, name: str) -> None:
 
     if os.environ.get("UPDATE_GATEWAY_KEYS"):
         pinned = json.loads(FIXTURE.read_text()) if FIXTURE.exists() else {}
+        pinned = {key: value for key, value in pinned.items() if key in SCENARIOS}
         pinned[name] = keys
         FIXTURE.write_text(json.dumps(pinned, indent=2, sort_keys=True) + "\n")
 
     pinned = json.loads(FIXTURE.read_text())
+    assert set(pinned) == set(SCENARIOS), "request-key fixture contains stale scenarios"
     assert keys == pinned[name]
