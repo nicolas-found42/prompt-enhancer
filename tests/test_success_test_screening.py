@@ -310,10 +310,10 @@ def test_an_unfinished_success_test_reply_after_prose_is_still_repaired() -> Non
     ]
 
 
-def test_a_success_test_reply_without_json_still_fails_to_compile() -> None:
+def test_legacy_success_test_reply_without_json_still_fails_to_compile() -> None:
     with pytest.raises(ValueError):
         SuccessTestCompiler(
-            _accepting_gateway("I cannot write tests for that.")
+            _accepting_gateway("I cannot write tests for that."), instruction_version=13
         ).compile("Summarize the report in two sentences.")
 
 

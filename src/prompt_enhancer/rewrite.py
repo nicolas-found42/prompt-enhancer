@@ -1,4 +1,4 @@
-"""The candidate writer: one structured writer call per round.
+"""The candidate writer: structured replies with bounded read recovery.
 
 The writer receives the original prompt, diagnosis, strategies and previous
 failures as state data. The instructions contain no user text, so a prompt
@@ -11,9 +11,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from .catalog import DEFAULT_GO_WRITER
-from .gateway import Gateway, completion_text, writer_messages
+from .gateway import Gateway, completion_text
 from .reply_json import parse_reply_json
 from .styles import validated_style_authorization
+from .writer_replies import read_writer_reply
 
 # Version 1 is the historical request without diagnosis; version 2 adds it;
 # version 3 adds explicit edit permissions and treats prior fidelity evidence as
@@ -29,12 +30,13 @@ from .styles import validated_style_authorization
 # Version 12 reads success criteria with a batched Jev request in the grading
 # cascade (`criterion_reading.CRITERION_READING_MIN_VERSION`) instead of regexes.
 # Version 13 records advisory Jev relationships across accepted success tests.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
-CURRENT_WRITER_INSTRUCTION_VERSION = 13
+# Version 14 retries unusable required writer replies once and rejects malformed test items.
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+CURRENT_WRITER_INSTRUCTION_VERSION = 14
 
 
 class CandidateWriter:
-    """Write a rewrite for every selected strategy in one writer call."""
+    """Write rewrites for every selected strategy as one batch."""
 
     def __init__(
         self,
@@ -42,15 +44,21 @@ class CandidateWriter:
         *,
         writer_model: str = DEFAULT_GO_WRITER,
         instruction_version: int = CURRENT_WRITER_INSTRUCTION_VERSION,
+        writer_attempts: list[dict[str, Any]] | None = None,
+        run_id: str | None = None,
+        round_number: int | None = None,
     ) -> None:
         if instruction_version not in WRITER_INSTRUCTION_VERSIONS:
             raise ValueError("unknown candidate writer instruction version")
         self.gateway = gateway
         self.writer_model = writer_model
         self.instruction_version = instruction_version
+        self.writer_attempts = writer_attempts if writer_attempts is not None else []
+        self.run_id = run_id
+        self.round_number = round_number
 
     def generate_candidates(self, request: Any) -> Mapping[str, str]:
-        """Write every selected strategy in one structured model call."""
+        """Write every selected strategy in a structured reply."""
         state = request.to_dict()
         if "applied_style" in state or "style_authorization" in state:
             state["style_authorization"] = validated_style_authorization(
@@ -108,6 +116,7 @@ class CandidateWriter:
             11: current_instructions,
             12: current_instructions,
             13: current_instructions,
+            14: current_instructions,
         }[self.instruction_version]
         if state.get("style_authorization"):
             instructions += (
@@ -117,28 +126,40 @@ class CandidateWriter:
                 "but never additional task facts, scope, deliverables, or success criteria. "
                 "Preserve exact output, hard literals, and every stated constraint."
             )
-        response = self.gateway.chat(
-            self.writer_model, writer_messages(instructions, state), role="writer"
+
+        def read(response: Any) -> Mapping[str, str]:
+            payload = parse_reply_json(
+                completion_text(response),
+                accept=lambda value: (
+                    isinstance(value, Mapping)
+                    and all(strategy.name in value for strategy in request.strategies)
+                ),
+            )
+            if not isinstance(payload, Mapping):
+                raise TypeError("candidate writer must return a JSON object")
+            if any(
+                not isinstance(payload.get(strategy.name), str)
+                or not payload[strategy.name].strip()
+                for strategy in request.strategies
+            ):
+                raise ValueError("candidate writer omitted a selected strategy")
+            return {
+                strategy.name: payload[strategy.name].strip()
+                for strategy in request.strategies
+            }
+
+        return read_writer_reply(
+            self.gateway,
+            model=self.writer_model,
+            instructions=instructions,
+            state=state,
+            read=read,
+            operation="candidates",
+            instruction_version=self.instruction_version,
+            attempts=self.writer_attempts,
+            run_id=self.run_id,
+            round_number=self.round_number,
         )
-        payload = parse_reply_json(
-            completion_text(response),
-            accept=lambda value: (
-                isinstance(value, Mapping)
-                and all(strategy.name in value for strategy in request.strategies)
-            ),
-        )
-        if not isinstance(payload, Mapping):
-            raise TypeError("candidate writer must return a JSON object")
-        if any(
-            not isinstance(payload.get(strategy.name), str)
-            or not payload[strategy.name].strip()
-            for strategy in request.strategies
-        ):
-            raise ValueError("candidate writer omitted a selected strategy")
-        return {
-            strategy.name: payload[strategy.name].strip()
-            for strategy in request.strategies
-        }
 
 
 __all__ = [

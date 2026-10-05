@@ -67,6 +67,7 @@ from .strategies import (
 from .strong_check import StrongCheckPolicy, StrongCheckReport
 from .styles import style_authorization_for
 from .success_tests import SuccessTestCompiler, SuccessTestScreenCache
+from .writer_replies import WRITER_REPLY_RECOVERY_MIN_VERSION
 
 StageCallback = Callable[[str], None]
 
@@ -224,6 +225,7 @@ class RoundPlan:
     settings: Settings
     faithfulness_threshold: float
     writer_instruction_version: int
+    writer_attempts: list[dict[str, Any]] = field(default_factory=list)
     prior_failures: tuple[str, ...] = ()
     """Summaries of the previous round's losing candidates."""
     grading_policy: OrderBiasPolicy | None = None
@@ -277,6 +279,7 @@ class RoundOutcome:
     """Actual persisted winning evidence when a resumed terminal round regresses."""
     evaluation_evidence: Mapping[str, Any] | None = None
     judgment_provenance: tuple[Mapping[str, Any], ...] = ()
+    writer_attempts: tuple[Mapping[str, Any], ...] | None = None
 
     @property
     def converged(self) -> bool:
@@ -319,6 +322,12 @@ class RoundOutcome:
         return selected.strategy if selected is not None else None
 
     def report(self) -> dict[str, Any]:
+        report = self._report()
+        if self.writer_attempts is not None:
+            report["writer_attempts"] = [dict(item) for item in self.writer_attempts]
+        return report
+
+    def _report(self) -> dict[str, Any]:
         """The run report for this round, in the shape the web app and history read."""
         plan = self.plan
         models = plan.settings.model_roles()
@@ -494,6 +503,7 @@ class RoundOutcome:
                 "output_screen",
                 "grading_policy",
                 "test_screening",
+                "writer_attempts",
                 "grading_observation",
                 "grading_cascade",
                 "lossless_restructuring",
@@ -633,6 +643,13 @@ def run_round(
     settings = plan.settings
     working_prompt = plan.working_prompt
     round_log_start = len(gateway.decision_log)
+    writer_attempt_start = len(plan.writer_attempts)
+
+    def writer_evidence() -> tuple[Mapping[str, Any], ...] | None:
+        if plan.writer_instruction_version < WRITER_REPLY_RECOVERY_MIN_VERSION:
+            return None
+        return tuple(dict(item) for item in plan.writer_attempts[writer_attempt_start:])
+
     candidate_prompts: dict[str, str] = {"original": working_prompt}
     model_view = model_diagnosis(plan.diagnosis)
     screening_evidence: Mapping[str, Any] | None = None
@@ -648,6 +665,7 @@ def run_round(
             original_kept=working_prompt == plan.prompt,
             tests=tests,
             test_screening=screening_evidence,
+            writer_attempts=writer_evidence(),
             judgment_provenance=round_judgment_provenance(
                 gateway,
                 round_log_start,
@@ -669,6 +687,9 @@ def run_round(
             screen_cache=plan.screen_cache,
             decision_policy=plan.decision_policy,
             run_id=plan.run_id,
+            instruction_version=plan.writer_instruction_version,
+            writer_attempts=plan.writer_attempts,
+            round_number=plan.round_number,
         ).compile(working_prompt)
     except (ValueError, TypeError) as exc:
         raise ProviderError(
@@ -783,6 +804,11 @@ def run_round(
         gateway,
         writer_model=settings.writer_model,
         instruction_version=plan.writer_instruction_version,
+        writer_attempts=plan.writer_attempts,
+        run_id=plan.run_id
+        if plan.writer_instruction_version >= WRITER_REPLY_RECOVERY_MIN_VERSION
+        else None,
+        round_number=plan.round_number,
     )
     lossless_build: LosslessBuild | None = None
 
@@ -1213,6 +1239,7 @@ def run_round(
         if lossless_build is not None
         else None,
         test_screening=screening_evidence,
+        writer_attempts=writer_evidence(),
         grading_observation=grading_observation
         if plan.writer_instruction_version >= 5
         else None,

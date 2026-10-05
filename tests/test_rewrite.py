@@ -496,14 +496,14 @@ def test_candidate_writer_reads_a_reply_wrapped_in_prose(wrap) -> None:
     }
 
 
-def test_candidate_writer_still_rejects_a_reply_without_json() -> None:
+def test_legacy_candidate_writer_still_rejects_a_reply_without_json() -> None:
     gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: "I cannot rewrite that.")
 
     with pytest.raises(ValueError):
         search_strategies(
             "Write a summary.",
             settings=Settings(),
-            writer=CandidateWriter(gateway),
+            writer=CandidateWriter(gateway, instruction_version=13),
         )
 
 
