@@ -59,6 +59,19 @@ describe("outcomeOf", () => {
     expect(outcome.reason).toContain("unchanged");
   });
 
+  it("names the impossible outcome without claiming a violation", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "impossible",
+        diagnosis: { confirmed_gaps: [] },
+      })
+    );
+    expect(outcome.headline).toBe(
+      "Style and requirements cannot both be satisfied"
+    );
+    expect(outcome.reason).toContain("no violation was emitted");
+  });
+
   it("still renders saved runs from before the always-attempt loop", () => {
     const outcome = outcomeOf({
       ...result({ status: "unverified" }),

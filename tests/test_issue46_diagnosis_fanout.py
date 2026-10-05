@@ -68,6 +68,18 @@ class BatchGateway(ScriptedGateway):
         }
 
 
+def _diagnosis_batches(gateway: BatchGateway) -> list[list[dict]]:
+    """Batches from the diagnosis fanout, excluding Understand-stage batches."""
+    return [
+        batch
+        for batch in gateway.batches
+        if batch
+        and not all(
+            str(request.get("key", "")).startswith("understand:") for request in batch
+        )
+    ]
+
+
 def _run(
     gateway: BatchGateway,
     *,
@@ -96,7 +108,7 @@ def test_normal_fanout_uses_one_request_without_pointer_and_matches_sequential()
     current = _run(fanout)
     baseline = _run(sequential, speculative=False, observe_sequential=True)
 
-    assert len(fanout.batches) == 1
+    assert len(_diagnosis_batches(fanout)) == 1
     assert current["report"]["diagnosis"]["request_evidence"]["provider_requests"] == 1
     assert baseline["report"]["diagnosis"]["request_evidence"]["provider_requests"] > 1
     assert (
@@ -111,7 +123,7 @@ def test_normal_fanout_uses_one_request_without_pointer_and_matches_sequential()
         current["report"]["diagnosis"]["problem_sentences"]
         == baseline["report"]["diagnosis"]["problem_sentences"]
     )
-    keys = {str(request["key"]) for request in fanout.batches[0]}
+    keys = {str(request["key"]) for request in _diagnosis_batches(fanout)[0]}
     assert {
         "task_type",
         "task_type:communication",
@@ -128,8 +140,8 @@ def test_surviving_pointer_uses_one_confirmation_request() -> None:
     result = _run(gateway)
     baseline = _run(sequential, speculative=False)
 
-    assert len(gateway.batches) == 2
-    assert {str(request["key"]) for request in gateway.batches[1]} == {
+    assert len(_diagnosis_batches(gateway)) == 2
+    assert {str(request["key"]) for request in _diagnosis_batches(gateway)[1]} == {
         "problem:vagueness:s0001"
     }
     evidence = result["report"]["diagnosis"]["request_evidence"]
@@ -228,9 +240,9 @@ def test_active_rubric_question_joins_the_first_provider_request(
         {"tier": "fast", "clarification_allowed": False},
     )
 
-    assert len(gateway.batches) == 1
+    assert len(_diagnosis_batches(gateway)) == 1
     assert "rubric:missing-audience" in {
-        str(request["key"]) for request in gateway.batches[0]
+        str(request["key"]) for request in _diagnosis_batches(gateway)[0]
     }
     assert result["report"]["diagnosis"]["request_evidence"]["complete"] is True
 

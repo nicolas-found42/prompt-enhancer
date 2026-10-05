@@ -25,9 +25,34 @@ FIXTURE = Path(__file__).parent / "fixtures" / "gateway_request_keys.json"
 
 
 def _pipeline_gateway() -> ScriptedGateway:
+    rewrites = {
+        "add_missing_context": "Invented rewrite",
+        "specify_output_format": "Safe rewrite",
+        "add_done_criteria": "Other rewrite",
+    }
+
     def chat(_model, messages, *, role, **_kwargs):
         if role == "writer":
-            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Invented rewrite","specify_output_format":"Safe rewrite","add_done_criteria":"Other rewrite"}'
+            try:
+                names = [
+                    str(item.get("name"))
+                    for item in json.loads(messages[1]["content"]).get("strategies", [])
+                    if isinstance(item, dict) and item.get("name")
+                ]
+            except (ValueError, AttributeError, TypeError, IndexError):
+                names = []
+            payload: dict[str, object] = {
+                "tests": [
+                    {
+                        "question": "Does the output answer?",
+                        "kind": "noul",
+                        "expected": "yes",
+                    }
+                ]
+            }
+            for name in names or list(rewrites):
+                payload[name] = rewrites.get(name, f"{name} rewrite")
+            return json.dumps(payload)
         prompt = messages[0]["content"]
         return {
             "choices": [

@@ -113,7 +113,11 @@ def test_current_screen_recording_strictly_replays_and_v5_stays_historical(
 
     replayed = engine.optimize(
         "Read the background notes. Summarize the report.",
-        {"tier": "fast", "clarification_allowed": False},
+        {
+            "tier": "fast",
+            "clarification_allowed": False,
+            "improvement_style": "faithful_transform",
+        },
     )
 
     assert replayed["report"]["output_screen"] == original["report"]["output_screen"]

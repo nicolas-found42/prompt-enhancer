@@ -219,6 +219,12 @@ class RoundPlan:
     grading_policy: OrderBiasPolicy | None = None
     screen_cache: SuccessTestScreenCache | None = None
     decision_policy: DecisionPolicy | None = None
+    applied_style: str = "auto"
+    """The improvement style this round writes with (Auto already resolved)."""
+    hard_constraints: tuple[str, ...] = ()
+    """Audited literal requirements every candidate must preserve verbatim."""
+    route_strategies: tuple[str, ...] = ()
+    """The Route bundle's strategy names; empty means the full library."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,6 +498,12 @@ def run_round(
         if plan.writer_instruction_version >= 4
         else STRATEGY_LIBRARY
     )
+    if plan.route_strategies:
+        # The Route stage picked this bundle; candidates come only from it.
+        wanted = set(plan.route_strategies)
+        strategy_library = tuple(
+            item for item in strategy_library if item.name in wanted
+        )
     always_improve_view = dict(model_view)
     if no_gaps:
         # With no confirmed gaps the strategy search has no diagnosed weakness
@@ -724,6 +736,14 @@ def run_round(
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
+    hard_violations = {
+        candidate.candidate_id: tuple(
+            literal
+            for literal in plan.hard_constraints
+            if literal not in candidate.text
+        )
+        for candidate in candidates
+    }
     ranking_candidates = [
         RankingCandidate(
             candidate_id=candidate.candidate_id,
@@ -752,7 +772,8 @@ def run_round(
             and original_grade.unresolved_screen_outputs == 0
             and panel_grades[candidate.candidate_id].unresolved_grade_outputs == 0
             and original_grade.unresolved_grade_outputs == 0
-            and panel_grades[candidate.candidate_id].detected_outputs == 0,
+            and panel_grades[candidate.candidate_id].detected_outputs == 0
+            and not hard_violations[candidate.candidate_id],
             rejection_reasons=(
                 (
                     ()
@@ -761,6 +782,10 @@ def run_round(
                         "candidate failed fidelity checks",
                         *fidelity.rejection_reasons,
                     )
+                )
+                + tuple(
+                    f"hard requirement violated: {literal!r} must be preserved verbatim"
+                    for literal in hard_violations[candidate.candidate_id]
                 )
                 + (
                     ("weak-panel grading was incomplete or oversized",)
