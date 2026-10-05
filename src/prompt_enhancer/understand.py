@@ -227,6 +227,29 @@ def run_understand(
     candidates = extract_literal_candidates(prompt)
     hard_constraints: list[str] = []
     if candidates:
+        extraction_requests = [
+            {
+                "model": judge_model,
+                "key": f"understand:extract:{index}",
+                "type": "choice",
+                "query": jev_questions.UNDERSTAND_EXTRACT_QUESTION,
+                "criteria": jev_questions.UNDERSTAND_EXTRACT_CRITERIA,
+                "state": {"prompt": prompt, "extracted_span": candidate},
+            }
+            for index, candidate in enumerate(candidates)
+        ]
+        extraction_answers = gateway.decide_batch(
+            extraction_requests, role="judge", run_id=run_id
+        )
+        selected_candidates = []
+        for candidate, raw in zip(candidates, extraction_answers, strict=True):
+            decision = parse_decision(raw)
+            if (
+                isinstance(decision, ChoiceDecision)
+                and decision.selected == "keep"
+                and decision.confidence >= AUDIT_KEEP_PROBABILITY
+            ):
+                selected_candidates.append(candidate)
         audit_requests = [
             {
                 "model": judge_model,
@@ -235,13 +258,15 @@ def run_understand(
                 "query": jev_questions.understand_audit_question(candidate),
                 "state": {"prompt": prompt, "extracted": candidate},
             }
-            for index, candidate in enumerate(candidates)
+            for index, candidate in enumerate(selected_candidates)
         ]
-        audit_answers = gateway.decide_batch(
-            audit_requests, role="judge", run_id=run_id
+        audit_answers = (
+            gateway.decide_batch(audit_requests, role="judge", run_id=run_id)
+            if audit_requests
+            else []
         )
         dropped: list[str] = []
-        for candidate, raw in zip(candidates, audit_answers, strict=True):
+        for candidate, raw in zip(selected_candidates, audit_answers, strict=True):
             decision = parse_decision(raw)
             probability = (
                 decision.probability if isinstance(decision, NoulDecision) else 0.0
@@ -253,7 +278,8 @@ def run_understand(
         provenance["extract"] = {
             "fired": True,
             "candidates": list(candidates),
-            "key_prefix": "understand:audit",
+            "selected": list(selected_candidates),
+            "keys": [item["key"] for item in extraction_requests],
         }
         provenance["audit"] = {
             "fired": True,

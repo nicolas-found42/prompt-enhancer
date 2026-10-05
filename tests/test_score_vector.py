@@ -75,6 +75,15 @@ def _gateway(
         key = str(request.get("key", ""))
         state = request.get("state", {})
         if request.get("type") == "choice":
+            if key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
             if key.startswith("fidelity:sentence:"):
                 return {
                     "type": "choice",

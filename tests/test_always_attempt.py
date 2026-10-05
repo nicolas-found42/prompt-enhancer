@@ -52,6 +52,10 @@ def _gateway(
                 selected, probability = "general", 1.0
             elif key == "strategy_choice":
                 selected, probability = "add_missing_context", 1.0
+            elif key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                selected, probability = "same", 1.0
             elif key.startswith("fidelity:sentence:"):
                 selected, probability = (
                     support,
@@ -94,6 +98,8 @@ def _gateway(
                 and state["candidate_prompt"] == state["original_prompt"]
                 else score_probability
             )
+        elif key.startswith("evaluate:"):
+            probability = 0.99
         else:
             probability = 0.01
         return {

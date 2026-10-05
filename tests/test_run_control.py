@@ -83,6 +83,16 @@ def _gateway(
         nonlocal baseline_score_attempts
         key = str(request.get("key", ""))
         if request.get("type") == "choice":
+            if key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                selected = "same"
+                return {
+                    "type": "choice",
+                    "choice": selected,
+                    "probabilities": {selected: 1.0},
+                    "confidence": 1.0,
+                }
             if key == "task_type":
                 selected, probability = "general", 1.0
             elif key == "strategy_choice":
@@ -131,6 +141,8 @@ def _gateway(
                 probability = 0.01
         elif key.startswith("grade_"):
             probability = float(request["state"]["output"] == "pass")
+        elif key.startswith("evaluate:"):
+            probability = 0.99
         else:
             probability = 0.01
         return {

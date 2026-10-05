@@ -112,6 +112,28 @@ def _winning_score_vector(
     if not isinstance(selected_id, str) or not selected_id:
         return None, None
 
+    selection = report_map.get("selection_evidence")
+    selected_candidate = (
+        selection.get("selected_candidate") if isinstance(selection, Mapping) else None
+    )
+    if (
+        isinstance(selected_candidate, Mapping)
+        and str(selected_candidate.get("candidate_id") or "") == selected_id
+    ):
+        metadata = selected_candidate.get("metadata")
+        vector = metadata.get("score_vector") if isinstance(metadata, Mapping) else None
+        scores = vector.get("scores") if isinstance(vector, Mapping) else None
+        if isinstance(scores, Mapping):
+            try:
+                selected_scores = {
+                    name: float(scores[name]) for name in SCORE_DIMENSIONS
+                }
+            except (KeyError, TypeError, ValueError):
+                return selected_id, None
+            if any(not 0.0 <= score <= 1.0 for score in selected_scores.values()):
+                return selected_id, None
+            return selected_id, selected_scores
+
     for candidate in detail.get("candidates", ()):
         if not isinstance(candidate, Mapping):
             continue

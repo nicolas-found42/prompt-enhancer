@@ -17,6 +17,10 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from . import jev_questions
+from .candidate_evaluation import (
+    evaluate_candidate_packages,
+    round_judgment_provenance,
+)
 from .config import Settings
 from .convergence import (
     CONVERGED_STATUS,
@@ -230,11 +234,15 @@ class RoundPlan:
     applied_style: str = "auto"
     """The improvement style this round writes with (Auto already resolved)."""
     hard_constraints: tuple[str, ...] = ()
-    """Audited literal requirements every candidate must preserve verbatim."""
+    """Audited requirements every candidate must preserve semantically."""
+    exact_output: bool = False
+    """Whether selected literals are an exact-output contract."""
     route_strategies: tuple[str, ...] = ()
     """The Route bundle's strategy names; empty means the full library."""
     prior_vector: Mapping[str, Any] | None = None
     """The previous round's best score vector, for the convergence comparison."""
+    round_number: int = 1
+    """The absolute run round; candidate IDs may repeat in a later round."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +277,8 @@ class RoundOutcome:
     """The convergence decision (#169), recorded for the report and history."""
     restored_evidence: Mapping[str, Any] | None = None
     """Actual persisted winning evidence when a resumed terminal round regresses."""
+    evaluation_evidence: Mapping[str, Any] | None = None
+    judgment_provenance: tuple[Mapping[str, Any], ...] = ()
 
     @property
     def converged(self) -> bool:
@@ -340,6 +350,10 @@ class RoundOutcome:
                 "summary": self.summary,
                 "diagnosis": dict(plan.diagnosis),
                 "tests": list(self.tests),
+                "evaluation_evidence": dict(self.evaluation_evidence or {}),
+                "judgment_provenance": [
+                    dict(item) for item in self.judgment_provenance
+                ],
                 "grading_policy": grading_policies,
                 "candidates": [],
                 "per_model": {},
@@ -379,6 +393,8 @@ class RoundOutcome:
             "summary": self.summary,
             "diagnosis": plan.diagnosis,
             "tests": list(self.tests),
+            "evaluation_evidence": dict(self.evaluation_evidence or {}),
+            "judgment_provenance": [dict(item) for item in self.judgment_provenance],
             "grading_policy": grading_policies,
             "jev_answers": list(self.grading_answers),
             "candidates": list(self.candidates),
@@ -480,6 +496,8 @@ class RoundOutcome:
                 "per_model",
                 "strong_check",
                 "selection_evidence",
+                "evaluation_evidence",
+                "judgment_provenance",
                 "output_screen",
                 "grading_policy",
                 "test_screening",
@@ -522,6 +540,8 @@ def _ranking_candidate(
         support_prompt=plan.prompt,
         preservation_proof=candidate.metadata.get("lossless_proof"),
         legacy_protocol=plan.writer_instruction_version < 4,
+        candidate_id=candidate.candidate_id,
+        round_number=plan.round_number,
     )
     vector = score_candidate(
         gateway,
@@ -533,10 +553,14 @@ def _ranking_candidate(
         floors=settings.score_floors,
         judge_model=settings.judge_model,
         run_id=plan.run_id,
+        candidate_id=candidate.candidate_id,
+        round_number=plan.round_number,
     )
     grade = panel_grades[candidate.candidate_id]
     hard_violated = tuple(
-        literal for literal in plan.hard_constraints if literal not in candidate.text
+        literal
+        for literal in plan.hard_constraints
+        if plan.exact_output and literal not in candidate.text
     )
     eligible = (
         fidelity.passed
@@ -613,6 +637,8 @@ def run_round(
     stage = on_stage or (lambda _name: None)
     settings = plan.settings
     working_prompt = plan.working_prompt
+    round_log_start = len(gateway.decision_log)
+    candidate_prompts: dict[str, str] = {"original": working_prompt}
     model_view = model_diagnosis(plan.diagnosis)
     screening_evidence: Mapping[str, Any] | None = None
 
@@ -627,6 +653,12 @@ def run_round(
             original_kept=working_prompt == plan.prompt,
             tests=tests,
             test_screening=screening_evidence,
+            judgment_provenance=round_judgment_provenance(
+                gateway,
+                round_log_start,
+                candidate_prompts,
+                plan.round_number,
+            ),
             **_spent(gateway),
         )
 
@@ -712,6 +744,7 @@ def run_round(
             },
             "state": {
                 "prompt": working_prompt,
+                "round_number": plan.round_number,
                 "diagnosis": always_improve_view,
                 "prior_failures": list(plan.prior_failures),
             },
@@ -735,6 +768,7 @@ def run_round(
                 "query": jev_questions.STRATEGY_RECHECK_QUESTION,
                 "state": {
                     "prompt": working_prompt,
+                    "round_number": plan.round_number,
                     "diagnosis": model_view,
                     "strategy": strategy.to_dict(),
                 },
@@ -821,6 +855,9 @@ def run_round(
             rejections=tuple(rejections),
         )
     candidates = list(search.candidates)
+    candidate_prompts.update(
+        {candidate.candidate_id: candidate.text for candidate in candidates}
+    )
     if not candidates:
         rejections = len(search.rejections)
         if not tests and working_prompt != plan.prompt:
@@ -905,6 +942,7 @@ def run_round(
         pair_outcomes_out=pair_outcomes
         if plan.writer_instruction_version >= 8
         else None,
+        round_number=plan.round_number,
         measurements=grading_observation
         if plan.writer_instruction_version >= 5
         else None,
@@ -940,52 +978,140 @@ def run_round(
         if tests
         else None
     )
-    ranking = rank_candidates(
-        RankingCandidate(
-            "original", working_prompt, "original", "baseline", original_grade
+    baseline_vector = score_candidate(
+        gateway,
+        working_prompt,
+        working_prompt,
+        fidelity=FidelityResult(True, True, True, {"identity": True}),
+        applied_style=plan.applied_style,
+        style_bundle=_style_bundle(plan),
+        floors=settings.score_floors,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
+        candidate_id="original",
+        round_number=plan.round_number,
+    )
+    baseline_graded = not tests or (
+        original_grade is not None
+        and original_grade.worst > 0
+        and original_grade.ungradable_outputs == 0
+        and original_grade.unresolved_screen_outputs == 0
+        and original_grade.unresolved_grade_outputs == 0
+        and original_grade.detected_outputs == 0
+    )
+    baseline = RankingCandidate(
+        "original",
+        working_prompt,
+        "original",
+        "baseline",
+        original_grade,
+        eligible=baseline_vector.passed and baseline_graded,
+        rejection_reasons=(
+            ()
+            if baseline_vector.passed and baseline_graded
+            else (
+                *baseline_vector.judged_breach_reasons,
+                *(
+                    ("original baseline failed success-test eligibility",)
+                    if not baseline_graded
+                    else ()
+                ),
+            )
         ),
+        metadata={
+            "fidelity": {"passed": True, "identity": True},
+            "score_vector": {
+                **baseline_vector.to_dict(),
+                "source": "original_baseline",
+            },
+            "convergence_source": "original_baseline",
+        },
+    )
+    preliminary = rank_candidates(
+        baseline,
         ranking_candidates,
         strong_check=strong,
         allow_unverified_selection=not tests,
     )
-    if ranking.selected is None:
-        # If no changed prompt won, measure the prompt we will actually return.
-        # A rejected rewrite's high score must never stand in for the original.
-        baseline_vector = score_candidate(
-            gateway,
-            working_prompt,
-            working_prompt,
-            fidelity=FidelityResult(True, True, True, {"identity": True}),
-            applied_style=plan.applied_style,
-            style_bundle=_style_bundle(plan),
-            floors=settings.score_floors,
-            judge_model=settings.judge_model,
-            run_id=plan.run_id,
+    finalists = [item.candidate for item in preliminary.ranked if item.rank > 0]
+    strong_evidence = {
+        str(item.get("candidate_id")): item
+        for item in (strong.to_dict().get("candidates", ()) if strong else ())
+        if isinstance(item, Mapping)
+    }
+    candidate_outputs: dict[str, list[dict[str, Any]]] = {}
+    for output in panel.results:
+        candidate_outputs.setdefault(output.candidate_id, []).append(output.to_dict())
+    evaluation_candidates = [*finalists]
+    if baseline.eligible:
+        evaluation_candidates.append(baseline)
+    evaluation = evaluate_candidate_packages(
+        gateway,
+        working_prompt,
+        evaluation_candidates,
+        constraints=plan.hard_constraints,
+        improvement_style=plan.applied_style,
+        style_bundle=_style_bundle(plan),
+        success_tests=tests,
+        candidate_outputs=candidate_outputs,
+        strong_evidence=strong_evidence,
+        judge_model=settings.judge_model,
+        run_id=plan.run_id,
+        round_number=plan.round_number,
+        on_stage=stage,
+    )
+    final_candidates: list[RankingCandidate] = []
+    for candidate in ranking_candidates:
+        package = evaluation.candidates.get(candidate.candidate_id)
+        if package is None:
+            final_candidates.append(candidate)
+            continue
+        final_candidates.append(
+            replace(
+                candidate,
+                eligible=candidate.eligible and bool(package["eligible"]),
+                rejection_reasons=(
+                    *candidate.rejection_reasons,
+                    *package["rejection_reasons"],
+                ),
+                metadata={**candidate.metadata, "evaluation": package},
+            )
         )
-        baseline_graded = not tests or (
-            original_grade is not None
-            and original_grade.worst > 0
-            and original_grade.ungradable_outputs == 0
-            and original_grade.unresolved_screen_outputs == 0
-            and original_grade.unresolved_grade_outputs == 0
-            and original_grade.detected_outputs == 0
-        )
-        original = replace(
-            ranking.original,
+    final_baseline = baseline
+    if "original" in evaluation.candidates:
+        final_baseline = replace(
+            baseline,
+            eligible=baseline.eligible
+            and bool(evaluation.candidates["original"]["eligible"]),
+            rejection_reasons=(
+                *baseline.rejection_reasons,
+                *evaluation.candidates["original"]["rejection_reasons"],
+            ),
             metadata={
-                **ranking.original.metadata,
-                "score_vector": {
-                    **baseline_vector.to_dict(),
-                    "source": "original_baseline",
-                },
-                "convergence_source": "original_baseline",
+                **baseline.metadata,
+                "evaluation": evaluation.candidates["original"],
             },
         )
-        ranking = replace(ranking, original=original)
-        if baseline_vector.passed and baseline_graded:
-            # The unchanged input is the candidate actually kept. Give it a
-            # stable identity so reports and future feedback can cite it.
-            ranking = replace(ranking, selected=original, original_kept=True)
+    ranking = rank_candidates(
+        final_baseline,
+        final_candidates,
+        strong_check=strong,
+        allow_unverified_selection=not tests,
+        candidate_order=evaluation.order,
+    )
+    if ranking.selected is None and final_baseline.eligible:
+        # The baseline is eligible only after its own complete Accept gate.
+        ranking = replace(
+            ranking,
+            selected=final_baseline,
+            original_kept=True,
+        )
+    evaluation_evidence: dict[str, Any] = {
+        "candidates": {
+            candidate_id: dict(evidence)
+            for candidate_id, evidence in evaluation.candidates.items()
+        }
+    }
     final_prompt = ranking.final_prompt
     original_kept = final_prompt == plan.prompt
     attribution_by_candidate: dict[str, tuple[dict[str, Any], ...]] = {}
@@ -1011,6 +1137,14 @@ def run_round(
             ),
             decision_policy=plan.decision_policy,
         )
+    # Attribute calls are part of this round's evidence too. Capture only once
+    # all round-local judgments have been issued so the report cannot omit them.
+    round_judgments = round_judgment_provenance(
+        gateway,
+        round_log_start,
+        candidate_prompts,
+        plan.round_number,
+    )
     # Always-improve policy: keeping the original after verified rounds is a
     # reported failure, not a success outcome. Without success tests the
     # evidence differs: a fidelity-gated rewrite is an unproven improvement,
@@ -1146,6 +1280,8 @@ def run_round(
         ),
         reported_failure=reported_failure,
         convergence=convergence,
+        evaluation_evidence=evaluation_evidence,
+        judgment_provenance=round_judgments,
         **_spent(gateway),
     )
 

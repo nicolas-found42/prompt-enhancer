@@ -7,6 +7,7 @@ module owns those decisions), so this module never duplicates either policy.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -186,6 +187,7 @@ def rank_candidates(
     *,
     strong_check: StrongCheckReport | None = None,
     allow_unverified_selection: bool = False,
+    candidate_order: Mapping[str, float] | None = None,
 ) -> RankingResult:
     """Rank changed candidates by worst, mean, spread, then prompt length.
 
@@ -221,6 +223,13 @@ def rank_candidates(
             candidate_reasons.append(strong_reason or "strong check did not pass")
         if not candidate_reasons and candidate.grade is None:
             candidate_reasons.append("candidate has no grading report")
+        if (
+            not candidate_reasons
+            and not allow_unverified_selection
+            and candidate.grade is not None
+            and candidate.grade.worst <= 0.0
+        ):
+            candidate_reasons.append("candidate has zero pass rate")
         if not candidate_reasons and _worse_than_baseline(candidate, baseline):
             candidate_reasons.append("does not beat the original under robust ranking")
         if candidate_reasons:
@@ -228,23 +237,37 @@ def rank_candidates(
         else:
             eligible.append(candidate)
 
-    eligible.sort(key=lambda candidate: (_key(candidate), candidate.candidate_id))
+    semantic_scores: dict[str, float] = {}
+    if candidate_order is not None:
+        for candidate in eligible:
+            try:
+                score = float(candidate_order[candidate.candidate_id])
+            except (KeyError, TypeError, ValueError):
+                semantic_scores.clear()
+                break
+            if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+                semantic_scores.clear()
+                break
+            semantic_scores[candidate.candidate_id] = score
+    if eligible and len(semantic_scores) == len(eligible):
+        eligible.sort(
+            key=lambda candidate: (
+                -semantic_scores[candidate.candidate_id],
+                _key(candidate),
+                candidate.candidate_id,
+            )
+        )
+    else:
+        # Incomplete rerank evidence is ranking-only; retain the established
+        # deterministic order instead of inventing scores for missing answers.
+        eligible.sort(key=lambda candidate: (_key(candidate), candidate.candidate_id))
     # A changed candidate wins ties with the original only when it actually
     # passes something: a zero-pass-rate rewrite is indistinguishable from a
     # broken prompt, so it never displaces the original. Runs without success
     # tests have no pass rates at all, so the floor cannot apply there; the
     # caller opts into selecting the best eligible candidate instead.
     best = eligible[0] if eligible else None
-    selected = (
-        best
-        if best is not None
-        and (
-            allow_unverified_selection
-            or best.grade is None
-            or (best.grade.worst > 0 or baseline.grade is None)
-        )
-        else None
-    )
+    selected = best
     selected_id = selected.candidate_id if selected else None
 
     ranked: list[RankedCandidate] = []

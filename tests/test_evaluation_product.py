@@ -779,6 +779,10 @@ def _candidate_gateway() -> ScriptedGateway:
         if request.get("type") == "choice":
             if key == "task_type":
                 choice = "general"
+            elif key.startswith("evaluate:compare:") and key.endswith(
+                ":verbosity_direction"
+            ):
+                choice = "same"
             elif key.startswith("pointer:vagueness:"):
                 choice = "s0001"
             elif key.startswith("fidelity:sentence:"):

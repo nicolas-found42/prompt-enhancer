@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -114,6 +115,47 @@ def test_feedback_links_rejection_to_selected_candidate_vector(tmp_path: Path):
     assert rejected["feedback_labels"]["status"] == "linked"
     assert rejected["feedback_labels"]["candidate_id"] == "candidate-winner"
     assert rejected["feedback_labels"]["score_vector"]["clarity"] == 0.4
+    assert rejected["feedback_labels"]["weak_dimensions"] == [
+        "clarity",
+        "coherence",
+        "specificity",
+    ]
+
+
+@pytest.mark.parametrize("selected_id", ["original", "candidate-best-round-1"])
+def test_feedback_links_selected_vector_when_history_omits_it_from_candidates(
+    tmp_path: Path, selected_id: str
+):
+    history = RunHistory(RunStore(tmp_path / f"linked-{selected_id}.sqlite3"))
+    run = _run(f"run-{selected_id}")
+    vector = {
+        "scores": {
+            dimension: score
+            for dimension, score in zip(
+                SCORE_DIMENSIONS, (0.8, 0.7, 0.3, 0.6, 0.5, 0.9), strict=True
+            )
+        }
+    }
+    run["result"]["selected_candidate_id"] = selected_id
+    run["result"]["report"]["selection_evidence"] = {
+        "selected_candidate_id": selected_id,
+        "selected_candidate": {
+            "candidate_id": selected_id,
+            "metadata": {"score_vector": vector},
+        },
+    }
+    # The winning baseline or historical candidate is represented directly
+    # in selection evidence; terminal-round candidates can be a different set.
+    run["result"]["report"]["candidates"] = [
+        {"candidate_id": "terminal-round-loser", "metadata": {}}
+    ]
+    history.save_run(run)
+
+    rejected = history.record_feedback(run["run_id"], "reject")
+
+    assert rejected["feedback_labels"]["status"] == "linked"
+    assert rejected["feedback_labels"]["candidate_id"] == selected_id
+    assert rejected["feedback_labels"]["score_vector"]["clarity"] == 0.3
     assert rejected["feedback_labels"]["weak_dimensions"] == [
         "clarity",
         "coherence",

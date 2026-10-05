@@ -452,6 +452,70 @@ def test_decide_batch_sends_one_request_for_multiple_questions():
     assert [answer["noul"] for answer in answers] == [0.91, 0.12]
     assert len(transport.requests) == 1
     assert all(entry["answered_by"] == JEV_MODEL for entry in gateway.decision_log)
+    assert [entry["question"]["key"] for entry in gateway.decision_log] == [
+        "gap:goal",
+        "gap:context",
+    ]
+
+
+def test_decide_batch_logs_only_received_answers_before_incomplete_response_error():
+    received = {"type": "noul", "noul": 0.91, "confidence": 0.88}
+    gateway = HttpGateway(
+        QueueTransport(
+            [
+                Response(
+                    200,
+                    {
+                        "model": JEV_MODEL,
+                        "usage": {"total_tokens": 17},
+                        "answers": {"answered": received},
+                    },
+                )
+            ]
+        ),
+        config=GatewayConfig(max_retries=0),
+    )
+    requests = [
+        {"key": "answered", "type": "noul", "query": "q1", "state": {"prompt": "A"}},
+        {"key": "missing", "type": "noul", "query": "q2", "state": {"prompt": "B"}},
+    ]
+
+    with pytest.raises(ProviderError, match="decision answers are missing"):
+        gateway.decide_batch(requests)
+
+    assert [entry["question"]["key"] for entry in gateway.decision_log] == ["answered"]
+    assert gateway.decision_log[0]["question"] == requests[0]
+    assert gateway.decision_log[0]["answer"] == received
+    assert gateway.decision_log[0]["answered_by"] == JEV_MODEL
+    assert gateway.decision_log[0]["usage"] == {"total_tokens": 17}
+
+
+def test_partial_decide_batch_without_model_logs_received_answer_as_unknown():
+    received = {"type": "noul", "noul": 0.91, "confidence": 0.88}
+    gateway = HttpGateway(
+        QueueTransport(
+            [
+                Response(
+                    200,
+                    {"answers": {"answered": received}},
+                )
+            ]
+        ),
+        config=GatewayConfig(max_retries=0),
+    )
+
+    with pytest.raises(ProviderError, match="decision answers are missing"):
+        gateway.decide_batch(
+            [
+                {"key": "answered", "type": "noul", "query": "q1", "state": {}},
+                {"key": "missing", "type": "noul", "query": "q2", "state": {}},
+            ]
+        )
+
+    assert len(gateway.decision_log) == 1
+    assert gateway.decision_log[0]["answer"] == received
+    assert gateway.decision_log[0]["answered_by"] is None
+    assert gateway.decision_log[0]["usage"] == {}
 
 
 def test_decide_batch_addresses_distinct_states_with_structured_instructions():
@@ -559,14 +623,52 @@ def test_decide_batch_accepts_matching_item_state_path():
 
 
 def test_jev_response_without_model_snapshot_is_rejected():
+    answer = {"type": "noul", "noul": 0.5}
     gateway = HttpGateway(
-        QueueTransport(
-            [Response(200, {"answers": {"decision": {"type": "noul", "noul": 0.5}}})]
-        ),
+        QueueTransport([Response(200, {"answers": {"decision": answer}})]),
         config=GatewayConfig(max_retries=0),
     )
     with pytest.raises(ProviderError, match="missing model snapshot"):
         gateway.decide({"state": "prompt", "instructions": "judge"})
+    assert len(gateway.decision_log) == 1
+    assert gateway.decision_log[0]["answer"] == answer
+    assert gateway.decision_log[0]["answered_by"] is None
+
+
+def test_complete_decide_batch_without_model_snapshot_is_still_rejected():
+    first = {"type": "noul", "noul": 0.9}
+    second = {"type": "noul", "noul": 0.1}
+    gateway = HttpGateway(
+        QueueTransport(
+            [
+                Response(
+                    200,
+                    {
+                        "answers": {
+                            "first": first,
+                            "second": second,
+                        }
+                    },
+                )
+            ]
+        ),
+        config=GatewayConfig(max_retries=0),
+    )
+
+    with pytest.raises(ProviderError, match="missing model snapshot"):
+        gateway.decide_batch(
+            [
+                {"key": "first", "type": "noul", "query": "q1", "state": {}},
+                {"key": "second", "type": "noul", "query": "q2", "state": {}},
+            ]
+        )
+
+    assert [entry["question"]["key"] for entry in gateway.decision_log] == [
+        "first",
+        "second",
+    ]
+    assert [entry["answer"] for entry in gateway.decision_log] == [first, second]
+    assert all(entry["answered_by"] is None for entry in gateway.decision_log)
 
 
 def test_529_retry_honors_retry_after():
