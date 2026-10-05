@@ -1,0 +1,80 @@
+name: Bug or UX report
+description: Something behaves wrongly or confusingly. Reproducible by a developer who never saw your session.
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write for a developer who cannot see your chat or machine. Separate what you observed from what you suspect. If a field is unknown, say **Unknown — why, and how to find out**; do not guess. One independently fixable problem per issue.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Component, trigger, and observable failure, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Task blocked or degraded, severity (user harm) and proposed priority (scheduling) with reasons, workaround, and whether it is a known regression. State an occurrence rate only if you measured it.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Commit or build tested (not today's version), date, local/staging URL, browser and OS, relevant configuration, and whether model calls were live or mocked.
+    validations:
+      required: true
+  - type: textarea
+    id: preconditions
+    attributes:
+      label: Preconditions
+      description: Starting state, required data, flags or access, and the exact synthetic input. Use no real credentials or private data.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered actions with exact labels and inputs, ending where the defect becomes visible.
+      value: "1. "
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What the user should observe and keep.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened, with any error quoted verbatim, the state after waiting for completion, and how many times you reproduced it.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: "UI issues need at least one genuine screenshot of the failure, dragged in so it is hosted here, with a caption naming the step and symptom and meaningful alt text. Nonvisual issues need the smallest useful log, request/response, or runnable repro; say why a screenshot does not apply. State console and network coverage and any gap. Check images for private data first."
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Unchecked, observable pass/fail conditions covering the defect, recovery, and relevant adjacent behaviour. Reachable through the product's own interface.
+      value: "- [ ] "
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Scope and developer notes
+      description: Observed facts versus hypotheses (label hypotheses), pinned code links, exclusions, related issues, and remaining unknowns.
+    validations:
+      required: true
