@@ -61,6 +61,34 @@ should use the job endpoints. Synchronous callers can set `time_limit_s` or
 `spend_limit_usd` explicitly to pause at a completed-round boundary. Limits are
 optional, and a healthy run has no automatic attempt or stagnation cap.
 
+## Writer reply recovery
+
+New runs use writer instruction version 14. Success-test generation and candidate
+writing each allow one additional writer call when the reply has no usable text,
+unreadable JSON, or an unusable required shape. Two unusable replies end the run
+as failed (operational). Transport failures retain the Gateway's existing retry
+policy; the caller does not add another transport retry.
+
+A malformed success-test item is retained in `report.test_screening.rejected`
+with its raw value, original position, and rejection reason. Valid siblings keep
+their position-based IDs and go through normal screening. If all items are
+rejected, the Round proceeds with no usable success tests under the existing
+unverified-evidence policy. Malformed items do not trigger a whole-reply retry.
+The optional Choice-description repair keeps its existing fallback behavior.
+
+`report.writer_attempts` records the operation, Round, attempt number, model,
+outcome, and failure reason when applicable. Completed Round history retains its
+own attempts; failed runs retain attempts from the unfinished Round as well.
+Both answered requests contribute to the Gateway's usage and cost accounting,
+including billed empty replies. Recordings without usage remain without measured
+per-call costs.
+
+Only the second request adds `writer_reply_retry` metadata to its state, giving
+it a distinct request hash so both answers fit the existing recording format.
+Writer versions 1–13 retain their previous request sequence and item handling.
+Reading and validation stay in callers; the Gateway continues returning raw
+answers as specified by [ADR-0001](docs/adr/0001-gateway-returns-raw-answers.md).
+
 ## Check the implementation
 
 The project pins Python 3.12 in `.python-version` and recommends Node 24 in

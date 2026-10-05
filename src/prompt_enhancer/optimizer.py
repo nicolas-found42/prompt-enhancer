@@ -103,6 +103,7 @@ from .success_tests import (
     SuccessTestScreenCache,
 )
 from .understand import UnderstandResult, run_understand
+from .writer_replies import WRITER_REPLY_RECOVERY_MIN_VERSION
 
 RUN_OPTION_KEYS = frozenset(
     {
@@ -764,7 +765,11 @@ class PromptOptimizer:
         )
 
     def _round_executor(
-        self, context: _RunContext, understand: UnderstandResult, route: RouteResult
+        self,
+        context: _RunContext,
+        understand: UnderstandResult,
+        route: RouteResult,
+        writer_attempts: list[dict[str, Any]],
     ) -> RoundRunner:
         def execute(request: RoundRequest) -> RoundOutcome:
             self._round = {"round": request.round_number}
@@ -780,6 +785,7 @@ class PromptOptimizer:
                 settings=context.settings,
                 faithfulness_threshold=self.faithfulness_threshold,
                 writer_instruction_version=self.writer_instruction_version,
+                writer_attempts=writer_attempts,
                 prior_failures=tuple(request.prior_failures),
                 prior_vector=request.prior_vector,
                 round_number=request.round_number,
@@ -909,7 +915,20 @@ class PromptOptimizer:
             cost_base=cost_base,
             elapsed_base_ms=elapsed_base_ms,
         )
-        base_execute = self._round_executor(context, understand, route)
+        writer_attempts: list[dict[str, Any]] = [
+            dict(attempt)
+            for entry in prior_history
+            for attempt in entry.evidence.get("writer_attempts", ())
+        ]
+
+        def with_writer_attempts(result: OptimizeResult) -> OptimizeResult:
+            if self.writer_instruction_version >= WRITER_REPLY_RECOVERY_MIN_VERSION:
+                result["report"]["writer_attempts"] = [
+                    dict(item) for item in writer_attempts
+                ]
+            return result
+
+        base_execute = self._round_executor(context, understand, route, writer_attempts)
 
         def execute_round(request: RoundRequest) -> RoundOutcome:
             outcome = base_execute(request)
@@ -925,7 +944,9 @@ class PromptOptimizer:
                 prior_history=prior_history,
             )
         except BudgetPaused as paused:
-            return self._paused_result(context, state, paused, options, started_at)
+            return with_writer_attempts(
+                self._paused_result(context, state, paused, options, started_at)
+            )
         except RunCancelled:
             cancelled = as_optimize_result(
                 build_cancelled_result(
@@ -953,7 +974,7 @@ class PromptOptimizer:
             )
             cancelled["report"] = cancelled_report
             self._attach_current_run_jev(cancelled, original_prompt=context.prompt)
-            return cancelled
+            return with_writer_attempts(cancelled)
         except Exception as exc:  # noqa: BLE001 - keep resolved run context on failure
             failed = self.failure_result(
                 context.run_id,
@@ -974,12 +995,12 @@ class PromptOptimizer:
                 failed,
                 original_prompt=context.prompt,
             )
-            return failed
+            return with_writer_attempts(failed)
         payload = cast(OptimizeResult, repeated.as_payload())
         self._attach_understand_route(
             payload, understand, route, original_prompt=context.prompt
         )
-        return payload
+        return with_writer_attempts(payload)
 
     def _impossible_result(
         self,

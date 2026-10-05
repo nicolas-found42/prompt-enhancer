@@ -29,6 +29,7 @@ from .jev import (
     parse_decision,
 )
 from .reply_json import parse_reply_json
+from .writer_replies import WRITER_REPLY_RECOVERY_MIN_VERSION, read_writer_reply
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +56,20 @@ class RejectedSuccessTest:
     faithful_probability: float
     confidence: float
     screening: ScreeningCheck | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MalformedSuccessTest:
+    """A writer item that cannot be represented as a valid success test."""
+
+    test_id: str
+    item_index: int
+    raw_item: Any
+    reason: str
+    test: None = None
+    faithful_probability: None = None
+    confidence: None = None
+    screening: None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +119,7 @@ class ScreeningCheck:
 @dataclass(frozen=True, slots=True)
 class CompiledSuccessTests:
     tests: tuple[SuccessTest, ...]
-    rejected: tuple[RejectedSuccessTest, ...]
+    rejected: tuple[RejectedSuccessTest | MalformedSuccessTest, ...]
     faithfulness_checks: tuple[FaithfulnessCheck, ...]
     screening_checks: tuple[ScreeningCheck, ...] = ()
     screening_version: str | None = "issue-44-success-test-screen-v1"
@@ -117,7 +132,9 @@ class CompiledSuccessTests:
         result: dict[str, Any] = {
             "tests": [test.to_dict() for test in self.tests],
             "rejected": [
-                {
+                asdict(rejected)
+                if isinstance(rejected, MalformedSuccessTest)
+                else {
                     **{
                         key: value
                         for key, value in asdict(rejected).items()
@@ -293,6 +310,9 @@ class SuccessTestCompiler:
         strict_expected: bool = True,
         observe_set_relations: bool = False,
         run_id: str | None = None,
+        instruction_version: int = WRITER_REPLY_RECOVERY_MIN_VERSION,
+        writer_attempts: list[dict[str, Any]] | None = None,
+        round_number: int | None = None,
     ) -> None:
         self.strict_expected = strict_expected
         self.observe_set_relations = observe_set_relations
@@ -305,6 +325,9 @@ class SuccessTestCompiler:
             raise ValueError("unknown success-test screen protocol version")
         self.screen_protocol_version = screen_protocol_version
         self.run_id = run_id
+        self.instruction_version = instruction_version
+        self.writer_attempts = writer_attempts if writer_attempts is not None else []
+        self.round_number = round_number
 
     def _instructions(self) -> str:
         if not self.strict_expected:
@@ -314,18 +337,30 @@ class SuccessTestCompiler:
         return f"{head}{self._EXPECTED_CONTRACT}{marker}{tail}"
 
     def compile(self, prompt: str) -> CompiledSuccessTests:
-        response = self.gateway.chat(
-            self.writer_model,
-            writer_messages(self._instructions(), {"prompt": prompt}),
-            role="writer",
+        parse_rejections: list[RejectedSuccessTest | MalformedSuccessTest] = []
+
+        def read(response: Any) -> tuple[SuccessTest, ...]:
+            parse_rejections.clear()
+            return self._parse_tests(
+                response,
+                stable_ids=self.screen_protocol_version >= 2,
+                rejected=parse_rejections,
+                strict_expected=self.strict_expected,
+                reject_malformed=self.instruction_version
+                >= WRITER_REPLY_RECOVERY_MIN_VERSION,
+            )
+
+        proposed = read_writer_reply(
+            self.gateway,
+            model=self.writer_model,
+            instructions=self._instructions(),
+            state={"prompt": prompt},
+            read=read,
+            operation="success_tests",
+            instruction_version=self.instruction_version,
+            attempts=self.writer_attempts,
             run_id=self.run_id,
-        )
-        parse_rejections: list[RejectedSuccessTest] = []
-        proposed = self._parse_tests(
-            response,
-            stable_ids=self.screen_protocol_version >= 2,
-            rejected=parse_rejections,
-            strict_expected=self.strict_expected,
+            round_number=self.round_number,
         )
         if not proposed:
             return CompiledSuccessTests(
@@ -448,7 +483,9 @@ class SuccessTestCompiler:
                 "calibration": policy_evidence,
             }
         accepted: list[SuccessTest] = []
-        rejected: list[RejectedSuccessTest] = incomplete_rejections
+        rejected: list[RejectedSuccessTest | MalformedSuccessTest] = (
+            incomplete_rejections
+        )
         checks: list[FaithfulnessCheck] = []
         screening_checks: list[ScreeningCheck] = []
         for test in proposed:
@@ -663,7 +700,7 @@ class SuccessTestCompiler:
         self,
         prompt: str,
         proposed: tuple[SuccessTest, ...],
-        incomplete_rejections: list[RejectedSuccessTest],
+        incomplete_rejections: list[RejectedSuccessTest | MalformedSuccessTest],
     ) -> CompiledSuccessTests:
         requests = [
             {
@@ -996,12 +1033,15 @@ class SuccessTestCompiler:
         response: Any,
         *,
         stable_ids: bool = True,
-        rejected: list[RejectedSuccessTest] | None = None,
+        rejected: list[RejectedSuccessTest | MalformedSuccessTest] | None = None,
         strict_expected: bool = True,
+        reject_malformed: bool = False,
     ) -> tuple[SuccessTest, ...]:
         payload = cls._json_payload(response, accept=_looks_like_tests)
         raw_tests: Sequence[Any]
         if isinstance(payload, Mapping):
+            if reject_malformed and not ({"tests", "questions"} & payload.keys()):
+                raise TypeError("writer response must contain a tests array")
             raw_tests = payload.get("tests", payload.get("questions", ()))
         elif isinstance(payload, list):
             raw_tests = payload
@@ -1013,6 +1053,16 @@ class SuccessTestCompiler:
         result: list[SuccessTest] = []
         seen: set[str] = set()
         for index, item in enumerate(raw_tests, start=1):
+            if reject_malformed:
+                reason = cls._malformed_item_reason(item)
+                if reason:
+                    if rejected is not None:
+                        rejected.append(
+                            MalformedSuccessTest(
+                                f"t{index - 1}", index - 1, item, reason
+                            )
+                        )
+                    continue
             if not isinstance(item, Mapping):
                 raise TypeError("each success test must be an object")
             question = str(item.get("question", "")).strip()
@@ -1100,6 +1150,15 @@ class SuccessTestCompiler:
             if (kind == "choice" and len(options) < 3) or (
                 kind == "score" and len(levels) < 2
             ):
+                if reject_malformed and rejected is not None:
+                    rejected.append(
+                        MalformedSuccessTest(
+                            test_id,
+                            index - 1,
+                            item,
+                            "insufficient Choice options or Score levels",
+                        )
+                    )
                 continue
             result.append(
                 SuccessTest(
@@ -1113,6 +1172,18 @@ class SuccessTestCompiler:
                 )
             )
         return tuple(result)
+
+    @staticmethod
+    def _malformed_item_reason(item: Any) -> str | None:
+        if not isinstance(item, Mapping):
+            return "each success test must be an object"
+        question = item.get("question")
+        if not isinstance(question, str) or not question.strip():
+            return "each success test must have a question"
+        kind = item.get("kind", "noul")
+        if not isinstance(kind, str) or kind.lower() not in {"noul", "choice", "score"}:
+            return "unsupported success test kind"
+        return None
 
     @staticmethod
     def _json_payload(
