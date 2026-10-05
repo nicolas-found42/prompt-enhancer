@@ -23,6 +23,16 @@ def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
         return '{"gaps":{"goal":{"question":"What should the assistant do?","options":[{"value":"summarize","label":"Summarize"},{"value":"analyze","label":"Analyze"}]}}}'
     if "Revise only the stated assumption" in instruction:
         return "Analyze this."
+    if "state.strategies" in instruction:
+        # Candidate batch: echo the input unchanged so scripted runs keep
+        # exercising the gates without inventing rewrites. Unchanged
+        # candidates are rejected as unchanged by the selector.
+        import json as _json
+
+        state = _json.loads(messages[1]["content"])
+        return _json.dumps(
+            {item["name"]: state["prompt"] for item in state["strategies"]}
+        )
     return '{"tests":[]}'
 
 

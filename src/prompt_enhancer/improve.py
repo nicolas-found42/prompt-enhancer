@@ -68,6 +68,77 @@ def improvement_unverified_summary() -> str:
     )
 
 
+def improved_unverified_summary(strategy: str | None = None) -> str:
+    """The report summary for a fidelity-gated rewrite with no success tests."""
+    gated = (
+        f" The winning rewrite (strategy: {strategy}) passed the meaning and "
+        "safety checks."
+        if strategy
+        else " The winning rewrite passed the meaning and safety checks."
+    )
+    return (
+        "No faithful success tests were available, so the improvement is "
+        f"unproven.{gated} What the model answers to the improved prompt was "
+        "not verified — treat answer quality as untested."
+    )
+
+
+def no_qualified_candidate_summary(attempts: int) -> str:
+    """The report summary when every written candidate failed its gates."""
+    return (
+        f"{attempts} candidate{'s' if attempts != 1 else ''} "
+        "were written and checked, but none passed the meaning and safety "
+        "gates, so the original prompt is returned unchanged. The attempts "
+        "and their rejection reasons are listed below; retrying gives the "
+        "rewrite models another chance."
+    )
+
+
+def no_candidate_written_summary(rejections: int) -> str:
+    """The report summary when strategy search wrote no candidate at all."""
+    return (
+        "No rewrite candidate could be written"
+        + (
+            f" ({rejections} strategies were considered and rejected)"
+            if rejections
+            else ""
+        )
+        + ", so the original prompt is returned unchanged."
+    )
+
+
+def failure_no_qualified_candidate(attempts: int) -> dict[str, str]:
+    """The failure entry when gates rejected every written candidate.
+
+    The kind stays ``improvement_not_verified``: like the other
+    always-improve policy failures it is a valid evaluation observation,
+    not an operational error. The report status and headline carry the
+    no-qualified-candidate distinction.
+    """
+    return {
+        "kind": "improvement_not_verified",
+        "headline": "No rewrite passed its checks",
+        "hint": (
+            "Retrying gives the rewrite models another chance to produce a "
+            "rewrite that keeps your meaning."
+        ),
+        "message": no_qualified_candidate_summary(attempts),
+    }
+
+
+def failure_no_candidate_written(rejections: int) -> dict[str, str]:
+    """The failure entry when strategy search wrote no candidate at all."""
+    return {
+        "kind": "improvement_not_verified",
+        "headline": "No rewrite passed its checks",
+        "hint": (
+            "Retrying gives the rewrite models another chance to produce a "
+            "rewrite that keeps your meaning."
+        ),
+        "message": no_candidate_written_summary(rejections),
+    }
+
+
 def failure_unverified() -> dict[str, str]:
     """The failure entry when verification left no changed candidate."""
     return {
@@ -102,11 +173,16 @@ def failure_no_confirmed_improvement() -> dict[str, str]:
 
 __all__ = [
     "ALWAYS_IMPROVE_POLICY_VERSION",
+    "failure_no_candidate_written",
     "failure_no_confirmed_improvement",
+    "failure_no_qualified_candidate",
     "failure_unverified",
     "identical_candidates",
+    "improved_unverified_summary",
     "improvement_unverified_summary",
     "no_candidate_changed_reason",
+    "no_candidate_written_summary",
     "no_confirmed_improvement_reason",
+    "no_qualified_candidate_summary",
     "prompts_differ_meaningfully",
 ]

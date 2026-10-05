@@ -78,10 +78,11 @@ def test_optimize_job_returns_run_id_at_once_and_finishes_with_the_result() -> N
     job = client.get(f"/api/jobs/{run_id}").json()
     assert job["state"] == "done"
     assert job["prompt"] == "Explain recursion."
-    # The stub returns no success tests, so the always-improve run cannot
-    # verify a rewrite and reports the improvement as unverified.
+    # The stub returns no success tests and rejects every strategy, so the
+    # always-attempt run writes nothing it may return and reports that.
     assert job["result"]["status"] == "failed"
-    assert job["result"]["failure"]["kind"] == "improvement_not_verified"
+    assert job["result"]["report"]["failure"]["kind"] == "improvement_not_verified"
+    assert job["result"]["report"]["status"] == "no_qualified_candidate"
     assert "diagnosing" in job["stages_seen"]
     assert client.get(f"/api/runs/{run_id}").status_code == 200
 

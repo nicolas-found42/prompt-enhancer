@@ -97,8 +97,31 @@ export type Outcome = { headline: string; reason: string | null };
 export function outcomeOf(result: OptimizeResult): Outcome {
   const status = String(result.report.status ?? "");
   if (status === "edited") return { headline: "Updated prompt", reason: null };
+  if (status === "clarified") {
+    return {
+      headline: "Updated with your details",
+      reason:
+        "Your confirmed answers were added to the prompt. No rewrite improved on it further.",
+    };
+  }
+  if (status === "improved_unverified") {
+    return {
+      headline: "Improved (unverified)",
+      reason:
+        "No reliable way to check the answers was found, so this rewrite is unproven: it passed meaning and safety checks, but what the model answers to it was not tested. The original prompt is kept alongside it.",
+    };
+  }
+  if (status === "no_qualified_candidate") {
+    return {
+      headline: "No rewrite passed its checks",
+      reason:
+        "Every rewrite was checked, but none kept your meaning while changing the prompt, so your original prompt is unchanged — retrying gives the models another chance.",
+    };
+  }
   // Without a verified test the run cannot claim an improvement, even when
   // the user's confirmed clarification answers were appended to the prompt.
+  // The `unverified` status is no longer produced; it is kept so saved runs
+  // from before the always-attempt loop still render.
   if (status === "unverified") {
     return {
       headline: "We couldn't test this prompt",

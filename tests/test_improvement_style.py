@@ -83,10 +83,9 @@ def test_legacy_tier_input_is_ignored_and_deep_workload_runs() -> None:
     assert saved["options"]["tier"] == "deep"
     assert saved["options"]["improvement_style"] == "shorter"
     assert result["report"]["status"] in {
-        "unverified",
-        "selected",
-        "edited",
-        "improvement_not_verified",
+        "no_qualified_candidate",
+        "improved_unverified",
+        "improved",
     }
 
 

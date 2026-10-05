@@ -25,13 +25,46 @@ describe("outcomeOf", () => {
     expect(outcome.reason).toContain("retrying");
   });
 
-  it("does not call an untested prompt with confirmed details optimized", () => {
+  it("reports an unproven improvement without claiming tested quality", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "improved_unverified",
+        diagnosis: { confirmed_gaps: [] },
+      })
+    );
+    expect(outcome.headline).toBe("Improved (unverified)");
+    expect(outcome.reason).toContain("not tested");
+    expect(outcome.reason).not.toMatch(/better|improvement.*measured/i);
+  });
+
+  it("names confirmed-details-only results without claiming optimization", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "clarified",
+        diagnosis: { confirmed_gaps: [] },
+      })
+    );
+    expect(outcome.headline).toBe("Updated with your details");
+    expect(outcome.reason).toContain("confirmed answers");
+  });
+
+  it("names the no-qualified-candidate outcome with its attempts", () => {
+    const outcome = outcomeOf(
+      result({
+        status: "no_qualified_candidate",
+        diagnosis: { confirmed_gaps: [] },
+      })
+    );
+    expect(outcome.headline).toBe("No rewrite passed its checks");
+    expect(outcome.reason).toContain("unchanged");
+  });
+
+  it("still renders saved runs from before the always-attempt loop", () => {
     const outcome = outcomeOf({
       ...result({ status: "unverified" }),
       original_kept: false,
     });
     expect(outcome.headline).toBe("We couldn't test this prompt");
-    expect(outcome.reason).toContain("details you confirmed");
   });
 
   it("still calls a verified rewrite optimized", () => {

@@ -139,6 +139,30 @@ def test_history_summary_marks_unverified_completed_runs(tmp_path: Path):
     )
     history.save_run(
         {
+            "run_id": "run-improved-unverified",
+            "prompt": "Help with my homework.",
+            "result": {
+                "status": "completed",
+                "original_kept": False,
+                "final_prompt": "Help with my homework, please.",
+                "report": {"status": "improved_unverified"},
+            },
+        }
+    )
+    history.save_run(
+        {
+            "run_id": "run-clarified",
+            "prompt": "Help with my homework.",
+            "result": {
+                "status": "completed",
+                "original_kept": False,
+                "final_prompt": "Help with my homework.\n\nClarifications:\nContext: notes",
+                "report": {"status": "clarified"},
+            },
+        }
+    )
+    history.save_run(
+        {
             "run_id": "run-edited",
             "prompt": "Help with my homework.",
             "result": {
@@ -154,6 +178,8 @@ def test_history_summary_marks_unverified_completed_runs(tmp_path: Path):
 
     assert summaries["run-unverified"]["status"] == "completed"
     assert summaries["run-unverified"]["outcome"] == "unverified"
+    assert summaries["run-improved-unverified"]["outcome"] == "improved_unverified"
+    assert summaries["run-clarified"]["outcome"] == "clarified"
     assert summaries["run-edited"]["outcome"] == "completed"
 
 

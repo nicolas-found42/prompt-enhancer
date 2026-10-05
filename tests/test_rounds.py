@@ -126,13 +126,15 @@ def _candidates(outcome) -> dict[str, dict]:
     return {candidate["candidate_id"]: candidate for candidate in outcome.candidates}
 
 
-def test_round_without_faithful_tests_is_unverified() -> None:
+def test_round_without_faithful_tests_is_improved_unverified() -> None:
     outcome = run_round(_gateway(tests='{"tests":[]}'), _plan())
 
-    assert outcome.status == "unverified"
-    assert outcome.original_kept is True
-    assert outcome.ranking is None
-    assert outcome.report()["offer_deep"] is True
+    assert outcome.status == "improved_unverified"
+    assert outcome.original_kept is False
+    assert outcome.final_prompt != PROMPT
+    assert outcome.ranking is not None
+    assert outcome.ranking.selected is not None
+    assert outcome.report()["offer_deep"] is False
 
 
 def test_round_without_confirmed_gaps_still_rewrites_the_prompt() -> None:

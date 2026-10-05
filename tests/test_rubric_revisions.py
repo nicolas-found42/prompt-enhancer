@@ -316,6 +316,24 @@ def test_writer_proposes_question_from_measured_error_without_supplied_question(
     assert proposal.evidence[0].error_id == "missing-audience"
 
 
+def _echo_writer(prompt: str, default: str):
+    """Writer stub that echoes the input for candidate batches.
+
+    Rounds after #165 always reach candidate writing, so a fixed-reply
+    writer would crash the run instead of exercising the diagnosis paths
+    these tests pin. Echoing the prompt keeps every candidate unchanged
+    (rejected as unchanged) while leaving diagnosis assertions intact.
+    """
+
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer" and "state.strategies" in messages[0]["content"]:
+            state = json.loads(messages[1]["content"])
+            return json.dumps({item["name"]: prompt for item in state["strategies"]})
+        return default
+
+    return chat
+
+
 def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(
     tmp_path: Path,
 ) -> None:
@@ -350,7 +368,8 @@ def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(
         return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}', decision=decide
+        chat=_echo_writer("Write a release note.", '{"gaps":{},"tests":[]}'),
+        decision=decide,
     )
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"), gateway=gateway, rubric_store=rubric_store
@@ -391,7 +410,8 @@ def test_disabled_default_question_stays_disabled_after_store_reopens(
         return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        chat=_echo_writer("Write a release note.", '{"tests":[]}'),
+        decision=decide,
     )
     result = PromptOptimizer(
         store=RunStore(":memory:"),
@@ -451,7 +471,7 @@ def test_historical_calibration_loads_but_cannot_gate_current_jev(
     result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+            chat=_echo_writer("Draft a note.", '{"tests":[]}'), decision=decide
         ),
         rubric_store=SQLiteRubricStore(path),
     ).optimize("Draft a note.", {"clarification_allowed": False})
@@ -473,7 +493,7 @@ def test_historical_calibration_loads_but_cannot_gate_current_jev(
     historical_result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=HistoricalAnswerGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+            chat=_echo_writer("Draft a note.", '{"tests":[]}'), decision=decide
         ),
         rubric_store=SQLiteRubricStore(path),
     ).optimize("Draft a note.", {"clarification_allowed": False})

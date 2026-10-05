@@ -128,9 +128,14 @@ def _normalise_record(
     failure_kind = failure.get("kind") if isinstance(failure, Mapping) else None
     if report_map.get("status") == "cancelled" or failure_kind == "cancelled":
         outcome = "cancelled"
-    elif str(status) == "completed" and report_map.get("status") == "unverified":
-        # No success test was established, so the run must not read as improved.
-        outcome = "unverified"
+    elif str(status) == "completed" and report_map.get("status") in (
+        "unverified",
+        "improved_unverified",
+        "clarified",
+    ):
+        # No success test confirmed the change, so the run must not read as
+        # improved. The report status propagates so list rows pill correctly.
+        outcome = str(report_map.get("status"))
     else:
         outcome = str(status)
     metadata = source.get("metadata")
