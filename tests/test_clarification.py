@@ -173,6 +173,58 @@ def test_reference_to_unseen_details_is_asked_about_not_assumed() -> None:
     assert question["allow_other"] is True
 
 
+def test_clarification_options_are_read_from_a_reply_wrapped_in_prose() -> None:
+    from prompt_enhancer.gateway import ScriptedGateway
+    from prompt_enhancer.optimizer import PromptOptimizer
+    from prompt_enhancer.store import RunStore
+
+    def chat(_model, _messages, *, role, **_kwargs):
+        body = '{"gaps":{"outside_reference":{"question":"What is \'the thing about the warranty\'?","options":[{"value":"leave_out","label":"Leave it out"}]}}}'
+        return f"Here is the JSON you asked for:\n\n{body}\n\nLet me know if you need changes."
+
+    def decide(request, **_kwargs):
+        if request.get("type") == "choice":
+            if str(request.get("key", "")).startswith("evaluate:compare:") and str(
+                request.get("key", "")
+            ).endswith(":verbosity_direction"):
+                return {
+                    "type": "choice",
+                    "choice": "same",
+                    "probabilities": {"same": 1.0},
+                    "confidence": 1.0,
+                }
+            choice = "writing" if request.get("key") == "task_type" else "unknown"
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        key = str(request.get("key", ""))
+        probability = (
+            0.97
+            if key == "gap:outside_reference"
+            else 1.0
+            if key.startswith(("score:", "evaluate:"))
+            else 0.01
+        )
+        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+    )
+    result = optimizer.optimize(
+        "Do the letter like last time. Mention the thing about the warranty.",
+        {},
+    )
+
+    assert result["status"] == "needs_input"
+    question = result["questions"][0]
+    assert question["id"] == "outside_reference"
+    assert "warranty" in question["prompt"]
+    assert question["allow_other"] is True
+
+
 def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
     from prompt_enhancer.gateway import ScriptedGateway
     from prompt_enhancer.optimizer import PromptOptimizer

@@ -8,7 +8,7 @@ import math
 import re
 import threading
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -21,6 +21,7 @@ from .evaluation.calibration import (
 )
 from .gateway import Gateway, ProviderError, completion_text, writer_messages
 from .jev import JevResponseError, NoulDecision, batch_decision_payload, parse_decision
+from .reply_json import parse_reply_json
 
 
 @dataclass(frozen=True, slots=True)
@@ -777,7 +778,12 @@ class SuccessTestCompiler:
                 role="writer",
                 run_id=self.run_id,
             )
-            payload = self._json_payload(response)
+            payload = self._json_payload(
+                response,
+                accept=lambda value: (
+                    isinstance(value, Mapping) and "descriptions" in value
+                ),
+            )
             repairs = (
                 payload.get("descriptions") if isinstance(payload, Mapping) else None
             )
@@ -807,7 +813,7 @@ class SuccessTestCompiler:
         rejected: list[RejectedSuccessTest] | None = None,
         strict_expected: bool = True,
     ) -> tuple[SuccessTest, ...]:
-        payload = cls._json_payload(response)
+        payload = cls._json_payload(response, accept=_looks_like_tests)
         raw_tests: Sequence[Any]
         if isinstance(payload, Mapping):
             raw_tests = payload.get("tests", payload.get("questions", ()))
@@ -923,23 +929,13 @@ class SuccessTestCompiler:
         return tuple(result)
 
     @staticmethod
-    def _json_payload(response: Any) -> Any:
+    def _json_payload(
+        response: Any, accept: Callable[[Any], bool] | None = None
+    ) -> Any:
         content = completion_text(response)
         if not content:
             raise TypeError("writer response must contain JSON text")
-        content = re.sub(
-            r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE
-        )
-        try:
-            payload = json.loads(content)
-        except json.JSONDecodeError as exc:
-            if exc.pos < len(content) - 1:
-                raise
-            suffix = _closing_json_delimiters(content)
-            if not suffix:
-                raise
-            payload = json.loads(content + suffix)
-        return payload
+        return parse_reply_json(content, accept=accept, repair=_closing_json_delimiters)
 
     @staticmethod
     def _choice_options(value: Any) -> tuple[tuple[str, ...], dict[str, str]]:
@@ -964,6 +960,16 @@ class SuccessTestCompiler:
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
             return ()
         return tuple(str(item) for item in value)
+
+
+def _looks_like_tests(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return "tests" in value or "questions" in value
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, Mapping) for item in value)
+    )
 
 
 def _closing_json_delimiters(content: str) -> str:

@@ -744,3 +744,27 @@ def replay_grade(recorded: Mapping[str, Any]) -> dict[str, Any]:
         read_criteria=True,
     )
     return observation
+
+
+def test_strong_evidence_is_read_from_a_reply_wrapped_in_prose() -> None:
+    from prompt_enhancer.grading_cascade import _strong_evidence
+
+    run = PanelResult("candidate", "weak", 0, 7, "word " * 30, "prompt")
+    reader = CriterionReader(
+        _reading_gateway(reading_handler(kind="word_count", op="under", bound="100"))
+    )
+    evidence = json.dumps(
+        {
+            "suggested_verdict": "pass",
+            "prompt_quote": "prompt",
+            "output_quote": run.output,
+            "rationale": "The answer is well inside the limit.",
+        }
+    )
+    raw = f"Here is my assessment:\n\n{evidence}\n\nI hope this helps."
+
+    proposed, reason = _strong_evidence(raw, run, CRITERION, reader)
+
+    assert reason == "valid_evidence"
+    assert proposed is not None
+    assert proposed["suggested_verdict"] == "pass"

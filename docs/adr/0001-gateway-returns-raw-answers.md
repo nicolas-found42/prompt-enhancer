@@ -7,3 +7,5 @@ The Gateway gives callers raw Jev and writer answers. It does not parse them, an
 - **Only the HTTP adapter can compute cost.** It needs the provider response, the route and catalog prices, and recordings do not store per-call usage. Moving usage accounting up would change the recording format.
 
 The decision log is the only piece duplicated across adapters, and it is too small to justify a new module.
+
+**Update:** ADR-0002 replaces the statement that writer replies are read strictly. The Gateway still returns raw answers.

@@ -25,6 +25,7 @@ from .diagnosis import split_sentences
 from .evaluation.calibration import DecisionPolicy, runtime_question_identity
 from .gateway import Gateway, ProviderError, completion_text, writer_messages
 from .jev import JevResponseError, NoulDecision, parse_decision
+from .reply_json import parse_reply_json
 from .runner import PanelResult
 
 
@@ -244,7 +245,9 @@ def _strong_evidence(
     reader: CriterionReader | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
     try:
-        value = json.loads(completion_text(raw))
+        value = parse_reply_json(
+            completion_text(raw), accept=lambda found: isinstance(found, Mapping)
+        )
     except (ValueError, TypeError):
         return None, "invalid_evidence_schema"
     if not isinstance(value, Mapping):

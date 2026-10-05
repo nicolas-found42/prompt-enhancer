@@ -39,6 +39,7 @@ from .jev import (
     ScoreDecision,
     parse_decision,
 )
+from .reply_json import parse_reply_json
 from .rubric_revisions import (
     HoldoutConsumedError,
     MaintainerDecisionKind,
@@ -571,7 +572,10 @@ def optimize_reword(
             writer_messages(instructions, training_state),
             role="writer_reword",
         )
-        proposed = json.loads(completion_text(raw_proposal))
+        proposed = parse_reply_json(
+            completion_text(raw_proposal),
+            accept=lambda value: isinstance(value, Mapping) and "alternatives" in value,
+        )
         alternatives = (
             proposed.get("alternatives") if isinstance(proposed, Mapping) else None
         )

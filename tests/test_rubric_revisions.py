@@ -577,3 +577,54 @@ def test_harness_adapter_uses_replay_and_maps_public_report_fields() -> None:
     assert metrics.regression_count == 1
     assert metrics.case_count == 4
     assert seen_replay_paths == [evaluation_set.replay_artifact]
+
+
+def test_writer_revision_is_read_from_a_reply_wrapped_in_prose(
+    tmp_path: Path,
+) -> None:
+    class ErrorSource:
+        def errors(self, evaluation_set: EvaluationSet):
+            return [
+                MeasuredError(
+                    error_id="missing-audience",
+                    evaluation_case_ids=(evaluation_set.case_ids[0],),
+                    current_question_id=None,
+                    proposed_question=None,
+                    observation="Audience omissions caused missed weak-model failures.",
+                )
+            ]
+
+    suggestion = json.dumps(
+        {
+            "suggestions": [
+                {
+                    "error_id": "missing-audience",
+                    "action": "new",
+                    "question": {
+                        "question_id": "audience-gap",
+                        "text": "Is the audience missing when it materially affects the answer?",
+                        "response_type": "noul",
+                        "threshold": 0.8,
+                        "missing_when": "yes",
+                    },
+                }
+            ]
+        }
+    )
+
+    def write(_model, _messages, **_kwargs):
+        return f"Here are my suggested revisions:\n\n{suggestion}\n\nThanks!"
+
+    rubric, evaluation_set = fixture_inputs()
+    store = SQLiteRubricStore(tmp_path / "wrapped-proposals.sqlite3")
+    store.initialize(rubric)
+    service = RubricRevisionService(
+        store,
+        ErrorSource(),
+        FixtureEvaluator(),
+        writer_gateway=ScriptedGateway(chat=write),
+    )
+
+    result = service.propose(evaluation_set)
+
+    assert [p.change.kind for p in result.workflow.proposals] == [RevisionKind.NEW]

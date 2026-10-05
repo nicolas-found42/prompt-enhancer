@@ -461,3 +461,69 @@ def test_explicit_restructuring_allows_reordering_but_keeps_fidelity_checks() ->
     assert all(
         request["state"]["candidate_prompt"] == candidate for request in requests
     )
+
+
+@pytest.mark.parametrize(
+    "wrap",
+    [
+        lambda body: f"Here are the rewrites:\n\n{body}",
+        lambda body: f"```json\n{body}\n```",
+        lambda body: f"```json\n{body}\n```\nI kept the meaning unchanged.",
+        lambda body: f"Sure! {body} Let me know if you want another pass.",
+    ],
+    ids=["prose-before", "fence-only", "fence-and-prose-after", "prose-both-sides"],
+)
+def test_candidate_writer_reads_a_reply_wrapped_in_prose(wrap) -> None:
+    def chat(model, messages, **kwargs):
+        strategies = json.loads(messages[1]["content"])["strategies"]
+        return wrap(
+            json.dumps(
+                {
+                    strategy["name"]: "Write a specific summary."
+                    for strategy in strategies
+                }
+            )
+        )
+
+    result = search_strategies(
+        "Write a summary.",
+        settings=Settings(),
+        writer=CandidateWriter(ScriptedGateway(chat=chat)),
+    )
+
+    assert {candidate.text for candidate in result.candidates} == {
+        "Write a specific summary."
+    }
+
+
+def test_candidate_writer_still_rejects_a_reply_without_json() -> None:
+    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: "I cannot rewrite that.")
+
+    with pytest.raises(ValueError):
+        search_strategies(
+            "Write a summary.",
+            settings=Settings(),
+            writer=CandidateWriter(gateway),
+        )
+
+
+def test_candidate_writer_skips_an_example_object_in_the_prose() -> None:
+    def chat(model, messages, **kwargs):
+        strategies = json.loads(messages[1]["content"])["strategies"]
+        answer = json.dumps(
+            {strategy["name"]: "Write a specific summary." for strategy in strategies}
+        )
+        return (
+            'Format: {"note": "one entry per strategy"}\n\n'
+            f"Here are the rewrites:\n{answer}"
+        )
+
+    result = search_strategies(
+        "Write a summary.",
+        settings=Settings(),
+        writer=CandidateWriter(ScriptedGateway(chat=chat)),
+    )
+
+    assert {candidate.text for candidate in result.candidates} == {
+        "Write a specific summary."
+    }
