@@ -5,6 +5,11 @@ success tests, tries bounded rewrites on every request, and shows the verified
 improved prompt — or reports that no verified improvement was found this time.
 Runs and feedback are stored in a local SQLite database.
 
+Recorded keep/reject labels can explicitly recalibrate the per-dimension
+quality floors. Recalibration requires 12 linked labels (at least three of each
+decision); see [quality floor feedback calibration](docs/quality-floor-feedback.md)
+for the rule and `POST /api/quality/floors/recalibrate` endpoint.
+
 ## Open the app
 
 The current local instance is available at <http://127.0.0.1:5173/>. To start

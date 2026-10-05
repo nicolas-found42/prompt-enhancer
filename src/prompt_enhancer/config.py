@@ -101,4 +101,5 @@ class Settings:
             "writer_model": self.writer_model,
             "strong_check_model": self.strong_check_model,
             "weak_models": list(self.weak_models),
+            "score_floors": self.score_floors,
         }

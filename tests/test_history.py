@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.history import RunHistory, register_history_routes
+from prompt_enhancer.score_vector import SCORE_DIMENSIONS
 from prompt_enhancer.store import RunStore
 
 
@@ -81,6 +82,56 @@ def test_history_http_contract(tmp_path: Path):
     assert feedback.status_code == 200
     assert feedback.json()["feedback"] == "reject"
     assert client.get("/api/runs/run-http").json()["feedback"] == "reject"
+
+
+def test_feedback_links_rejection_to_selected_candidate_vector(tmp_path: Path):
+    history = RunHistory(RunStore(tmp_path / "linked-feedback.sqlite3"))
+    run = _run("run-linked")
+    run["result"]["selected_candidate_id"] = "candidate-winner"
+    run["result"]["report"]["candidates"] = [
+        {
+            "candidate_id": "candidate-winner",
+            "selected": True,
+            "metadata": {
+                "score_vector": {
+                    "scores": {
+                        dimension: score
+                        for dimension, score in zip(
+                            SCORE_DIMENSIONS,
+                            (0.9, 0.8, 0.4, 0.7, 0.6, 0.9),
+                            strict=True,
+                        )
+                    },
+                    "floors": {dimension: 0.5 for dimension in SCORE_DIMENSIONS},
+                }
+            },
+        }
+    ]
+    history.save_run(run)
+
+    rejected = history.record_feedback("run-linked", "reject")
+
+    assert rejected["feedback_labels"]["status"] == "linked"
+    assert rejected["feedback_labels"]["candidate_id"] == "candidate-winner"
+    assert rejected["feedback_labels"]["score_vector"]["clarity"] == 0.4
+    assert rejected["feedback_labels"]["weak_dimensions"] == [
+        "clarity",
+        "coherence",
+        "specificity",
+    ]
+
+
+def test_feedback_without_selected_vector_remains_visible_but_unlabeled(
+    tmp_path: Path,
+):
+    history = RunHistory(RunStore(tmp_path / "unlinked-feedback.sqlite3"))
+    history.save_run(_run("run-unlinked"))
+
+    accepted = history.record_feedback("run-unlinked", "accept")
+
+    assert accepted["feedback"] == "accept"
+    assert accepted["feedback_labels"]["status"] == "unavailable"
+    assert accepted["feedback_labels"]["score_vector"] is None
 
 
 def test_history_summary_exposes_outcome_without_rewriting_legacy_status(
