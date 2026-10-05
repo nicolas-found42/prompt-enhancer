@@ -673,10 +673,7 @@ class PromptOptimizer:
         self, context: _RunContext, understand: UnderstandResult, route: RouteResult
     ) -> RoundRunner:
         def execute(request: RoundRequest) -> RoundOutcome:
-            self._round = {
-                "round": request.round_number,
-                "max_rounds": request.max_rounds,
-            }
+            self._round = {"round": request.round_number}
             plan = RoundPlan(
                 prompt=context.prompt,
                 working_prompt=_prompt_with_assumptions(
@@ -691,6 +688,7 @@ class PromptOptimizer:
                 faithfulness_threshold=self.faithfulness_threshold,
                 writer_instruction_version=self.writer_instruction_version,
                 prior_failures=tuple(request.prior_failures),
+                prior_vector=request.prior_vector,
                 grading_policy=self.grading_policy,
                 screen_cache=self.success_test_screen_cache,
                 decision_policy=self.decision_policy,

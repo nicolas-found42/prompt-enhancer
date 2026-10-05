@@ -240,11 +240,12 @@ def test_each_fidelity_check_can_reject_a_candidate(failing: str) -> None:
     )
 
 
-def test_fidelity_fails_closed_when_jev_is_unavailable() -> None:
+def test_fidelity_propagates_provider_outages_as_operational_failures() -> None:
     def decide(_request, **_kwargs):
         raise ProviderError("openrouter", "typesafe/jev-1.13", 503)
 
-    assert _fidelity(decide).passed is False
+    with pytest.raises(ProviderError):
+        _fidelity(decide)
 
 
 def test_fidelity_fails_closed_for_malformed_gateway_batch() -> None:

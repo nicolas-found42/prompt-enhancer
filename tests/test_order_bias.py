@@ -1129,8 +1129,19 @@ def test_optimizer_keeps_legacy_min_pair_without_compatible_evidence(
 
     result = optimizer.optimize(
         "Summarize the supplied report.",
-        {"tier": "fast", "clarification_allowed": False},
+        {
+            "tier": "fast",
+            "clarification_allowed": False,
+            # The scripted grader rejects every rewrite. Bound this test with
+            # the same explicit user budget the public API provides instead
+            # of relying on a production retry cap.
+            "time_limit_s": 0,
+        },
     )
+
+    assert result["status"] == "needs_input"
+    assert result["report"]["pause"]["reason"] == "time_limit"
+    assert len(result["report"]["history"]) == 1
 
     requests = [
         event["question"]
@@ -1139,13 +1150,12 @@ def test_optimizer_keeps_legacy_min_pair_without_compatible_evidence(
     ]
     assert requests
     assert sum(request["key"].endswith("_second") for request in requests) > 0
-    policy = result["report"]["grading_policy"][0]
+    report = result["report"]["history"][0]["evidence"]
+    policy = report["grading_policy"][0]
     assert policy["policy"] == "legacy_min_pair"
     assert policy["reason"] == reason
     candidate = next(
-        item
-        for item in result["report"]["candidates"]
-        if item["candidate_id"] != "original"
+        item for item in report["candidates"] if item["candidate_id"] != "original"
     )
     assert candidate["grade"]["per_model_samples"][
         "meta-llama/llama-3.1-8b-instruct"

@@ -83,6 +83,7 @@ def test_fast_retains_original_with_unresolved_grade_and_no_cascade_requests() -
         tier="fast",
         grade_pass_probability=0.5,
         generated_test_count=1,
+        pause_after_round=True,
     )
 
     assert result["original_kept"] is True
@@ -110,6 +111,7 @@ def test_unsupported_strong_fallback_quote_cannot_resolve_uncertain_grade() -> N
             "output_quote": "pass",
             "rationale": "The answer is complete.",
         },
+        pause_after_round=True,
     )
 
     assert result["original_kept"] is True
@@ -139,6 +141,7 @@ def test_missing_verification_candidate_skips_strong_escalation() -> None:
         generated_test_count=1,
         priced_catalog=True,
         decision_policy=incomplete_policy,
+        pause_after_round=True,
     )
 
     cascade = result["report"]["grading_cascade"]
@@ -220,6 +223,7 @@ def test_supported_strong_evidence_resolves_only_after_consistent_jev_verificati
     contradicted, _ = _run_screened_round(
         **options,
         verification_answers=(0.95, 0.05, 0.95, 0.95),
+        pause_after_round=True,
     )
     assert contradicted["original_kept"] is True
     assert contradicted["report"]["grading_cascade"]["unresolved_count"] > 0
@@ -263,6 +267,7 @@ def test_rank_only_calibration_cannot_make_extreme_raw_grade_authoritative() -> 
         tier="standard",
         generated_test_count=1,
         decision_policy=policy,
+        pause_after_round=True,
     )
 
     assert held["original_kept"] is True
@@ -330,6 +335,7 @@ def test_cascade_pair_and_dollar_caps_hold_remaining_grades_unresolved() -> None
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=3,
+        pause_after_round=True,
     )
     assert standard["original_kept"] is True
     assert standard["report"]["grading_cascade"]["confirmation_count"] == 10
@@ -345,6 +351,7 @@ def test_cascade_pair_and_dollar_caps_hold_remaining_grades_unresolved() -> None
         confirmation_answers=(0.95, 0.95, 0.05),
         generated_test_count=1,
         settings=Settings(grading_cascade_dollar_cap=0.001),
+        pause_after_round=True,
     )
     assert capped["original_kept"] is True
     assert capped["report"]["grading_cascade"]["confirmation_count"] == 1
@@ -361,6 +368,7 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
         grade_pass_probability=0.5,
         generated_test_count=1,
         confirmation_provider_error=True,
+        pause_after_round=True,
     )
     assert failed["original_kept"] is True
     assert any(
@@ -375,6 +383,7 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
         generated_test_count=1,
         confirmation_answers=(0.95, 0.5, 0.5),
         decision_policy=_verification_policy("Does the answer satisfy criterion 0?"),
+        pause_after_round=True,
     )
     assert unpriced["original_kept"] is True
     assert unpriced["report"]["grading_cascade"]["escalation_count"] == 0
@@ -398,6 +407,7 @@ def test_provider_failure_and_unpriced_fallback_stay_unresolved() -> None:
             "rationale": "The output answers the request.",
         },
         verification_answers=(0.95, 0.95, 0.05, 0.95),
+        pause_after_round=True,
     )
     assert uncalibrated["original_kept"] is True
     assert uncalibrated["report"]["grading_cascade"]["verification_count"] == 0
@@ -422,6 +432,7 @@ def test_detected_output_cannot_be_rescued_and_unresolved_screen_skips_confirmat
         generated_test_count=1,
         output_screen={"pass": 0.99},
         confirmation_answers=(0.95, 0.95, 0.05),
+        pause_after_round=True,
     )
     assert detected["original_kept"] is True
     assert detected["report"]["grading_cascade"]["confirmation_count"] == 0
@@ -437,6 +448,7 @@ def test_detected_output_cannot_be_rescued_and_unresolved_screen_skips_confirmat
         grade_pass_probability=0.5,
         generated_test_count=1,
         output_screen={"pass": None},
+        pause_after_round=True,
     )
     assert unresolved["original_kept"] is True
     assert unresolved["report"]["grading_cascade"]["confirmation_count"] == 0
@@ -473,7 +485,8 @@ def test_current_cascade_recording_replays_initial_and_confirmation_evidence(
 
     assert replayed["final_prompt"] == original["final_prompt"]
     assert (
-        replayed["report"]["grading_cascade"] == original["report"]["grading_cascade"]
+        replayed["report"]["history"][0]["evidence"]["grading_cascade"]
+        == original["report"]["grading_cascade"]
     )
 
 
@@ -513,7 +526,8 @@ def test_calibrated_fallback_recording_replays_all_three_stages(tmp_path: Path) 
 
     assert replayed["final_prompt"] == original["final_prompt"]
     assert (
-        replayed["report"]["grading_cascade"] == original["report"]["grading_cascade"]
+        replayed["report"]["history"][0]["evidence"]["grading_cascade"]
+        == original["report"]["grading_cascade"]
     )
 
 
@@ -529,6 +543,7 @@ def test_recorded_cascade_budget_overrides_replay_without_extra_calls(
         generated_test_count=1,
         settings=Settings(grading_cascade_pair_cap=1, grading_cascade_dollar_cap=0.001),
         record_path=path,
+        pause_after_round=True,
     )
     assert original["report"]["grading_cascade"]["confirmation_count"] == 1
     engine = default_engine_factory(path)
@@ -540,11 +555,13 @@ def test_recorded_cascade_budget_overrides_replay_without_extra_calls(
             "tier": "standard",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
+            "time_limit_s": 0,
         },
     )
 
     assert (
-        replayed["report"]["grading_cascade"] == original["report"]["grading_cascade"]
+        replayed["report"]["history"][0]["evidence"]["grading_cascade"]
+        == original["report"]["grading_cascade"]
     )
 
 
@@ -561,6 +578,7 @@ def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
         retry_count=3,
         settings=Settings(grading_cascade_dollar_cap=0.003),
         record_path=path,
+        pause_after_round=True,
     )
     assert (
         json.loads(path.read_text())["cascade_settings"]["retry_reservation_multiplier"]
@@ -576,11 +594,13 @@ def test_recorded_retry_reservation_preserves_cascade_budget_on_replay(
             "tier": "standard",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
+            "time_limit_s": 0,
         },
     )
 
     assert (
-        replayed["report"]["grading_cascade"] == original["report"]["grading_cascade"]
+        replayed["report"]["history"][0]["evidence"]["grading_cascade"]
+        == original["report"]["grading_cascade"]
     )
 
 
@@ -632,6 +652,7 @@ def test_inclusive_uncertainty_boundaries_and_confirmation_decision_table() -> N
         generated_test_count=1,
         grade_pass_probability=0.3,
         confirmation_answers=(0.8, 0.2, 0.8),
+        pause_after_round=True,
     )
     assert failed["original_kept"] is True
     assert failed["report"]["grading_cascade"]["confirmed_fail_count"] > 0
@@ -663,6 +684,7 @@ def test_exact_json_failure_blocks_semantic_confirmation_and_fallback_claim() ->
             "output_quote": "pass",
             "rationale": "The output appears valid.",
         },
+        pause_after_round=True,
     )
 
     assert result["original_kept"] is True
@@ -681,6 +703,7 @@ def test_unimplemented_numeric_check_cannot_be_confirmed_by_prose() -> None:
         criterion_text="Does the answer include 12 citations?",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
+        pause_after_round=True,
     )
 
     assert result["original_kept"] is True
@@ -718,6 +741,7 @@ def test_word_bound_conflict_with_jev_confirmation_stays_unresolved() -> None:
         criterion_text="Is the answer under 1 words?",
         grade_pass_probability=0.5,
         confirmation_answers=(0.95, 0.95, 0.05),
+        pause_after_round=True,
     )
 
     cascade = result["report"]["grading_cascade"]

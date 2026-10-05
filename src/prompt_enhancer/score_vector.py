@@ -150,9 +150,11 @@ def score_candidate(
     """Judge the five non-fidelity dimensions in one batch; fail closed.
 
     A fidelity failure already rejects the candidate; its dimension still
-    records ``0.0`` so the vector names why. Unparseable answers score
-    ``0.0`` for their dimension, and a failed batch fails every judged
-    dimension — a candidate is never passed on missing evidence.
+    records ``0.0`` so the vector names why. Unparseable answers or incomplete
+    judgment evidence score ``0.0`` for affected dimensions — a candidate is
+    never passed on missing evidence. A :class:`ProviderError` propagates as
+    an operational failure so the uncapped retry loop stops instead of
+    retrying an outage.
     """
     state = {
         "original_prompt": original_prompt,
@@ -179,7 +181,11 @@ def score_candidate(
         raw_answers = gateway.decide_batch(requests, role="judge", run_id=run_id)
         if not isinstance(raw_answers, list) or len(raw_answers) != len(requests):
             raise JevResponseError("incomplete score-vector response")
-    except (ProviderError, JevResponseError) as exc:
+    except ProviderError:
+        # Provider outages are operational failures, not a low-quality vector.
+        # Propagation lets the optimizer stop the uncapped retry loop cleanly.
+        raise
+    except JevResponseError as exc:
         return ScoreVector.from_probabilities(
             {},
             fidelity_passed=fidelity.passed,

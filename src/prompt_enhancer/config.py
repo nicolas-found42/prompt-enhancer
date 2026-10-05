@@ -54,6 +54,14 @@ class Settings:
     score_floor_specificity: float = 0.6
     score_floor_coherence: float = 0.6
     score_floor_safety: float = 0.8
+    # Convergence epsilon (#169): the smallest mean-vector gain a further
+    # Round must promise to be worth running. When every dimension meets its
+    # floor and the best vector's marginal gain over the previous Round's best
+    # has fallen to or below this value, the run stops as converged. It is a
+    # documented policy knob (the spec's "small epsilon") so the practical
+    # value can be recalibrated without a code change; a larger epsilon stops
+    # sooner, a smaller one hunts longer for hard-won gains.
+    convergence_epsilon: float = 0.01
 
     @property
     def score_floors(self) -> dict[str, float]:

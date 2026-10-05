@@ -91,21 +91,9 @@ def _pipeline_gateway() -> ScriptedGateway:
 
 
 def _deep_gateway() -> ScriptedGateway:
-    def decide(request, **_kwargs):
-        if request.get("type") == "choice":
-            choice = "general" if request.get("key") == "task_type" else "none"
-            return {
-                "type": "choice",
-                "choice": choice,
-                "probabilities": {choice: 1.0},
-                "confidence": 1.0,
-            }
-        probability = 0.99 if request.get("key") == "gap:goal" else 0.01
-        return {"type": "noul", "probability_true": probability, "confidence": 1.0}
-
-    return ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
-    )
+    # The route has no eligible strategy at either tier, which is an explicit
+    # impossible outcome rather than a transient candidate-quality failure.
+    return _no_strategy_gateway()
 
 
 def _clarification_gateway() -> ScriptedGateway:
@@ -146,15 +134,12 @@ def _clarification_gateway() -> ScriptedGateway:
 def _no_candidate_beats_gateway() -> ScriptedGateway:
     base = _pipeline_gateway().decision_handler
 
-    def decide(request, **kwargs):
-        return base(request, **kwargs)
-
     def only_original_passes(_model, messages, *, role, **_kwargs):
         if role == "writer":
             return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}],"add_missing_context":"Rewrite one","specify_output_format":"Rewrite two","add_done_criteria":"Rewrite three","remove_contradictions":"Rewrite four","add_example":"Rewrite five","split_into_steps":"Rewrite six"}'
         return "pass" if messages[0]["content"] == "Original request" else "fail"
 
-    return ScriptedGateway(chat=only_original_passes, decision=decide)
+    return ScriptedGateway(chat=only_original_passes, decision=base)
 
 
 def _no_strategy_gateway() -> ScriptedGateway:
@@ -177,12 +162,59 @@ def _kept_over_two_rounds(optimizer: PromptOptimizer) -> list[Any]:
     ]
 
 
+def _deep_after_kept_gateway() -> ScriptedGateway:
+    base = _pipeline_gateway().decision_handler
+
+    def chat(_model, messages, *, role, **_kwargs):
+        if role == "writer":
+            state = json.loads(messages[1]["content"])
+            if "strategies" in state:
+                text = (
+                    "Summarize the report clearly."
+                    if state.get("previous_failures")
+                    else "Invent factual details."
+                )
+                return json.dumps({item["name"]: text for item in state["strategies"]})
+            return '{"tests":[{"question":"Does the output answer?","kind":"noul","expected":"yes"}]}'
+        return (
+            "pass"
+            if messages[0]["content"]
+            in {"Summarize the report.", "Summarize the report clearly."}
+            else "fail"
+        )
+
+    def decide(request, **kwargs):
+        if str(request.get("key", "")).startswith("fidelity:sentence:"):
+            return {
+                "type": "choice",
+                "choice": "supported_by_original",
+                "probabilities": {"supported_by_original": 1.0},
+                "confidence": 1.0,
+            }
+        return base(request, **kwargs)
+
+    return ScriptedGateway(chat=chat, decision=decide)
+
+
 def _deep_pass_after_kept(optimizer: PromptOptimizer) -> list[Any]:
-    # The Deep pass rebuilds its first round's failures from the stored run.
+    # Only the unchanged baseline passes the first run. Its own vector
+    # converges, then the Deep pass gets independently passing changed drafts.
     kept = optimizer.optimize(
-        "Original request", {"tier": "standard", "clarification_allowed": False}
+        "Summarize the report.",
+        {"tier": "standard", "clarification_allowed": False},
     )
-    return [kept, optimizer.start_deep_pass(kept["run_id"])]
+    assert kept["report"]["status"] == "converged"
+    assert kept["original_kept"] is True
+    assert kept["report"]["offer_deep"]["state"] == "offered"
+    deep = optimizer.start_deep_pass(kept["run_id"])
+    assert deep["run_id"] == kept["run_id"]
+    assert deep["report"]["status"] == "converged"
+    assert deep["original_kept"] is False
+    assert (
+        deep["report"]["selection_evidence"]["selected_candidate"]["text"]
+        == deep["final_prompt"]
+    )
+    return [kept, deep]
 
 
 def _no_strategy(optimizer: PromptOptimizer) -> list[Any]:
@@ -194,9 +226,17 @@ def _no_strategy(optimizer: PromptOptimizer) -> list[Any]:
 
 
 def _full_pipeline(optimizer: PromptOptimizer) -> list[Any]:
+    # The scripted candidates fail fidelity. Stop at a user budget boundary so
+    # this request-key fixture inspects one rejection round without inventing
+    # a terminal outcome for transient candidate evidence.
     return [
         optimizer.optimize(
-            "Original request", {"tier": "fast", "clarification_allowed": False}
+            "Original request",
+            {
+                "tier": "fast",
+                "clarification_allowed": False,
+                "time_limit_s": 0,
+            },
         )
     ]
 
@@ -224,8 +264,8 @@ SCENARIOS: dict[
     "full_pipeline": (_pipeline_gateway, _full_pipeline),
     "deep_pass": (_deep_gateway, _deep_pass),
     "clarify_resume_edit": (_clarification_gateway, _clarify_resume_edit),
-    "kept_over_two_rounds": (_no_candidate_beats_gateway, _kept_over_two_rounds),
-    "deep_pass_after_kept": (_no_candidate_beats_gateway, _deep_pass_after_kept),
+    "kept_original_converged": (_no_candidate_beats_gateway, _kept_over_two_rounds),
+    "deep_pass_after_kept": (_deep_after_kept_gateway, _deep_pass_after_kept),
     "no_strategy": (_no_strategy_gateway, _no_strategy),
 }
 

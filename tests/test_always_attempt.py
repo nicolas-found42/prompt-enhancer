@@ -2,9 +2,8 @@
 
 Covers ticket #164–#172/165: a simple prompt with no faithful success
 tests still gets candidates written and fidelity-gated; a passing rewrite
-returns improved (unverified), total rejection returns an explicit
-no-qualified-candidate outcome, and the tested-path selection floor still
-holds.
+can converge while remaining unverified, total rejection keeps retrying
+until a user budget pauses it, and the tested-path selection floor holds.
 """
 
 import json
@@ -25,6 +24,7 @@ def _gateway(
     meaning_probability: float = 0.99,
     recheck_probability: float = 0.99,
     score_probability: float = 0.99,
+    baseline_score_probability: float | None = None,
     weak_output: str = "4",
     with_test: bool = False,
 ):
@@ -87,7 +87,13 @@ def _gateway(
         elif key.startswith("grade_"):
             probability = float(request["state"]["output"] == "pass")
         elif key.startswith("score:"):
-            probability = score_probability
+            state = request["state"]
+            probability = (
+                baseline_score_probability
+                if baseline_score_probability is not None
+                and state["candidate_prompt"] == state["original_prompt"]
+                else score_probability
+            )
         else:
             probability = 0.01
         return {
@@ -99,7 +105,7 @@ def _gateway(
     return ScriptedGateway(chat=chat, decision=decide)
 
 
-def test_simple_prompt_without_tests_returns_improved_unverified() -> None:
+def test_simple_prompt_without_tests_converges_with_unverified_evidence() -> None:
     store = RunStore(":memory:")
     optimizer = PromptOptimizer(store=store, gateway=_gateway())
 
@@ -109,8 +115,8 @@ def test_simple_prompt_without_tests_returns_improved_unverified() -> None:
     assert result["original_kept"] is False
     assert result["final_prompt"] == IMPROVED
     report = result["report"]
-    assert report["status"] == "improved_unverified"
-    assert "unproven" in report["summary"] or "untested" in report["summary"]
+    assert report["status"] == "converged"
+    assert report["convergence"]["verification"] == "unverified"
     assert report["strong_check"] is None
     assert report["tests"] == []
     evidence = report["selection_evidence"]
@@ -120,25 +126,29 @@ def test_simple_prompt_without_tests_returns_improved_unverified() -> None:
     assert any(item["text"] == IMPROVED for item in ranked if item["selected"])
     record = store.get_run(result["run_id"])
     assert record is not None
-    assert record["result"]["report"]["status"] == "improved_unverified"
+    assert record["result"]["report"]["status"] == "converged"
 
 
-def test_all_candidates_rejected_without_tests_is_no_qualified_candidate() -> None:
+def test_rejected_candidates_and_below_floor_baseline_retry_until_budget_pause() -> (
+    None
+):
     store = RunStore(":memory:")
     optimizer = PromptOptimizer(
         store=store,
-        gateway=_gateway(support="new_requirement", meaning_probability=0.01),
+        gateway=_gateway(
+            support="new_requirement",
+            meaning_probability=0.01,
+            baseline_score_probability=0.1,
+        ),
     )
 
-    result = optimizer.optimize("whats 2 plus 2")
+    result = optimizer.optimize("whats 2 plus 2", {"time_limit_s": 0})
 
-    assert result["status"] == "failed"
+    assert result["status"] == "needs_input"
     assert result["original_kept"] is True
     assert result["final_prompt"] == "whats 2 plus 2"
-    report = result["report"]
-    assert report["status"] == "no_qualified_candidate"
-    assert report["failure"]["kind"] == "improvement_not_verified"
-    assert report["failure"]["headline"] == "No rewrite passed its checks"
+    report = result["report"]["history"][0]["evidence"]
+    assert result["report"]["history"][0]["status"] == "no_qualified_candidate"
     evidence = report["selection_evidence"]
     assert evidence["selected_candidate_id"] is None
     ranked = evidence["ranking"]
@@ -152,11 +162,13 @@ def test_zero_pass_rates_with_tests_still_keep_the_original() -> None:
         store=store, gateway=_gateway(with_test=True, weak_output="fail")
     )
 
-    result = optimizer.optimize("whats 2 plus 2")
+    result = optimizer.optimize("whats 2 plus 2", {"time_limit_s": 0})
 
+    assert result["status"] == "needs_input"
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "improvement_not_verified"
-    assert result["report"]["tests"] != []
+    round_report = result["report"]["history"][0]
+    assert round_report["status"] == "improvement_not_verified"
+    assert round_report["evidence"]["tests"] != []
 
 
 def test_zero_candidates_with_clarifications_is_clarified_not_failed() -> None:

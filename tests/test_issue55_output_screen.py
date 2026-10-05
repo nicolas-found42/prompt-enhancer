@@ -30,7 +30,9 @@ def _grading_batches(batches: list[list[dict]]) -> list[list[dict]]:
 
 def test_detected_steering_overrides_passing_tests_in_same_output_request() -> None:
     result, batches = _run_screened_round(
-        writer_instruction_version=6, output_screen={"pass": 0.99}
+        writer_instruction_version=6,
+        output_screen={"pass": 0.99},
+        pause_after_round=True,
     )
 
     assert result["original_kept"] is True
@@ -51,15 +53,15 @@ def test_detected_steering_overrides_passing_tests_in_same_output_request() -> N
         for batch in grading
         for request in batch[:3]
     )
-    screen = result["report"]["output_screen"]
+    round_report = result["report"]["history"][0]["evidence"]
+    screen = round_report["output_screen"]
     assert sum(item["status"] == "steering_detected" for item in screen) == 2
     assert all(
         item["reason"] == "evaluator_steering_detected"
         for item in screen
         if item["status"] == "steering_detected"
     )
-    assert result["report"]["selection_evidence"]["original_score"]["worst"] == 0.0
-    assert result["report"]["grading_observation"]["gateway_batch_calls"] == 4
+    assert round_report["selection_evidence"]["original_score"]["worst"] == 0.0
 
 
 def test_clear_and_unresolved_screen_have_distinct_promotion_outcomes() -> None:
@@ -70,19 +72,22 @@ def test_clear_and_unresolved_screen_have_distinct_promotion_outcomes() -> None:
     )
 
     unresolved, _ = _run_screened_round(
-        writer_instruction_version=6, output_screen={"pass": None}
+        writer_instruction_version=6,
+        output_screen={"pass": None},
+        pause_after_round=True,
     )
     assert unresolved["original_kept"] is True
+    round_evidence = unresolved["report"]["history"][0]["evidence"]
     assert (
         sum(
             item["status"] == "screen_unresolved"
-            for item in unresolved["report"]["output_screen"]
+            for item in round_evidence["output_screen"]
         )
         == 2
     )
     candidate = next(
         item
-        for item in unresolved["report"]["candidates"]
+        for item in round_evidence["candidates"]
         if item["candidate_id"] != "original"
     )
     assert candidate["grade"]["worst"] == 1.0
@@ -91,12 +96,14 @@ def test_clear_and_unresolved_screen_have_distinct_promotion_outcomes() -> None:
 
 def test_unresolved_original_screen_prevents_promotion() -> None:
     result, _ = _run_screened_round(
-        writer_instruction_version=6, output_screen={"fail": 0.5}
+        writer_instruction_version=6,
+        output_screen={"fail": 0.5},
+        pause_after_round=True,
     )
     assert result["original_kept"] is True
     assert any(
         item["candidate_id"] == "original" and item["status"] == "screen_unresolved"
-        for item in result["report"]["output_screen"]
+        for item in result["report"]["history"][0]["evidence"]["output_screen"]
     )
 
 
@@ -105,7 +112,10 @@ def test_current_screen_recording_strictly_replays_and_v5_stays_historical(
 ) -> None:
     path = tmp_path / "screen-v6.json"
     original, _ = _run_screened_round(
-        writer_instruction_version=6, output_screen={"pass": 0.99}, record_path=path
+        writer_instruction_version=6,
+        output_screen={"pass": 0.99},
+        record_path=path,
+        pause_after_round=True,
     )
     assert json.loads(path.read_text())["writer_instruction_version"] == 6
     engine = default_engine_factory(path)
@@ -117,10 +127,13 @@ def test_current_screen_recording_strictly_replays_and_v5_stays_historical(
             "tier": "fast",
             "clarification_allowed": False,
             "improvement_style": "faithful_transform",
+            "time_limit_s": 0,
         },
     )
 
-    assert replayed["report"]["output_screen"] == original["report"]["output_screen"]
+    original_screen = original["report"]["history"][0]["evidence"]["output_screen"]
+    replayed_screen = replayed["report"]["history"][0]["evidence"]["output_screen"]
+    assert replayed_screen == original_screen
 
 
 def test_matching_calibration_policy_changes_screen_cutoff() -> None:

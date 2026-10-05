@@ -1071,7 +1071,8 @@ test("a running job shows its stage, elapsed time, and can be cancelled", async 
     page.getByRole("heading", { name: "Improving your prompt" })
   ).toBeVisible();
   await expect(page.getByText("1:05 elapsed")).toBeVisible();
-  await expect(page.getByText(/round 1 of 2/)).toBeVisible();
+  await expect(page.getByText(/· round 1 ·/)).toBeVisible();
+  await expect(page.getByText(/round 1 of 2/)).toHaveCount(0);
   await expect(page.locator('[aria-current="step"]')).toHaveText(
     "Scoring the answers"
   );

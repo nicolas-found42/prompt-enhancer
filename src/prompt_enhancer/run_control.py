@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, cast
 
+from .convergence import mean_score
 from .failures import RunCancelled, describe_failure
 from .models import OptimizeResult
 from .repeat import RoundEvidence
@@ -112,8 +113,12 @@ class RoundTracker:
             outcome=outcome,
         )
         self.entries.append(evidence.to_dict())
-        self.final_prompt = outcome.final_prompt
-        self.original_kept = outcome.original_kept
+        self.final_prompt = _best_tracked_prompt(self.entries, outcome.final_prompt)
+        self.original_kept = (
+            self.final_prompt == outcome.plan.prompt
+            if hasattr(outcome, "plan")
+            else outcome.original_kept
+        )
 
     @classmethod
     def preload(
@@ -122,15 +127,51 @@ class RoundTracker:
         final_prompt: str | None,
         original_kept: bool,
     ) -> RoundTracker:
+        copied_entries = [dict(entry) for entry in entries]
+        best_prompt = _best_tracked_prompt(copied_entries, final_prompt)
         return cls(
-            entries=[dict(entry) for entry in entries],
-            final_prompt=final_prompt,
-            original_kept=original_kept,
+            entries=copied_entries,
+            final_prompt=best_prompt,
+            original_kept=(
+                best_prompt == final_prompt
+                if best_prompt != final_prompt
+                else original_kept
+            ),
         )
 
     @property
     def history(self) -> list[dict[str, Any]]:
         return [dict(entry) for entry in self.entries]
+
+
+def _best_tracked_prompt(
+    entries: list[dict[str, Any]], fallback: str | None
+) -> str | None:
+    """Keep the best floor-passing selected prompt for pause/cancel payloads."""
+    best_prompt = fallback
+    best_score = -1.0
+    for entry in entries:
+        vector = entry.get("convergence")
+        if not isinstance(vector, Mapping) or vector.get("passed") is not True:
+            continue
+        if vector.get("selected") is not True or not entry.get("selected_candidate_id"):
+            continue
+        scores = vector.get("scores")
+        selection = entry.get("evidence")
+        selection = selection if isinstance(selection, Mapping) else {}
+        selection = selection.get("selection_evidence")
+        selection = selection if isinstance(selection, Mapping) else {}
+        candidate = selection.get("selected_candidate")
+        if not isinstance(candidate, Mapping):
+            continue
+        prompt = candidate.get("text") or candidate.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            continue
+        score = mean_score(scores) if isinstance(scores, Mapping) else -1.0
+        if score >= best_score:
+            best_prompt = prompt
+            best_score = score
+    return best_prompt
 
 
 @dataclass
@@ -156,15 +197,14 @@ class RunControlState:
         """Record a completed round, pausing when a limit is reached.
 
         A limit only pauses when the loop would otherwise spend more: the
-        round must request continuation and rounds must remain. A finished
+        round must request continuation. There is no round cap (#169), so a
+        limit stays able to pause the loop at any round boundary; a finished
         loop returns its final result instead of pausing.
         """
         self.tracker.record(request, outcome)
         if not self.control.active:
             return
         if not outcome.continue_rounds:
-            return
-        if request.tier_round >= request.max_rounds:
             return
         reason: str | None = None
         if (

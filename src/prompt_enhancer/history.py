@@ -135,9 +135,12 @@ def _normalise_record(
         "unverified",
         "improved_unverified",
         "clarified",
+        "converged",
     ):
         # No success test confirmed the change, so the run must not read as
         # improved. The report status propagates so list rows pill correctly.
+        # ``converged`` is the loop's success status (#169): floors met, no
+        # further gain, and the history row must say so.
         outcome = str(report_map.get("status"))
     else:
         outcome = str(status)

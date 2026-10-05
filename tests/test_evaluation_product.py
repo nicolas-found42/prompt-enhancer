@@ -37,17 +37,13 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     )
 
     report = json.loads(output.read_text())
-    # The recorded sessions ended with the original prompt kept. Under the
-    # always-attempt policy that is a reported failure, so the replay reports
-    # the unimproved runs as failed rather than claiming completed cases.
-    assert [case["status"] for case in report["cases"]] == ["failed"] * 3
-    assert all(
-        "candidate" in str(case["error"]).casefold()
-        or "improvement" in str(case["error"]).casefold()
-        or "verified" in str(case["error"]).casefold()
-        for case in report["cases"]
-    )
-    assert report["diagnosis"]["excluded_failed_cases"] == 2
+    # These recorded prompts independently meet every baseline floor. Keeping
+    # that measured baseline now converges successfully; it does not imply a
+    # changed prompt or success-test verification that the recording lacks.
+    assert [case["status"] for case in report["cases"]] == ["completed"] * 3
+    assert all(case["error"] is None for case in report["cases"])
+    assert all(case["original_kept"] is True for case in report["cases"])
+    assert report["diagnosis"]["excluded_failed_cases"] == 0
     assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
     assert report["diagnosis"]["problem_sentences"]["precision"] is None
 
