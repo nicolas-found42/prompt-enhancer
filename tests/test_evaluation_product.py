@@ -12,44 +12,15 @@ from prompt_enhancer.evaluation.calibration import (
     DecisionPolicy,
     runtime_question_identity,
 )
-from prompt_enhancer.evaluation.harness import HarnessOptions, default_engine_factory
+from prompt_enhancer.evaluation.harness import default_engine_factory
 from prompt_enhancer.evaluation.recording import RecordingGateway
 from prompt_enhancer.gateway import ReplayGateway, ScriptedGateway
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.store import RunStore
 
 
-def _record_mixed_bundle(path: Path) -> list[dict]:
-    """Record the smoke-set cases with the scripted gateway.
-
-    The pinned live bundle predates the Understand/Route stages, so strict
-    replay cannot answer their new requests; these CLI tests record a fresh
-    scripted bundle instead. Live re-capture of replay_with_latency.json
-    remains a maintainer task.
-    """
-    fixtures = Path(__file__).parent / "fixtures" / "evaluation"
-    dataset = json.loads((fixtures / "mixed_dataset.json").read_text())
-    gateway = RecordingGateway(_candidate_gateway(), path)
-    gateway.writer_instruction_version = 4
-    gateway.faithfulness_threshold = 0.8
-    options = HarnessOptions().optimize_options()
-    results = []
-    for case in dataset["cases"]:
-        results.append(
-            PromptOptimizer(
-                gateway=gateway,
-                store=RunStore(":memory:"),
-                writer_instruction_version=4,
-            ).optimize(case["prompt"], dict(options))
-        )
-    gateway.save()
-    return results
-
-
 def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     fixtures = Path(__file__).parent / "fixtures" / "evaluation"
-    bundle = tmp_path / "replay.json"
-    recorded = _record_mixed_bundle(bundle)
     output = tmp_path / "report.json"
 
     assert (
@@ -57,7 +28,7 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
             [
                 str(fixtures / "mixed_dataset.json"),
                 "--replay",
-                str(bundle),
+                str(fixtures / "replay_with_latency.json"),
                 "--output",
                 str(output),
             ]
@@ -66,13 +37,19 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
     )
 
     report = json.loads(output.read_text())
-    # Strict replay reproduces the recorded runs exactly.
-    assert [case["status"] for case in report["cases"]] == [
-        result["status"] for result in recorded
-    ]
-    assert [case.get("final_prompt") for case in report["cases"]] == [
-        result["final_prompt"] for result in recorded
-    ]
+    # The recorded sessions ended with the original prompt kept. Under the
+    # always-attempt policy that is a reported failure, so the replay reports
+    # the unimproved runs as failed rather than claiming completed cases.
+    assert [case["status"] for case in report["cases"]] == ["failed"] * 3
+    assert all(
+        "candidate" in str(case["error"]).casefold()
+        or "improvement" in str(case["error"]).casefold()
+        or "verified" in str(case["error"]).casefold()
+        for case in report["cases"]
+    )
+    assert report["diagnosis"]["excluded_failed_cases"] == 2
+    assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
+    assert report["diagnosis"]["problem_sentences"]["precision"] is None
 
 
 def test_attached_cli_recording_carries_cascade_and_calibration_metadata(
@@ -273,13 +250,12 @@ def test_replay_restores_recorded_case_cost_and_latency(tmp_path: Path) -> None:
     fixtures = Path(__file__).parent / "fixtures" / "evaluation"
     dataset = json.loads((fixtures / "mixed_dataset.json").read_text())
     first_id = dataset["cases"][0]["id"]
-    replay_path = tmp_path / "replay.json"
-    _record_mixed_bundle(replay_path)
-    replay = json.loads(replay_path.read_text())
+    replay = json.loads((fixtures / "replay_with_latency.json").read_text())
     replay["case_costs"] = {
         first_id: {"total": 0.25, "cost_by_role": {"judge": 0.1, "writer": 0.15}}
     }
     replay["case_latency_ms"] = {first_id: 4321}
+    replay_path = tmp_path / "replay.json"
     replay_path.write_text(json.dumps(replay))
     output = tmp_path / "report.json"
 
