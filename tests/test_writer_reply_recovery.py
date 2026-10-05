@@ -23,8 +23,18 @@ def accepting_decision(request, **_kwargs):
     }
 
 
-def test_compiler_recovers_an_unreadable_reply_before_screening() -> None:
-    replies = iter(['{"tests": "bad\\escape"}', GOOD_TESTS])
+@pytest.mark.parametrize(
+    "unreadable",
+    [
+        '{"tests": "bad\\escape"}',
+        'Sure: {"outer": invalid, "nested": {"tests": []}}',
+    ],
+)
+@pytest.mark.parametrize("wrapper", ["{}", "Here you go: {}", "```json\n{}\n```"])
+def test_compiler_recovers_an_unreadable_reply_before_screening(
+    unreadable: str, wrapper: str
+) -> None:
+    replies = iter([unreadable, wrapper.format(GOOD_TESTS)])
     requests = []
 
     def chat(_model, messages, **_kwargs):
@@ -94,7 +104,9 @@ def test_candidate_writer_recovers_an_unusable_reply(bad_reply) -> None:
     from prompt_enhancer.rewrite import CandidateWriter
     from prompt_enhancer.strategies import CandidateBatchRequest, RewriteStrategy
 
-    replies = iter(["{}", '{"clarify":"Summarize the report using two sentences."}'])
+    replies = iter(
+        [bad_reply, '{"clarify":"Summarize the report using two sentences."}']
+    )
     writer = CandidateWriter(
         ScriptedGateway(chat=lambda *_args, **_kwargs: next(replies)),
         instruction_version=14,
@@ -382,3 +394,60 @@ def test_failed_candidate_retry_keeps_earlier_writer_attempts_in_run_report() ->
         "provider_error",
     ]
     assert result["report"]["failure"]["http_status"] == 503
+
+
+def test_resuming_a_paused_retry_keeps_unfinished_round_attempts() -> None:
+    from test_always_attempt import _gateway
+
+    from prompt_enhancer.optimizer import PromptOptimizer
+    from prompt_enhancer.run_control import BudgetPaused
+    from prompt_enhancer.store import RunStore
+
+    gateway = _gateway()
+    normal_chat = gateway.chat_handler
+    paused_once = False
+
+    def chat(model, messages, *, role, **kwargs):
+        nonlocal paused_once
+        if role == "writer":
+            state = json.loads(messages[1]["content"])
+            if not paused_once and "state.strategies" in messages[0]["content"]:
+                if "writer_reply_retry" in state:
+                    paused_once = True
+                    raise BudgetPaused(
+                        reason="spend_limit", history=(), spent_usd=2.5, elapsed_ms=1
+                    )
+                gateway.usage.record(
+                    role=role, provider="scripted", model=model, cost=1.25
+                )
+                return "not JSON"
+            gateway.usage.record(role=role, provider="scripted", model=model, cost=1.25)
+        return normal_chat(model, messages, role=role, **kwargs)
+
+    gateway.chat_handler = chat
+    store = RunStore(":memory:")
+    optimizer = PromptOptimizer(gateway=gateway, store=store)
+    paused = optimizer.optimize("whats 2 plus 2", {"clarification_allowed": False})
+    assert paused["status"] == "needs_input"
+    previous_attempts = paused["report"]["writer_attempts"]
+    assert [item["outcome"] for item in previous_attempts] == [
+        "success",
+        "invalid_response",
+    ]
+    assert paused["cost"]["cost_by_role"]["writer"] == 2.5
+
+    continued = optimizer.continue_run(paused["run_id"])
+    assert continued["status"] == "completed", continued["report"]
+    attempts = continued["report"]["writer_attempts"]
+    assert attempts[: len(previous_attempts)] == previous_attempts
+    assert [item["outcome"] for item in attempts] == [
+        "success",
+        "invalid_response",
+        "success",
+        "success",
+    ]
+    assert continued["cost"]["cost_by_role"]["writer"] == 5.0
+    assert (
+        store.get_run(paused["run_id"])["result"]["report"]["writer_attempts"]
+        == attempts
+    )

@@ -79,6 +79,7 @@ The optional Choice-description repair keeps its existing fallback behavior.
 `report.writer_attempts` records the operation, Round, attempt number, model,
 outcome, and failure reason when applicable. Completed Round history retains its
 own attempts; failed runs retain attempts from the unfinished Round as well.
+Continuing a paused run retains its saved attempts, including unfinished Rounds.
 Both answered requests contribute to the Gateway's usage and cost accounting,
 including billed empty replies. Recordings without usage remain without measured
 per-call costs.

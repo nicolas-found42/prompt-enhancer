@@ -891,6 +891,7 @@ class PromptOptimizer:
         *,
         prior_failures: Any = (),
         prior_history: tuple[RoundEvidence, ...] = (),
+        prior_writer_attempts: Sequence[Mapping[str, Any]] | None = None,
         tracker: RoundTracker | None = None,
         control: RunControl | None = None,
         options: Mapping[str, Any] | None = None,
@@ -915,11 +916,15 @@ class PromptOptimizer:
             cost_base=cost_base,
             elapsed_base_ms=elapsed_base_ms,
         )
-        writer_attempts: list[dict[str, Any]] = [
-            dict(attempt)
-            for entry in prior_history
-            for attempt in entry.evidence.get("writer_attempts", ())
-        ]
+        writer_attempts: list[dict[str, Any]] = (
+            [dict(attempt) for attempt in prior_writer_attempts]
+            if prior_writer_attempts is not None
+            else [
+                dict(attempt)
+                for entry in prior_history
+                for attempt in entry.evidence.get("writer_attempts", ())
+            ]
+        )
 
         def with_writer_attempts(result: OptimizeResult) -> OptimizeResult:
             if self.writer_instruction_version >= WRITER_REPLY_RECOVERY_MIN_VERSION:
@@ -1496,6 +1501,12 @@ class PromptOptimizer:
             route,
         )
         prior_history = _history_from_run(paused_result)
+        previous_report = paused_result.get("report", {})
+        prior_writer_attempts = (
+            previous_report.get("writer_attempts")
+            if isinstance(previous_report, Mapping)
+            else None
+        )
         tracker = RoundTracker.preload(
             [evidence.to_dict() for evidence in prior_history],
             str(paused_result.get("final_prompt") or prompt),
@@ -1518,6 +1529,7 @@ class PromptOptimizer:
                     control=control,
                     options=options,
                     prior_history=prior_history,
+                    prior_writer_attempts=prior_writer_attempts,
                     started_perf=started_perf,
                     started_at=str(record.get("created_at") or utc_now()),
                     cost_base=cost_base,
