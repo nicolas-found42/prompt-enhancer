@@ -486,6 +486,7 @@ describe("improvement style selector", () => {
   });
 
   it("submits the selected style and restores it on retry", async () => {
+    trackScrolling();
     const user = userEvent.setup();
     vi.mocked(startOptimize).mockResolvedValue(runningJob);
     vi.mocked(getJob).mockResolvedValue(
@@ -524,5 +525,23 @@ describe("improvement style selector", () => {
         undefined
       )
     );
+    const retry = await screen.findByRole("button", { name: "Try again" });
+    await user.selectOptions(
+      screen.getByLabelText("Improvement style"),
+      "creative"
+    );
+    expect(screen.getByLabelText("Improvement style")).toHaveValue("creative");
+
+    await user.click(retry);
+
+    await waitFor(() => expect(startOptimize).toHaveBeenCalledTimes(2));
+    expect(startOptimize).toHaveBeenNthCalledWith(
+      2,
+      "Write a note to my neighbour.",
+      "shorter",
+      expect.anything(),
+      undefined
+    );
+    expect(screen.getByLabelText("Improvement style")).toHaveValue("shorter");
   });
 });
