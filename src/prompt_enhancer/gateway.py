@@ -15,6 +15,7 @@ import json
 import json as json_module
 import math
 import os
+import socket
 import threading
 import time
 import urllib.error
@@ -272,6 +273,12 @@ class HttpTransport:
         sock = getattr(raw, "_sock", None)
         close_socket = getattr(sock, "close", None)
         if callable(close_socket):
+            shutdown = getattr(sock, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass  # The worker may already have closed its socket.
             close_socket()
             return
         close = getattr(response, "close", None)
@@ -759,14 +766,14 @@ class HttpGateway:
                     run_id=run_id,
                     role=role,
                 )
-                self._check_cancelled(run_id)
-                if deadline - self._monotonic() <= 0:
-                    raise _GatewayDeadlineExceeded(
-                        "gateway operation deadline exceeded"
-                    )
                 status = _response_status(response)
                 last_status = status
                 if status is not None and status >= 400:
+                    self._check_cancelled(run_id)
+                    if deadline - self._monotonic() <= 0:
+                        raise _GatewayDeadlineExceeded(
+                            "gateway operation deadline exceeded"
+                        )
                     if status in RETRYABLE_STATUS and attempt + 1 < attempts:
                         headers = (
                             response.get("headers", {})
@@ -832,6 +839,13 @@ class HttpGateway:
                         else None
                     ),
                 )
+                # A completed response is billable even when cancellation wins
+                # the race to its caller. Never expose the answer after cancel.
+                self._check_cancelled(run_id)
+                if deadline - self._monotonic() <= 0:
+                    raise _GatewayDeadlineExceeded(
+                        "gateway operation deadline exceeded"
+                    )
                 self._emit_operation(
                     {
                         "event": "end",
@@ -952,6 +966,24 @@ class HttpGateway:
         substage = (self._operation_context.get() or {}).get("substage")
         return f"{substage}.{operation}" if isinstance(substage, str) else operation
 
+    def _acquire_worker(self, deadline: float, run_id: str | None) -> bool:
+        """Wait for bounded capacity without extending the operation deadline."""
+        while True:
+            self._check_cancelled(run_id)
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                return False
+            if self._transport_workers.acquire(timeout=min(0.05, remaining)):
+                try:
+                    self._check_cancelled(run_id)
+                    if deadline - self._monotonic() <= 0:
+                        self._transport_workers.release()
+                        return False
+                except BaseException:
+                    self._transport_workers.release()
+                    raise
+                return True
+
     def _bounded_catalog_route(
         self,
         route_factory: Callable[[], RouteDecision],
@@ -974,7 +1006,25 @@ class HttpGateway:
         finished = threading.Event()
         result: list[Any] = []
         started = self._monotonic()
-        if not self._transport_workers.acquire(blocking=False):
+        try:
+            acquired = self._acquire_worker(deadline, run_id)
+        except BaseException as exc:
+            from .failures import RunCancelled
+
+            self._emit_operation(
+                {
+                    "event": "error",
+                    "operation": "route_model",
+                    "role": role,
+                    "run_id": run_id,
+                    "elapsed_ms": max(0, round((self._monotonic() - started) * 1000)),
+                    "error_kind": "cancelled"
+                    if isinstance(exc, RunCancelled)
+                    else type(exc).__name__,
+                }
+            )
+            raise
+        if not acquired:
             self._emit_operation(
                 {
                     "event": "error",
@@ -1000,8 +1050,8 @@ class HttpGateway:
             except BaseException as exc:
                 result.append(exc)
             finally:
-                finished.set()
                 self._transport_workers.release()
+                finished.set()
 
         worker = threading.Thread(target=resolve, name="gateway-route", daemon=True)
         try:
@@ -1157,7 +1207,7 @@ class HttpGateway:
         request_id = uuid.uuid4().hex
         payload_snapshot = copy.deepcopy(dict(payload))
         headers_snapshot = dict(decision.headers)
-        if not self._transport_workers.acquire(blocking=False):
+        if not self._acquire_worker(deadline, run_id):
             raise ProviderError(
                 decision.provider,
                 decision.model,
@@ -1186,8 +1236,8 @@ class HttpGateway:
             except BaseException as exc:  # propagate in the caller thread
                 result.append(exc)
             finally:
-                finished.set()
                 self._transport_workers.release()
+                finished.set()
 
         worker = threading.Thread(target=request, name="gateway-request", daemon=True)
         try:
@@ -1203,9 +1253,9 @@ class HttpGateway:
                 # transport error. Once the run requested cancellation, that
                 # error is a consequence of cancellation and must not enter
                 # Gateway retry or provider-error handling.
-                self._check_cancelled(run_id)
                 value = result[0]
                 if isinstance(value, BaseException):
+                    self._check_cancelled(run_id)
                     raise value
                 return value
             remaining = deadline - self._monotonic()

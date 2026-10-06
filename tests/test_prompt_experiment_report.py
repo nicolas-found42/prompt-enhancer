@@ -389,3 +389,80 @@ def test_missing_or_duplicate_sample_pair_fails_closed():
     metrics["rows"].append({"id": "sample2", "variant": "original", "model": "model-a"})
     with pytest.raises(PromptExperimentReportError, match="duplicate"):
         build_prompt_experiment_report(answers, metrics, judgments, optimizer)
+
+
+@pytest.mark.parametrize("variant", ["original", "rewrite"])
+def test_each_variant_requires_one_consistent_prompt(variant):
+    answers, metrics, judgments, optimizer = _inputs()
+    offset = 0 if variant == "original" else 1
+    extra = dict(answers[offset], sample_index=1, prompt="A different request.")
+    other = dict(answers[1 - offset], sample_index=1)
+    answers.extend([extra, other])
+    metrics["rows"].extend(
+        [
+            {"id": "extra0", "variant": extra["variant"], "model": extra["model"]},
+            {"id": "extra1", "variant": other["variant"], "model": other["model"]},
+        ]
+    )
+    with pytest.raises(PromptExperimentReportError, match="same .* prompt"):
+        build_prompt_experiment_report(answers, metrics, judgments, optimizer)
+
+
+def test_identical_variant_prompts_cannot_establish_rewrite_improvement():
+    answers, metrics, judgments, optimizer = _inputs()
+    answers[1]["prompt"] = answers[0]["prompt"]
+    judgments["judgments"][0]["results"] = [
+        {"id": "sample0", "classification": "scientific_error", "decision": "auto"},
+        {"id": "sample1", "classification": "acceptable", "decision": "auto"},
+    ]
+    with pytest.raises(PromptExperimentReportError, match="distinct"):
+        build_prompt_experiment_report(
+            answers,
+            metrics,
+            judgments,
+            optimizer,
+            criteria_manifest=_complete_criteria_manifest(answers),
+        )
+
+
+def test_quality_judgments_match_arbitrary_string_sample_ids():
+    answers, metrics, judgments, optimizer = _inputs()
+    for index, metric in enumerate(metrics["rows"]):
+        metric["id"] = f"case-{index}"
+    judgments["judgments"][0]["results"] = [
+        {"id": "case-0", "classification": "scientific_error", "decision": "auto"},
+        {"id": "case-1", "classification": "acceptable", "decision": "auto"},
+    ]
+    samples = build_prompt_experiment_report(
+        answers,
+        metrics,
+        judgments,
+        optimizer,
+        criteria_manifest=_complete_criteria_manifest(answers),
+    )["sample_experiment"]
+    assert samples["comparison"]["improvement_status"] == "improvement_established"
+    assert [x["quality"]["status"] for x in samples["answers"]] == ["failed", "passed"]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_conflicting_classifications_fail_closed_in_either_order(reverse):
+    answers, metrics, judgments, optimizer = _inputs()
+    entries = [
+        {"id": "sample1", "classification": "scientific_error", "decision": "auto"},
+        {"id": "sample1", "classification": "acceptable", "decision": "auto"},
+    ]
+    if reverse:
+        entries.reverse()
+    judgments["judgments"][0]["results"] = [
+        {"id": "sample0", "classification": "scientific_error", "decision": "auto"},
+        entries[0],
+    ]
+    judgments["judgments"].append({"tool": "jev_classify", "results": [entries[1]]})
+    with pytest.raises(PromptExperimentReportError, match="conflicting classification"):
+        build_prompt_experiment_report(
+            answers,
+            metrics,
+            judgments,
+            optimizer,
+            criteria_manifest=_complete_criteria_manifest(answers),
+        )
