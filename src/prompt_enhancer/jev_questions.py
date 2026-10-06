@@ -97,13 +97,23 @@ SCORE_QUESTIONS = {
 }
 
 
-def style_fit_question(applied_style: str, bundle: Sequence[str]) -> str:
-    """Narrow style-fit question fed by the Route style bundle (#166)."""
-    members = ", ".join(bundle) if bundle else "no strategies"
+def style_fit_question(
+    applied_style: str, bundle: Sequence[str], *, legacy_evidence: bool = False
+) -> str:
+    """Judge the resulting prompt; route strategies are suggestions, not goals."""
+    if legacy_evidence:
+        members = ", ".join(bundle) if bundle else "no strategies"
+        return (
+            f"Does the candidate prompt reflect the {applied_style} improvement "
+            f"style (rewritten with: {members}) while preserving the original "
+            "request?"
+        )
     return (
-        f"Does the candidate prompt reflect the {applied_style} improvement "
-        f"style (rewritten with: {members}) while preserving the original "
-        "request?"
+        f"Does candidate_prompt suit the presentation intent described by "
+        f"style_authorization for the {applied_style} improvement style, while "
+        "preserving the original request? Judge the resulting prompt, not "
+        "whether a rewrite occurred or every suggested strategy was used. "
+        "An unchanged original can pass when it already fits the style."
     )
 
 

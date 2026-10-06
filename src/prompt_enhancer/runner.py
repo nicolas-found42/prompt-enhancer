@@ -6,11 +6,11 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, cast
 
 from .config import DEFAULT_FIXED_WEAK_PANEL, Settings
-from .gateway import MAX_CONCURRENT_TRANSPORT_REQUESTS, Gateway
+from .gateway import MAX_CONCURRENT_TRANSPORT_REQUESTS, Gateway, ProviderError
 from .strategies import CandidateDraft
 
 DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_FIXED_WEAK_PANEL
@@ -28,9 +28,15 @@ class PanelResult:
     seed: int
     output: str
     prompt: str = ""
+    response_details: Mapping[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {"response_details": dict(self.response_details)}
+                if self.response_details
+                else {}
+            ),
             "candidate_id": self.candidate_id,
             "model": self.model,
             "sample": self.sample,
@@ -104,19 +110,98 @@ def _execute_one(
     sample: int,
     run_seed: int,
     run_id: str | None,
+    max_output_tokens: int | None,
+    validate_response: bool,
 ) -> PanelResult:
     seed = _stable_seed(run_seed, candidate_id, model, sample)
-    output = _output_text(
-        gateway.chat(
-            model,
-            [{"role": "user", "content": prompt}],
-            role="weak",
-            run_id=run_id,
-            seed=seed,
-            temperature=WEAK_TEMPERATURE,
-        )
+    response = gateway.chat(
+        model,
+        [{"role": "user", "content": prompt}],
+        role="weak",
+        run_id=run_id,
+        seed=seed,
+        temperature=WEAK_TEMPERATURE,
+        **({"max_tokens": max_output_tokens} if max_output_tokens is not None else {}),
     )
-    return PanelResult(candidate_id, model, sample, seed, output, prompt)
+    output = _output_text(response)
+    details: dict[str, Any] = {}
+    if validate_response:
+        details = _response_details(response, output)
+        incomplete = details.get("status") in {
+            "incomplete",
+            "failed",
+            "cancelled",
+        } or details.get("finish_reason") in {
+            "length",
+            "max_tokens",
+            "content_filter",
+            "tool_calls",
+            "tool_use",
+        }
+        if incomplete or not output.strip():
+            # Provider metadata is allowlisted; never retain body diagnostics,
+            # request headers, reasoning text or arbitrary error messages.
+            provider = next(
+                (
+                    str(call["provider"])
+                    for call in reversed(getattr(gateway, "calls", ()))
+                    if isinstance(call, Mapping)
+                    and call.get("model") == model
+                    and call.get("role") == "weak"
+                    and call.get("provider") in {"go", "openrouter"}
+                ),
+                "model",
+            )
+            raise ProviderError(
+                provider,
+                model,
+                None,
+                "panel answer did not complete",
+                role="weak",
+                kind="incomplete_response" if incomplete else "empty_response",
+                response_details=details,
+            )
+    return PanelResult(candidate_id, model, sample, seed, output, prompt, details)
+
+
+def _response_details(response: Any, output: str) -> dict[str, Any]:
+    details: dict[str, Any] = {"visible_chars": len(output)}
+    if not isinstance(response, Mapping):
+        return details
+    status = response.get("status")
+    if status in {"completed", "incomplete", "failed", "cancelled"}:
+        details["status"] = status
+    stop_reason = response.get("stop_reason")
+    if stop_reason in {"end_turn", "max_tokens", "stop_sequence", "tool_use"}:
+        details["finish_reason"] = stop_reason
+    incomplete = response.get("incomplete_details")
+    if isinstance(incomplete, Mapping) and incomplete.get("reason") in {
+        "max_output_tokens",
+        "content_filter",
+    }:
+        details["incomplete_reason"] = incomplete["reason"]
+    choices = response.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], Mapping):
+        finish = choices[0].get("finish_reason")
+        if finish in {"stop", "length", "max_tokens", "content_filter", "tool_calls"}:
+            details["finish_reason"] = finish
+    usage = response.get("usage")
+    if isinstance(usage, Mapping):
+        for source in ("output_tokens", "completion_tokens"):
+            count = usage.get(source)
+            if isinstance(count, int) and not isinstance(count, bool) and count >= 0:
+                details["output_tokens"] = count
+        for source in ("output_tokens_details", "completion_tokens_details"):
+            tokens = usage.get(source)
+            if isinstance(tokens, Mapping):
+                count = tokens.get("reasoning_tokens")
+                if (
+                    isinstance(count, int)
+                    and not isinstance(count, bool)
+                    and count >= 0
+                ):
+                    details["reasoning_tokens"] = count
+    return details
 
 
 def _run_panel(
@@ -129,10 +214,21 @@ def _run_panel(
     run_seed: int,
     max_workers: int | None,
     run_id: str | None,
+    max_output_tokens: int | None,
+    validate_response: bool,
 ) -> list[PanelResult]:
     """Run one prompt on every model and sample, concurrently, in a stable order."""
     requests = [
-        (candidate_id, prompt, model, sample, run_seed, run_id)
+        (
+            candidate_id,
+            prompt,
+            model,
+            sample,
+            run_seed,
+            run_id,
+            max_output_tokens,
+            validate_response,
+        )
         for model in models
         for sample in range(samples)
     ]
@@ -166,6 +262,7 @@ def run_candidates(
     run_seed: int = 0,
     max_workers: int | None = None,
     run_id: str | None = None,
+    validate_response: bool = True,
 ) -> PanelRunResult:
     """Run the original and candidates on the settings-backed weak panel.
 
@@ -190,6 +287,13 @@ def run_candidates(
     if len(set(models)) != model_count:
         raise ValueError(f"weak_models must contain {model_count} distinct models")
     selected_samples = workload.weak_samples if samples is None else samples
+    output_limit = workload.weak_max_output_tokens if validate_response else None
+    if output_limit is not None and (
+        not isinstance(output_limit, int)
+        or isinstance(output_limit, bool)
+        or output_limit < 1
+    ):
+        raise ValueError("weak_max_output_tokens must be a positive integer")
     if (
         not isinstance(selected_samples, int)
         or isinstance(selected_samples, bool)
@@ -215,6 +319,8 @@ def run_candidates(
                 run_seed=run_seed,
                 max_workers=max_workers,
                 run_id=run_id,
+                max_output_tokens=output_limit,
+                validate_response=validate_response,
             )
         )
     return PanelRunResult(

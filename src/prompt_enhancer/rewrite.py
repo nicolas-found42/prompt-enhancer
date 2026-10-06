@@ -31,8 +31,8 @@ from .writer_replies import read_writer_reply
 # cascade (`criterion_reading.CRITERION_READING_MIN_VERSION`) instead of regexes.
 # Version 13 records advisory Jev relationships across accepted success tests.
 # Version 14 retries unusable required writer replies once and rejects malformed test items.
-WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
-CURRENT_WRITER_INSTRUCTION_VERSION = 14
+WRITER_INSTRUCTION_VERSIONS = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)
+CURRENT_WRITER_INSTRUCTION_VERSION = 15
 
 
 class CandidateWriter:
@@ -117,6 +117,7 @@ class CandidateWriter:
             12: current_instructions,
             13: current_instructions,
             14: current_instructions,
+            15: current_instructions,
         }[self.instruction_version]
         if state.get("style_authorization"):
             instructions += (

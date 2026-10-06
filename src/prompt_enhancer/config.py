@@ -40,6 +40,10 @@ class Settings:
     grading_confirmation_reservation_usd: float = 0.001
     attribution_pair_cap: int | None = 30
     attribution_dollar_cap: float | None = 0.03
+    # Optional identity- and snapshot-matched runtime calibration. Missing
+    # coverage remains unresolved rather than falling back to invented gates.
+    decision_policy_path: str | None = None
+    weak_max_output_tokens: int = 16384
     # Quality score-vector floors (#168): per-dimension minima on the 0-1
     # scale. Any dimension below its floor rejects the candidate outright
     # (max-gate: a breach is never averaged away by strong siblings). These
@@ -87,6 +91,10 @@ class Settings:
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY") or None,
             opencode_go_key=os.getenv("OPENCODE_GO_KEY") or None,
             judge_model=os.getenv("PROMPT_ENHANCER_JEV_MODEL", JEV_MODEL),
+            decision_policy_path=os.getenv("PROMPT_ENHANCER_CALIBRATION") or None,
+            weak_max_output_tokens=int(
+                os.getenv("PROMPT_ENHANCER_WEAK_MAX_OUTPUT_TOKENS", "16384")
+            ),
             writer_model=os.getenv("PROMPT_ENHANCER_WRITER_MODEL", DEFAULT_GO_WRITER),
             strong_check_model=os.getenv(
                 "PROMPT_ENHANCER_STRONG_MODEL", "glm-5.3-flash"

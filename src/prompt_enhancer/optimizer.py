@@ -224,7 +224,11 @@ class PromptOptimizer:
         )
 
         selected_policy = (
-            decision_policy if decision_policy is not None else calibration
+            decision_policy
+            if decision_policy is not None
+            else calibration
+            if calibration is not None
+            else self.config.decision_policy_path
         )
         if selected_policy is None or isinstance(selected_policy, DecisionPolicy):
             self.decision_policy = selected_policy
