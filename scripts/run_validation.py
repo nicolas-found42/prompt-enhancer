@@ -30,48 +30,51 @@ def main() -> int:
         sha=commit(repo, "HEAD"),
     )
     try:
-        require_quality_tools(repo)
-        config = yaml.safe_load((repo / ".pre-commit-config.yaml").read_text())
-        hooks = [hook["id"] for source in config["repos"] for hook in source["hooks"]]
-        if not hooks or len(set(hooks)) != len(hooks):
-            raise ValueError("expected unique configured hook IDs")
-        skipped = [name for name in os.environ.get("SKIP", "").split(",") if name]
-        if set(skipped) - {"no-commit-to-branch"}:
-            raise ValueError("validation receipts cannot skip deterministic checks")
-        receipt.value.update(
-            source_digest=worktree_digest(repo),
-            configured_hooks=hooks,
-            skipped_hooks=skipped,
-        )
-        receipt.save()
-        for stage, selected in [
-            ("fast", [name for name in hooks if name not in EXPENSIVE]),
-            ("tests", [name for name in hooks if name in EXPENSIVE]),
-        ]:
-            for name in selected:
-                print(f"{stage}: {name}", flush=True)
-                env = dict(os.environ)
-                if name == "python-tests":
-                    report = receipt.output / "pytest.xml"
-                    env["PYTEST_ADDOPTS"] = (
-                        f"{env.get('PYTEST_ADDOPTS', '')} "
-                        + shlex.join(["--durations=10", f"--junitxml={report}"])
-                    )
-                receipt.run(
-                    name,
-                    [args.pre_commit, "run", name, "--all-files", "--verbose"],
-                    cwd=repo,
-                    env=env,
-                )
-                receipt.value["checks"][-1]["stage"] = stage
-                receipt.save()
-        if worktree_digest(repo) != receipt.value["source_digest"]:
-            raise ValueError(
-                "source changed during validation; inspect changes and rerun"
+        with receipt.interruptions():
+            require_quality_tools(repo)
+            config = yaml.safe_load((repo / ".pre-commit-config.yaml").read_text())
+            hooks = [
+                hook["id"] for source in config["repos"] for hook in source["hooks"]
+            ]
+            if not hooks or len(set(hooks)) != len(hooks):
+                raise ValueError("expected unique configured hook IDs")
+            skipped = [name for name in os.environ.get("SKIP", "").split(",") if name]
+            if set(skipped) - {"no-commit-to-branch"}:
+                raise ValueError("validation receipts cannot skip deterministic checks")
+            receipt.value.update(
+                source_digest=worktree_digest(repo),
+                configured_hooks=hooks,
+                skipped_hooks=skipped,
             )
-        receipt.finish()
-        print(f"Validation completed. Receipt: {receipt.path}")
-        return 0
+            receipt.save()
+            for stage, selected in [
+                ("fast", [name for name in hooks if name not in EXPENSIVE]),
+                ("tests", [name for name in hooks if name in EXPENSIVE]),
+            ]:
+                for name in selected:
+                    print(f"{stage}: {name}", flush=True)
+                    env = dict(os.environ)
+                    if name == "python-tests":
+                        report = receipt.output / "pytest.xml"
+                        env["PYTEST_ADDOPTS"] = (
+                            f"{env.get('PYTEST_ADDOPTS', '')} "
+                            + shlex.join(["--durations=10", f"--junitxml={report}"])
+                        )
+                    receipt.run(
+                        name,
+                        [args.pre_commit, "run", name, "--all-files", "--verbose"],
+                        cwd=repo,
+                        env=env,
+                    )
+                    receipt.value["checks"][-1]["stage"] = stage
+                    receipt.save()
+            if worktree_digest(repo) != receipt.value["source_digest"]:
+                raise ValueError(
+                    "source changed during validation; inspect changes and rerun"
+                )
+            receipt.finish()
+            print(f"Validation completed. Receipt: {receipt.path}")
+            return 0
     except KeyboardInterrupt:
         print(f"Validation interrupted. Receipt: {receipt.path}")
         return 130

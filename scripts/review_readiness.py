@@ -76,7 +76,7 @@ def assess(
         "status": "triaged"
         if relevant and not unresolved
         else "needs_triage"
-        if relevant
+        if unresolved
         else "pending",
         "dispositions": {cid: dispositions[cid] for cid in ids if cid in dispositions},
     }
@@ -86,7 +86,8 @@ def valid_disposition(value, current_fingerprint: str) -> bool:
     return (
         isinstance(value, dict)
         and value.get("status") in {"fixed", "dismissed", "deferred"}
-        and bool(str(value.get("evidence", "")).strip())
+        and isinstance(value.get("evidence"), str)
+        and bool(value["evidence"].strip())
         and value.get("fingerprint") == current_fingerprint
     )
 
@@ -108,15 +109,18 @@ def main() -> int:
         or args.output.exists()
     ):
         parser.error("Use a fresh output and a timeout between 0 and 1800 seconds")
-    dispositions = (
-        json.loads(args.dispositions.read_text()) if args.dispositions else {}
-    )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + args.timeout
     last_signature = None
     stable_since = time.monotonic()
     prefix = f"repos/{args.repo}/pulls/{args.pr}"
+    last_result = None
     try:
+        dispositions = (
+            json.loads(args.dispositions.read_text()) if args.dispositions else {}
+        )
+        if not isinstance(dispositions, dict):
+            raise ValueError("Dispositions must be a mapping")
         while True:
             before = gh_json(prefix, deadline)[0]["head"]["sha"]
             reviews = [
@@ -125,10 +129,11 @@ def main() -> int:
             comments = [
                 c for page in gh_json(prefix + "/comments", deadline) for c in page
             ]
-            after = gh_json(prefix, deadline)[0]["head"]["sha"]
             result = assess(
                 args.head, reviews, comments, dispositions, reviewer=args.reviewer
             )
+            last_result = dict(result)
+            after = gh_json(prefix, deadline)[0]["head"]["sha"]
             signature = (result["review_fingerprints"], result["comment_fingerprints"])
             if signature != last_signature:
                 last_signature = signature
@@ -159,10 +164,12 @@ def main() -> int:
         write_json(
             args.output,
             {
+                **(last_result or {}),
                 "status": "timed_out",
                 "head": args.head,
                 "pr": args.pr,
                 "repository": args.repo,
+                "captured_at": datetime.now(UTC).isoformat(),
             },
         )
         print("Review readiness timed out; see receipt")

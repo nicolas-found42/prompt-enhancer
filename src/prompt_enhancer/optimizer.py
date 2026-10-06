@@ -572,6 +572,45 @@ class PromptOptimizer:
         """Snapshot effective per-run roles and transport bounds without keys."""
         return self._configuration(self._run_settings(options or {}))
 
+    def _record_configuration(
+        self,
+        run_id: str,
+        settings: Settings,
+        operation: str,
+        *,
+        initial_record: dict[str, Any] | None = None,
+    ) -> None:
+        """Record actual execution settings before the operation's provider calls."""
+        configuration = self._configuration(settings)
+
+        def update(previous: dict[str, Any] | None) -> dict[str, Any]:
+            previous = previous or initial_record
+            if previous is None:
+                raise RunNotFoundError(run_id)
+            initial = (
+                configuration
+                if operation == "optimize"
+                else previous.get(
+                    "initial_configuration",
+                    previous.get("configuration", configuration),
+                )
+            )
+            return {
+                **previous,
+                "initial_configuration": initial,
+                "configuration": configuration,
+                "configuration_history": [
+                    *previous.get("configuration_history", []),
+                    {
+                        "operation": operation,
+                        "recorded_at": utc_now(),
+                        "configuration": configuration,
+                    },
+                ],
+            }
+
+        self.store.update_run(run_id, update)
+
     def optimize(
         self,
         prompt: str,
@@ -585,22 +624,18 @@ class PromptOptimizer:
         run_id = run_id or new_run_id()
         started_perf = perf_counter()
         started_at = utc_now()
-        self.store.update_run(
+        self._record_configuration(
             run_id,
-            lambda previous: {
-                **(
-                    previous
-                    or {
-                        "run_id": run_id,
-                        "created_at": started_at,
-                        "prompt": prompt,
-                        "options": supplied_options,
-                        "result": {},
-                        "cost": {},
-                        "timing": {},
-                    }
-                ),
-                "configuration": configuration,
+            run_settings,
+            "optimize",
+            initial_record={
+                "run_id": run_id,
+                "created_at": started_at,
+                "prompt": prompt,
+                "options": supplied_options,
+                "result": {},
+                "cost": {},
+                "timing": {},
             },
         )
         self.gateway.new_run(run_id)
@@ -1399,6 +1434,7 @@ class PromptOptimizer:
         stored_options = (metadata or {}).get("options", {})
         options = dict(stored_options) if isinstance(stored_options, Mapping) else {}
         run_settings = self._run_settings(options)
+        self._record_configuration(run_id, run_settings, "clarification-continuation")
         assumptions = state.get("assumptions", [])
         stored_options = (metadata or {}).get("options", {})
         style = str(
@@ -1506,6 +1542,7 @@ class PromptOptimizer:
         )
         options = dict(saved.get("options") or {})
         run_settings = self._run_settings(options)
+        self._record_configuration(run_id, run_settings, "continue")
         prompt = str(record.get("prompt") or "")
         saved_diagnosis = saved.get("diagnosis")
         diagnosis: Mapping[str, Any] = (
@@ -1627,6 +1664,10 @@ class PromptOptimizer:
             "timing": result.get("timing", cleaned.get("timing", {})),
             **evidence,
         }
+        latest = self.store.get_run(str(record["run_id"])) or {}
+        for key in ("configuration", "initial_configuration", "configuration_history"):
+            if key in latest:
+                saved[key] = latest[key]
         if options is not None:
             saved["options"] = dict(options)
         if resume_ctx is not None:
@@ -1824,8 +1865,11 @@ class PromptOptimizer:
             "timing": result["timing"],
             **evidence,
         }
-        previous = self.store.get_run(result["run_id"])
-        configuration = configuration or (previous or {}).get("configuration")
+        previous = self.store.get_run(result["run_id"]) or {}
+        for key in ("initial_configuration", "configuration_history"):
+            if key in previous:
+                record[key] = previous[key]
+        configuration = configuration or previous.get("configuration")
         if configuration is not None:
             record["configuration"] = configuration
         if resume_ctx is not None:

@@ -306,3 +306,72 @@ def test_codeql_evidence_requires_reviewed_commit_even_with_identical_tree(
     assert result.returncode == 1
     assert "commit differs" in result.stdout
     assert not rejected.exists()
+
+
+def test_partition_covers_both_sides_of_rename(repo, tmp_path):
+    assert (
+        command(["git", "-C", str(repo), "mv", "source.py", "renamed.py"]).returncode
+        == 0
+    )
+    receipt = make_validation_receipt(repo, tmp_path)
+    output = tmp_path / "evidence.json"
+    result = command(
+        [
+            sys.executable,
+            str(SCRIPTS / "build_review_evidence.py"),
+            "--repo",
+            str(repo),
+            "--base",
+            "HEAD~1",
+            "--receipt",
+            str(receipt),
+            "--partition",
+            "--output",
+            str(output),
+        ]
+    )
+    assert result.returncode == 0, result.stdout
+    bundle = json.loads(output.read_text())
+    patches = {
+        item["path"]: item["diff"]
+        for item in bundle["plan"]["bundles"]
+        if item["kind"] == "patch_review"
+    }
+    assert "deleted file mode" in patches["source.py"]
+    assert "new file mode" in patches["renamed.py"]
+    assert all(patch in bundle["diff"] for patch in patches.values())
+
+
+@pytest.mark.parametrize("name", ["missing.py", "folder", "link.py"])
+def test_invalid_dependency_is_bounded_rejection(repo, tmp_path, name):
+    (repo / "folder").mkdir()
+    (repo / "folder" / "nested.py").write_text("pass\n")
+    (repo / "link.py").symlink_to("source.py")
+    receipt = make_validation_receipt(repo, tmp_path)
+    dependencies = tmp_path / "dependencies.json"
+    dependencies.write_text(json.dumps({".pre-commit-config.yaml": [name]}))
+    output = tmp_path / "evidence.json"
+    result = command(
+        [
+            sys.executable,
+            str(SCRIPTS / "build_review_evidence.py"),
+            "--repo",
+            str(repo),
+            "--base",
+            "HEAD~1",
+            "--receipt",
+            str(receipt),
+            "--partition",
+            "--dependencies",
+            str(dependencies),
+            "--output",
+            str(output),
+        ]
+    )
+    assert result.returncode == 1
+    assert (
+        "Evidence rejected: Dependency must be a committed regular file"
+        in result.stdout
+    )
+    assert "Traceback" not in result.stderr
+    assert not output.exists()

@@ -226,6 +226,7 @@ def test_clarification_options_are_read_from_a_reply_wrapped_in_prose() -> None:
 
 
 def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
+    from prompt_enhancer.config import Settings
     from prompt_enhancer.gateway import ScriptedGateway
     from prompt_enhancer.optimizer import PromptOptimizer
     from prompt_enhancer.store import RunStore
@@ -265,6 +266,8 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
         store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
     )
     paused = optimizer.optimize("Mention the thing.", {})
+    initial = optimizer.store.get_run(paused["run_id"])["configuration"]
+    optimizer.config = Settings(writer_model="changed-for-clarification")
     done = optimizer.resume(
         paused["run_id"],
         {"outside_reference": {"value": "other", "text": "the 5-year warranty"}},
@@ -274,6 +277,13 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
     assert "Details: the 5-year warranty" in done["final_prompt"]
     assert done["report"]["assumptions"][0]["label"] == "details only you know"
     assert done["timing"]["total_ms"] >= 0
+    record = optimizer.store.get_run(paused["run_id"])
+    assert record["initial_configuration"] == initial
+    assert record["configuration"]["models"]["writer"] == "changed-for-clarification"
+    assert [item["operation"] for item in record["configuration_history"]] == [
+        "optimize",
+        "clarification-continuation",
+    ]
 
 
 def test_unknown_context_is_asked_about_and_the_answer_reads_as_plain_text() -> None:

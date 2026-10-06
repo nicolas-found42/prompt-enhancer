@@ -250,6 +250,8 @@ def test_approval_continue_resumes_from_pause_boundary() -> None:
 def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
     import time as _time
 
+    from prompt_enhancer.config import Settings
+
     database = str(tmp_path / "runs.sqlite3")
     optimizer = PromptOptimizer(
         store=RunStore(database), gateway=_rejected_gateway(cost_per_call=1.0)
@@ -268,10 +270,14 @@ def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
         _time.sleep(0.01)
     assert job["result"]["report"]["status"] == "awaiting_approval"
 
+    initial = optimizer.store.get_run(run_id)["configuration"]
+    restarted_store = RunStore(database)
     restarted = TestClient(
         create_app(
             optimizer=PromptOptimizer(
-                store=RunStore(database), gateway=_rejected_gateway(cost_per_call=1.0)
+                store=restarted_store,
+                gateway=_rejected_gateway(cost_per_call=1.0),
+                config=Settings(writer_model="changed-after-restart"),
             )
         )
     )
@@ -288,6 +294,16 @@ def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
     finished = restarted.get(f"/api/runs/{run_id}").json()["result"]
     assert finished["report"]["status"] == "converged"
     assert len(finished["report"]["history"]) >= 2
+    record = restarted_store.get_run(run_id)
+    assert record["initial_configuration"] == initial
+    assert record["configuration"]["models"]["writer"] == "changed-after-restart"
+    assert [item["operation"] for item in record["configuration_history"]] == [
+        "optimize",
+        "continue",
+    ]
+    assert (
+        record["configuration_history"][-1]["configuration"] == record["configuration"]
+    )
 
 
 def test_cancel_mid_run_preserves_completed_rounds() -> None:

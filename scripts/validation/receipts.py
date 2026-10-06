@@ -10,6 +10,7 @@ import socket
 import subprocess
 import tarfile
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -163,6 +164,20 @@ class Receipt:
     def save(self) -> None:
         self.value["heartbeat_at"] = datetime.now(UTC).isoformat()
         write_json(self.path, self.value)
+
+    @contextmanager
+    def interruptions(self):
+        """Cover setup, bookkeeping and gaps between child checks as well."""
+        previous = signal.signal(signal.SIGTERM, interrupt_signal)
+        try:
+            yield
+        except KeyboardInterrupt as exc:
+            if self.value["status"] != "interrupted":
+                self.value.update(status="interrupted", error=str(exc) or "interrupted")
+                self.save()
+            raise
+        finally:
+            signal.signal(signal.SIGTERM, previous)
 
     def run(
         self, name: str, command: list[str], *, cwd: Path, env: dict | None = None

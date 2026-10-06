@@ -469,3 +469,248 @@ def test_background_override_provenance_survives_interruption_recovery(tmp_path)
         if saved is not None:
             saved.close()
         store.close()
+
+
+@pytest.mark.parametrize("evidence", [None, [], {}, 42, "  "])
+def test_nontext_disposition_evidence_remains_unresolved(evidence):
+    comment = {"id": 10, "commit_id": "head", "user": {"login": "qodo"}}
+    result = assess(
+        "head",
+        [],
+        [comment],
+        {
+            "10": {
+                "status": "fixed",
+                "evidence": evidence,
+                "fingerprint": fingerprint(comment),
+            }
+        },
+        reviewer="qodo",
+    )
+    assert result["status"] == "needs_triage"
+    assert result["unresolved"] == ["10"]
+
+
+@pytest.mark.parametrize("contents", [None, "{", "[]"])
+def test_bad_disposition_file_writes_unavailable_receipt(
+    tmp_path, monkeypatch, contents
+):
+    import review_readiness as readiness
+
+    source = tmp_path / "dispositions.json"
+    if contents is not None:
+        source.write_text(contents)
+    output = tmp_path / "receipt.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "review_readiness.py",
+            "1",
+            "--head",
+            "head",
+            "--dispositions",
+            str(source),
+            "--output",
+            str(output),
+        ],
+    )
+    monkeypatch.setattr(
+        readiness,
+        "gh_json",
+        lambda *args: pytest.fail("bad input must fail before fetching"),
+    )
+    assert readiness.main() == 1
+    assert json.loads(output.read_text())["status"] == "unavailable"
+
+
+def test_timeout_keeps_current_comments_with_older_review_record(tmp_path, monkeypatch):
+    import review_readiness as readiness
+
+    clock = [0.0]
+    comment = {
+        "id": 10,
+        "commit_id": "head",
+        "body": "Finding",
+        "user": {"login": "qodo-code-review[bot]"},
+    }
+    review = {
+        "id": 1,
+        "commit_id": "older",
+        "state": "COMMENTED",
+        "user": comment["user"],
+    }
+    assert (
+        assess("head", [review], [comment], {}, reviewer=comment["user"]["login"])[
+            "status"
+        ]
+        == "needs_triage"
+    )
+
+    def fetch(endpoint, deadline):
+        if clock[0] >= deadline:
+            raise readiness.ReadinessTimeout()
+        if endpoint.endswith("/reviews"):
+            return [[review]]
+        if endpoint.endswith("/comments"):
+            return [[comment]]
+        return [{"head": {"sha": "head"}}]
+
+    output = tmp_path / "receipt.json"
+    dispositions = tmp_path / "dispositions.json"
+    disposition = {
+        "status": "fixed",
+        "evidence": "Checked source",
+        "fingerprint": fingerprint(comment),
+    }
+    dispositions.write_text(json.dumps({"10": disposition}))
+    monkeypatch.setattr(readiness, "gh_json", fetch)
+    monkeypatch.setattr(readiness.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        readiness.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay)
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "review_readiness.py",
+            "1",
+            "--head",
+            "head",
+            "--timeout",
+            "5",
+            "--dispositions",
+            str(dispositions),
+            "--output",
+            str(output),
+        ],
+    )
+    assert readiness.main() == 1
+    receipt = json.loads(output.read_text())
+    assert receipt["status"] == "timed_out"
+    assert receipt["comment_ids"] == ["10"]
+    assert receipt["comment_fingerprints"]["10"] == fingerprint(comment)
+    assert receipt["unresolved"] == []
+    assert receipt["dispositions"] == {"10": disposition}
+
+
+@pytest.mark.parametrize(
+    "module,setup",
+    [("run_validation", "require_quality_tools"), ("run_codeql", "snapshot")],
+)
+def test_sigterm_during_runner_setup_is_recorded(tmp_path, module, setup):
+    marker = tmp_path / "ready"
+    output = tmp_path / "receipt"
+    code = f"""import sys,time
+from pathlib import Path
+sys.path.insert(0,{str(ROOT / "scripts")!r})
+import {module} as runner
+def setup(*args):
+    Path({str(marker)!r}).write_text('ready')
+    time.sleep(60)
+runner.{setup}=setup
+sys.argv=['runner','--repo',{str(ROOT)!r},'--output',{str(output)!r}]
+raise SystemExit(runner.main())
+"""
+    runner = subprocess.Popen(
+        [sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    try:
+        deadline = time.monotonic() + 10
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert marker.exists()
+        runner.send_signal(signal.SIGTERM)
+        assert runner.wait(timeout=8) == 130, runner.communicate()
+        receipt = json.loads((output / "receipt.json").read_text())
+        assert receipt["status"] == "interrupted"
+        assert receipt["checks"] == []
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait()
+
+
+def test_interrupt_between_checks_keeps_completed_check(tmp_path):
+    from validation.receipts import Receipt
+
+    receipt = Receipt(
+        tmp_path / "receipt", kind="validation", phase="final", sha="test"
+    )
+    with pytest.raises(KeyboardInterrupt), receipt.interruptions():
+        receipt.run("first", [sys.executable, "-c", "print('done')"], cwd=tmp_path)
+        raise KeyboardInterrupt()
+    saved = json.loads(receipt.path.read_text())
+    assert saved["status"] == "interrupted"
+    assert saved["checks"][0]["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    "failure", ["submit", "poll", "cancel", "history", "interrupt", "cleanup"]
+)
+def test_isolated_failure_preserves_incomplete_provenance(
+    tmp_path, monkeypatch, failure
+):
+    import isolated_run as isolated
+
+    plan = {
+        "judge": "judge",
+        "models": {"writer": "writer", "strong": "strong", "weak": ["weak"]},
+        "operation_timeout_s": 3,
+        "request_timeout_s": 2,
+    }
+    actual = {
+        "judge_model": "judge",
+        "writer_model": "writer",
+        "strong_check_model": "strong",
+        "weak_models": ["weak"],
+        "gateway_limits": {"operation_timeout_s": 3, "request_timeout_s": 2},
+    }
+    stopped = []
+    monkeypatch.setattr(isolated.subprocess, "Popen", lambda *args, **kwargs: object())
+    clock = [0.0]
+    monkeypatch.setattr(isolated.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        isolated.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + 1)
+    )
+
+    def request(base, path, payload=None):
+        if path == "/api/settings":
+            return actual
+        if path == "/api/jobs/optimize":
+            if failure == "submit":
+                raise RuntimeError("private detail")
+            return {"run_id": "run", "state": "running"}
+        if path.endswith("/cancel") and failure == "cancel":
+            raise RuntimeError("private detail")
+        if path == "/api/jobs/run":
+            if failure == "interrupt":
+                raise KeyboardInterrupt()
+            if failure == "poll":
+                raise RuntimeError("private detail")
+            return {"run_id": "run", "state": "done", "result": {"status": "failed"}}
+        if path == "/api/runs/run" and failure == "history":
+            raise RuntimeError("private detail")
+        return {}
+
+    def stop(server):
+        stopped.append(server)
+        if failure == "cleanup":
+            raise RuntimeError("private cleanup detail")
+
+    monkeypatch.setattr(isolated, "request", request)
+    monkeypatch.setattr(isolated, "stop_process_group", stop)
+    with pytest.raises(KeyboardInterrupt if failure == "interrupt" else RuntimeError):
+        isolated.execute(
+            plan,
+            tmp_path,
+            "prompt",
+            wall_seconds=0 if failure == "cancel" else 5,
+            drain_seconds=1,
+        )
+    saved = json.loads((tmp_path / "provenance.json").read_text())
+    assert saved["status"] == "incomplete"
+    assert "private" not in json.dumps(saved)
+    assert len(stopped) == 1
+    if failure != "submit":
+        assert json.loads((tmp_path / "final-job.json").read_text())["run_id"] == "run"

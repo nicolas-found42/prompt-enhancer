@@ -120,6 +120,7 @@ def execute(
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+        job = None
         try:
             startup = time.monotonic() + 15
             while True:
@@ -147,6 +148,7 @@ def execute(
             )
             write_json(output / "provenance.json", plan)
             job = request(base, "/api/jobs/optimize", {"prompt": prompt})
+            write_json(output / "final-job.json", job)
             run_id = job["run_id"]
             deadline = time.monotonic() + wall_seconds
             plan.update(
@@ -158,6 +160,7 @@ def execute(
             while job["state"] in {"queued", "running"} and time.monotonic() < deadline:
                 time.sleep(0.1)
                 job = request(base, f"/api/jobs/{run_id}")
+                write_json(output / "final-job.json", job)
             if job["state"] in {"queued", "running"}:
                 request(base, f"/api/jobs/{run_id}/cancel", {})
                 deadline = time.monotonic() + drain_seconds
@@ -167,16 +170,33 @@ def execute(
                 ):
                     time.sleep(0.1)
                     job = request(base, f"/api/jobs/{run_id}")
+                    write_json(output / "final-job.json", job)
             write_json(output / "final-job.json", job)
             write_json(output / "history.json", request(base, f"/api/runs/{run_id}"))
             plan["status"] = "terminal" if job["state"] == "done" else "incomplete"
+            plan["outcome"] = (
+                job.get("result", {}).get("status")
+                if isinstance(job.get("result"), dict)
+                else None
+            )
             write_json(output / "provenance.json", plan)
             if plan["status"] == "incomplete":
                 raise RuntimeError(
                     "Isolated run remained active after cancellation drain"
                 )
+        except BaseException as exc:
+            plan.update(status="incomplete", error_type=type(exc).__name__)
+            if job is not None:
+                write_json(output / "final-job.json", job)
+            write_json(output / "provenance.json", plan)
+            raise
         finally:
-            stop_process_group(server)
+            try:
+                stop_process_group(server)
+            except BaseException as exc:
+                plan.update(status="incomplete", cleanup_error_type=type(exc).__name__)
+                write_json(output / "provenance.json", plan)
+                raise
 
 
 def main() -> int:

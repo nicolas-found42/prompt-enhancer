@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -11,6 +12,13 @@ from validation.bundles import partition
 from validation.receipts import commit, digest, git, snapshot, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def dependency_source(repo: Path, head: str, name: str) -> str:
+    entry = git(repo, "ls-tree", "-z", head, "--", name).decode()
+    if not entry.startswith(("100644 blob ", "100755 blob ")) or entry.count("\0") != 1:
+        raise ValueError(f"Dependency must be a committed regular file: {name}")
+    return git(repo, "show", f"{head}:{name}").decode()
 
 
 def artifact(directory: Path, name: str, expected: str) -> str:
@@ -104,7 +112,9 @@ def main() -> int:
             raise ValueError("select at most 15 receipts plus the reviewed patch")
         repo = args.repo.resolve()
         base, head = commit(repo, args.base), commit(repo, args.head)
-        patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", base, head).decode()
+        patch = git(
+            repo, "diff", "--no-renames", "--no-ext-diff", "--no-textconv", base, head
+        ).decode()
         if len(patch) > 50_000 and not args.partition:
             raise ValueError(
                 "patch exceeds Jev whole-change input limit; use per-file review"
@@ -129,7 +139,9 @@ def main() -> int:
         }
         if args.partition:
             paths = (
-                git(repo, "diff", "--name-only", "-z", base, head).decode().split("\0")
+                git(repo, "diff", "--no-renames", "--name-only", "-z", base, head)
+                .decode()
+                .split("\0")
             )
             patches = [
                 {
@@ -137,6 +149,7 @@ def main() -> int:
                     "diff": git(
                         repo,
                         "diff",
+                        "--no-renames",
                         "--no-ext-diff",
                         "--no-textconv",
                         base,
@@ -167,7 +180,7 @@ def main() -> int:
                 ):
                     raise ValueError("Invalid dependency source paths")
                 dependencies[path] = [
-                    {"id": name, "text": git(repo, "show", f"{head}:{name}").decode()}
+                    {"id": name, "text": dependency_source(repo, head, name)}
                     for name in names
                 ]
             bundle["plan"] = partition(
@@ -185,7 +198,13 @@ def main() -> int:
         write_json(args.output, bundle)
         print(f"Final evidence for {head}: {args.output}")
         return 0
-    except (OSError, ValueError, KeyError, TypeError) as exc:
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        subprocess.CalledProcessError,
+    ) as exc:
         print(f"Evidence rejected: {exc}")
         return 1
 
