@@ -230,9 +230,14 @@ def _normalise_record(
         default="",
     )
     final_prompt = pick("final_prompt", "finalPrompt", default=None)
-    status = pick(
-        "status", default="completed" if final_prompt is not None else "needs_input"
+    job_record = source.get("job")
+    job_state = job_record.get("state") if isinstance(job_record, Mapping) else None
+    default_status = (
+        str(job_state)
+        if job_state in {"queued", "running", "interrupted"}
+        else ("completed" if final_prompt is not None else "needs_input")
     )
+    status = pick("status", default=default_status)
     legacy_metadata = source.get("legacy_metadata")
     is_legacy = isinstance(legacy_metadata, Mapping) and bool(legacy_metadata)
     canonical = (

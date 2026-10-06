@@ -1,7 +1,18 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { readFileSync } from "node:fs";
 
 type Json = Record<string, unknown>;
+
+const recoveredInterruptedJob = JSON.parse(
+  readFileSync(
+    new URL(
+      "../../tests/fixtures/recovered-interrupted-job.json",
+      import.meta.url
+    ),
+    "utf8"
+  )
+) as Json;
 
 test("the prompt workbench has no automated accessibility violations", async ({
   page,
@@ -90,7 +101,7 @@ test("an empty prompt shows a cue that describes the disabled Optimize button", 
 
 function job(
   runId: string,
-  state: "running" | "done",
+  state: "running" | "done" | "interrupted",
   result: Json | null = null,
   extra: Json = {}
 ): Json {
@@ -683,6 +694,9 @@ test("opening a saved result preserves the current draft", async ({ page }) => {
 test("clarification, assumption editing, history, and feedback use the local API", async ({
   page,
 }) => {
+  // A full optimizer run may queue behind the other browser workers on the
+  // shared E2E API; this is a test deadlock guard, not a product time budget.
+  test.setTimeout(90_000);
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -693,13 +707,51 @@ test("clarification, assumption editing, history, and feedback use the local API
   await page.goto("/");
   await expect(page.getByLabel("Your prompt")).toHaveValue("");
   await page.getByLabel("Your prompt").fill("Help me with this.");
+  const startedJobResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/jobs/optimize") &&
+      response.request().method() === "POST"
+  );
   await page.getByRole("button", { name: "Optimize prompt" }).click();
+  const startedJob = await (await startedJobResponse).json();
+  const runId = startedJob.run_id as string;
   await expect(
     page.getByRole("heading", { name: "A few details will improve the result" })
   ).toBeVisible();
   await expect(page.getByText("What should the assistant do?")).toBeVisible();
+
+  // The shared E2E API serializes optimizer jobs while five browser workers
+  // exercise it. Wait for this run's terminal history response, not a duration.
+  const convergedHistoryResponse = page.waitForResponse(
+    async (response) => {
+      if (
+        !response.url().includes("/api/runs?") ||
+        response.request().method() !== "GET" ||
+        !response.ok()
+      ) {
+        return false;
+      }
+      const runs: unknown = await response.json();
+      return (
+        Array.isArray(runs) &&
+        runs.some(
+          (run) =>
+            typeof run === "object" &&
+            run !== null &&
+            "run_id" in run &&
+            run.run_id === runId &&
+            "outcome" in run &&
+            run.outcome === "converged"
+        )
+      );
+    },
+    { timeout: 60_000 }
+  );
   await page.getByRole("button", { name: "Use my answers" }).click();
-  await expect(page.getByRole("heading", { name: "Converged" })).toBeVisible();
+  await convergedHistoryResponse;
+  await expect(page.getByRole("heading", { name: "Converged" })).toBeVisible({
+    timeout: 60_000,
+  });
   await expect(page.locator(".final-prompt")).toContainText("goal: Summarize");
   await expect(
     page
@@ -715,7 +767,20 @@ test("clarification, assumption editing, history, and feedback use the local API
   const assumption = page.getByLabel("Goal");
   await expect(assumption).toHaveValue("Summarize");
   await assumption.fill("Analyze");
+  const assumptionUpdateResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/runs/${runId}/assumption`) &&
+      response.request().method() === "POST"
+  );
   await page.getByRole("button", { name: "Save", exact: true }).click();
+  const assumptionResponse = await assumptionUpdateResponse;
+  expect(assumptionResponse.request().postDataJSON()).toMatchObject({
+    assumption: { key: "goal", value: "Analyze" },
+  });
+  const assumptionUpdate = await assumptionResponse.json();
+  expect(assumptionUpdate.report.status).toBe("edited");
+  expect(assumptionUpdate.report.outcome).toBeNull();
+  expect(assumptionUpdate.final_prompt).toContain("goal: Analyze");
   await expect(
     page.getByRole("heading", { name: "Outcome not established" })
   ).toBeVisible();
@@ -1067,6 +1132,34 @@ test("a running job shows its stage, elapsed time, and can be cancelled", async 
   await expect(
     page.getByRole("heading", { name: "Run cancelled" })
   ).toBeVisible();
+});
+
+test("a recovered interrupted job shows its failed result and stops polling", async ({
+  page,
+}) => {
+  let jobRequests = 0;
+  await page.addInitScript((runId) => {
+    localStorage.setItem(
+      "prompt-enhancer.active-run",
+      JSON.stringify({ runId, prompt: "Explain a seed." })
+    );
+  }, "durable-run");
+  await page.route("**/api/jobs/durable-run", (route) => {
+    jobRequests += 1;
+    return route.fulfill({ json: recoveredInterruptedJob });
+  });
+
+  await page.goto("/");
+  await expect(page.getByText("RUN FAILED")).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "The run stopped before finishing" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toHaveCount(0);
+  const terminalRequestCount = jobRequests;
+  await page.waitForTimeout(1200);
+  expect(jobRequests).toBe(terminalRequestCount);
 });
 
 test("another tab joining a running job shows which prompt it is working on", async ({

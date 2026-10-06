@@ -132,6 +132,19 @@ beforeEach(() => {
 });
 
 describe("run control", () => {
+  it("uses cancellation_pending to show whether cancellation is still active", async () => {
+    vi.mocked(getActiveJobs).mockResolvedValue([
+      { ...runningJob, cancel_requested: true, cancellation_pending: false },
+    ]);
+
+    render(<App />);
+
+    expect(await screen.findByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Cancelling…" })
+    ).not.toBeInTheDocument();
+  });
+
   it("sends the optional spend limit with the run", async () => {
     vi.mocked(startOptimize).mockResolvedValue(runningJob);
     const user = userEvent.setup();

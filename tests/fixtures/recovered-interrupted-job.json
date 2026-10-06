@@ -1,0 +1,38 @@
+{
+  "run_id": "durable-run",
+  "kind": "optimize",
+  "prompt": "Explain a seed.",
+  "state": "interrupted",
+  "stage": "writing_tests",
+  "round": { "round": 1 },
+  "stages_seen": [],
+  "elapsed_ms": 400,
+  "last_progress_age_ms": null,
+  "cost_total": 0.02,
+  "cancel_requested": false,
+  "cancellation_pending": false,
+  "operation": null,
+  "result": {
+    "status": "failed",
+    "run_id": "durable-run",
+    "original_prompt": "Explain a seed.",
+    "final_prompt": "Explain a seed.",
+    "original_kept": true,
+    "report": {
+      "status": "failed",
+      "summary": "The run stopped before finishing; your original prompt was kept unchanged.",
+      "outcome": "failed_operational",
+      "outcome_reason": "The server stopped before this run finished.",
+      "diagnosis": { "confirmed_gaps": [], "problem_sentences": [] },
+      "assumptions": [],
+      "failure": {
+        "kind": "interrupted",
+        "headline": "The run stopped before finishing",
+        "hint": "Try again. The technical details below say what went wrong.",
+        "message": "The server stopped before this run finished."
+      }
+    },
+    "cost": { "total": 0.02 },
+    "timing": { "total_ms": 400 }
+  }
+}

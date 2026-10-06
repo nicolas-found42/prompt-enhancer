@@ -1,15 +1,20 @@
 import json
 import threading
+from contextlib import contextmanager
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
+from prompt_enhancer.failures import RunCancelled
 from prompt_enhancer.gateway import (
     GatewayConfig,
     HttpGateway,
     ProviderError,
     ScriptedGateway,
 )
+from prompt_enhancer.history import RunHistory
+from prompt_enhancer.jobs import RunJobs
 from prompt_enhancer.optimizer import PromptOptimizer
 from prompt_enhancer.store import RunStore
 
@@ -228,9 +233,14 @@ def test_cancel_stops_the_run_at_the_next_stage() -> None:
     ).json()["run_id"]
     assert entered.wait(5)
 
-    assert client.post(f"/api/jobs/{run_id}/cancel").json()["cancel_requested"] is True
+    cancellation = client.post(f"/api/jobs/{run_id}/cancel").json()
+    assert cancellation["cancel_requested"] is True
+    assert cancellation["cancellation_pending"] is True
+    assert cancellation["state"] == "running"
     release.set()
-    result = jobs.wait(run_id)["result"]
+    terminal = jobs.wait(run_id)
+    result = terminal["result"]
+    assert terminal["cancellation_pending"] is False
 
     assert result["status"] == "failed"
     assert result["report"]["status"] == "cancelled"
@@ -239,6 +249,296 @@ def test_cancel_stops_the_run_at_the_next_stage() -> None:
     assert summary["status"] == "failed"
     assert summary["control_state"] == "cancelled"
     assert summary["outcome"] is None
+
+
+def test_running_job_elapsed_time_keeps_advancing_between_progress_events() -> None:
+    now = [10.0]
+    entered = threading.Event()
+    release = threading.Event()
+    jobs = RunJobs(monotonic=lambda: now[0])
+
+    def work(progress, _cancel_check, _observe_operation):
+        progress("writing_tests", {"round": 1, "elapsed_ms": 100})
+        entered.set()
+        release.wait(5)
+        return {"status": "completed"}
+
+    jobs.submit("elapsed-run", "optimize", work, lambda _exc: {})
+    assert entered.wait(5)
+    now[0] = 10.75
+
+    snapshot = jobs.get("elapsed-run")
+    release.set()
+    jobs.wait("elapsed-run")
+
+    assert snapshot["elapsed_ms"] == 750
+    assert snapshot["last_progress_age_ms"] == 750
+
+
+def test_started_job_is_saved_and_restart_recovers_it_as_interrupted(tmp_path) -> None:
+    store_path = tmp_path / "runs.sqlite"
+    store = RunStore(store_path)
+    jobs = RunJobs(store=store)
+
+    jobs.submit(
+        "durable-run",
+        "optimize",
+        lambda _progress, _cancel_check, _observe_operation: {"status": "completed"},
+        lambda _exc: {},
+        prompt="Explain a seed.",
+    )
+    jobs.wait("durable-run")
+
+    assert store.get_run("durable-run") is not None
+    crashed = store.get_run("durable-run")
+    crashed["job"]["state"] = "running"
+    crashed["job"].update(
+        {
+            "stage": "writing_tests",
+            "round": {"round": 1},
+            "elapsed_ms": 400,
+            "cost_total": 0.02,
+        }
+    )
+    crashed["result"] = {"run_id": "durable-run", "status": "running"}
+    crashed["cost"] = {"total": 0.02}
+    store.save_run(crashed)
+    store.save_run(
+        {
+            "run_id": "cancel-before-crash",
+            "created_at": "2026-10-06T00:00:00+00:00",
+            "prompt": "Explain a seed.",
+            "options": {},
+            "result": {"run_id": "cancel-before-crash", "status": "running"},
+            "cost": {},
+            "timing": {},
+            "job": {
+                "state": "running",
+                "kind": "optimize",
+                "started_at": 1.0,
+                "elapsed_ms": 400,
+                "cancel_requested": True,
+            },
+        }
+    )
+    store.close()
+
+    recovered_store = RunStore(store_path)
+    recovered_app = create_app(
+        optimizer=PromptOptimizer(
+            store=recovered_store,
+            gateway=ScriptedGateway(chat=lambda *_a, **_k: "{}", decision=_decide),
+        )
+    )
+    recovered_jobs = recovered_app.state.jobs
+    recovered = recovered_jobs.get("durable-run")
+
+    assert recovered["state"] == "interrupted"
+    assert recovered["result"]["report"]["failure"]["kind"] == "interrupted"
+    fixture_path = Path(__file__).parent / "fixtures/recovered-interrupted-job.json"
+    expected_api_contract = json.loads(fixture_path.read_text())
+    assert TestClient(recovered_app).get("/api/jobs/durable-run").json() == (
+        expected_api_contract
+    )
+    record = recovered_store.get_run("durable-run")
+    assert record["result"]["status"] == "failed"
+    assert record["result"]["report"]["status"] == "failed"
+    assert record["result"]["report"]["outcome"] == "failed_operational"
+    assert record["result"]["cost"]["total"] == 0.02
+    assert record["result"]["timing"]["total_ms"] == 400
+    recovered_history = RunHistory(recovered_store).get_run("durable-run")
+    assert recovered_history["status"] == "failed"
+    assert recovered_history["outcome"] == "failed_operational"
+    cancelled_before_crash = recovered_jobs.get("cancel-before-crash")
+    assert cancelled_before_crash["state"] == "interrupted"
+    assert cancelled_before_crash["cancel_requested"] is True
+    assert cancelled_before_crash["cancellation_pending"] is False
+    assert (
+        cancelled_before_crash["result"]["report"]["failure"]["kind"] == "interrupted"
+    )
+
+
+def test_job_stage_cancel_and_terminal_transitions_are_durable(tmp_path) -> None:
+    store = RunStore(tmp_path / "transitions.sqlite")
+    jobs = RunJobs(store=store)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def work(progress, cancel_check, _observe_operation):
+        progress("writing_tests", {"round": 1})
+        entered.set()
+        release.wait(5)
+        if cancel_check():
+            raise RuntimeError("cancelled by test worker")
+        return {"status": "completed"}
+
+    jobs.submit(
+        "transition-run",
+        "optimize",
+        work,
+        lambda _exc: {"status": "failed"},
+        prompt="Explain a seed.",
+    )
+    assert entered.wait(5)
+    running = store.get_run("transition-run")
+    assert running["job"]["state"] == "running"
+    assert running["job"]["stage"] == "writing_tests"
+    assert running["result"] == {}
+    active_history = RunHistory(store).get_run("transition-run")
+    assert active_history["status"] == "running"
+    assert active_history["outcome"] is None
+
+    cancelled = jobs.cancel("transition-run")
+    persisted_cancel = store.get_run("transition-run")
+    assert cancelled["cancellation_pending"] is True
+    assert persisted_cancel["job"]["cancel_requested"] is True
+
+    release.set()
+    jobs.wait("transition-run")
+    terminal = store.get_run("transition-run")
+    assert terminal["job"]["state"] == "done"
+    assert terminal["result"]["status"] == "failed"
+
+
+def test_concurrent_cancel_save_cannot_overwrite_a_terminal_job(tmp_path) -> None:
+    store_path = tmp_path / "concurrent-transitions.sqlite"
+    store = RunStore(store_path)
+    jobs = RunJobs(store=store)
+    entered = threading.Event()
+    release_work = threading.Event()
+    stale_ready = threading.Event()
+    release_stale = threading.Event()
+    terminal_saved = threading.Event()
+    original_save = store.save_run
+
+    def controlled_save(record):
+        if threading.current_thread().name == "stale-cancel":
+            stale_ready.set()
+            assert release_stale.wait(5)
+        result = original_save(record)
+        if record.get("job", {}).get("state") == "done":
+            terminal_saved.set()
+        return result
+
+    store.save_run = controlled_save
+
+    def work(progress, cancel_check, _observe_operation):
+        progress("writing_tests", {"round": 1})
+        entered.set()
+        assert release_work.wait(5)
+        if cancel_check():
+            raise RunCancelled("concurrent-run")
+        return {"status": "completed"}
+
+    jobs.submit(
+        "concurrent-run",
+        "optimize",
+        work,
+        lambda _exc: {"status": "cancelled"},
+        prompt="Explain a seed.",
+    )
+    canceller = threading.Thread(
+        target=lambda: jobs.cancel("concurrent-run"), name="stale-cancel"
+    )
+    try:
+        assert entered.wait(5)
+        canceller.start()
+        assert stale_ready.wait(5)
+        release_work.set()
+        # Permit the terminal write to overtake the held stale write on the
+        # broken implementation. With atomic updates it must wait instead.
+        # This wait only bounds the probe; the assertion is durable state.
+        terminal_saved.wait(1)
+    finally:
+        release_work.set()
+        release_stale.set()
+        if canceller.ident is not None:
+            canceller.join(5)
+        jobs._executor.shutdown(wait=True)
+    assert not canceller.is_alive()
+    terminal = store.get_run("concurrent-run")
+    assert terminal["job"]["state"] == "done"
+    assert terminal["job"]["cancel_requested"] is True
+    assert terminal["result"]["status"] == "cancelled"
+    store.close()
+    recovered_store = RunStore(store_path)
+    recovered_jobs = RunJobs(store=recovered_store)
+    assert recovered_jobs.active() == []
+    assert recovered_store.get_run("concurrent-run")["job"]["state"] == "done"
+    assert recovered_store.get_run("concurrent-run")["result"]["status"] == "cancelled"
+    recovered_jobs._executor.shutdown(wait=True)
+    recovered_store.close()
+
+
+def test_api_cancellation_reaches_the_active_gateway_operation() -> None:
+    entered = threading.Event()
+    release = threading.Event()
+
+    class OperationAwareGateway(ScriptedGateway):
+        def cancel_check(self):
+            return False
+
+        def observer(self, _event):
+            return None
+
+        @contextmanager
+        def operation_context(self, *, cancel_check=None, observer=None, substage=None):
+            self.cancel_check = cancel_check or self.cancel_check
+            self.observer = observer or self.observer
+            self.observer({"event": "start", "operation": "test.writer"})
+            try:
+                yield
+            finally:
+                self.cancel_check = type(self).cancel_check.__get__(self)
+
+    gateway_ref = {}
+
+    first_writer_call = True
+
+    def chat(_model, messages, *, role, **_kwargs):
+        nonlocal first_writer_call
+        if role == "writer":
+            if first_writer_call:
+                first_writer_call = False
+                entered.set()
+                release.wait(5)
+                gateway = gateway_ref["gateway"]
+                if gateway.cancel_check():
+                    gateway.observer(
+                        {"event": "cancel_pending", "operation": "test.writer"}
+                    )
+                    raise RunCancelled()
+            state = json.loads(messages[1]["content"])
+            if "strategies" in state:
+                return json.dumps(
+                    {
+                        strategy["name"]: state["prompt"]
+                        for strategy in state["strategies"]
+                    }
+                )
+            return '{"tests":[]}'
+        return "pass"
+
+    gateway = OperationAwareGateway(chat=chat, decision=_decide)
+    gateway_ref["gateway"] = gateway
+    app = create_app(
+        optimizer=PromptOptimizer(store=RunStore(":memory:"), gateway=gateway)
+    )
+    client = TestClient(app)
+    run_id = client.post(
+        "/api/jobs/optimize", json={"prompt": "Write a reply."}
+    ).json()["run_id"]
+    assert entered.wait(5), app.state.jobs.get(run_id)["result"]["report"]["failure"]
+
+    pending = client.post(f"/api/jobs/{run_id}/cancel").json()
+    assert pending["cancellation_pending"] is True
+    assert pending["operation"]["operation"] == "test.writer"
+    release.set()
+
+    terminal = app.state.jobs.wait(run_id)
+    assert terminal["state"] == "done"
+    assert terminal["cancellation_pending"] is False
+    assert terminal["result"]["report"]["status"] == "cancelled"
 
 
 def test_invalid_writer_reply_is_not_reported_as_a_network_error() -> None:

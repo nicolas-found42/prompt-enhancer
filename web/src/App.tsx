@@ -71,6 +71,10 @@ const POLL_MS = 1000;
 // A result shown this recently comes back after a reload instead of vanishing.
 const RESTORE_RESULT_MS = 30 * 60 * 1000;
 
+function isTerminalJob(job: Job): boolean {
+  return job.state === "done" || job.state === "interrupted";
+}
+
 type RememberedRun = { runId: string; prompt: string };
 type RememberedResult = { runId: string; at: number };
 type StoredDraft = { present: boolean; prompt: string };
@@ -504,7 +508,7 @@ export default function App() {
           return;
         }
         if (current.prompt) restoreDraft(current.prompt);
-        if (current.state === "done") finish(current);
+        if (isTerminalJob(current)) finish(current);
         else setJob(current);
       })
       .catch(() => {
@@ -521,12 +525,12 @@ export default function App() {
   }, [result?.run_id]);
 
   useEffect(() => {
-    if (!job || job.state === "done") return;
+    if (!job || isTerminalJob(job)) return;
     const runId = job.run_id;
     const timer = window.setInterval(() => {
       void getJob(runId)
         .then((latest) => {
-          if (latest.state === "done") finish(latest);
+          if (isTerminalJob(latest)) finish(latest);
           else setJob(latest);
         })
         .catch((caught) => {

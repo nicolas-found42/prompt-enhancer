@@ -61,6 +61,21 @@ should use the job endpoints. Synchronous callers can set `time_limit_s` or
 `spend_limit_usd` explicitly to pause at a completed-round boundary. Limits are
 optional, and a healthy run has no automatic attempt or stagnation cap.
 
+Each Gateway operation has a separate 180-second deadline by default. Set
+`PROMPT_ENHANCER_OPERATION_TIMEOUT` to change this limit in seconds. The
+deadline covers model-catalog routing, the provider request, retries, and retry
+delays. `PROMPT_ENHANCER_TIMEOUT` remains the per-request socket timeout; it
+does not replace the operation deadline. The `time_limit_s` run option still
+pauses only after a completed Round when another Round would start.
+
+If a transport ignores its timeout and cannot abort the active request, the
+Gateway returns a timeout or cancellation result by the operation deadline and
+keeps the abandoned worker bounded to eight per Gateway. The built-in HTTP
+transport can close a response body after it receives a response handle. The
+standard library does not expose that handle while it waits for response
+headers, so an abandoned worker in that phase can remain until the connection
+ends or the server process stops.
+
 ## Writer reply recovery
 
 New runs use writer instruction version 14. Success-test generation and candidate

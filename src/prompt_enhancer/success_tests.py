@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import math
 import re
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from itertools import combinations
 from typing import Any
@@ -336,6 +338,26 @@ class SuccessTestCompiler:
         head, tail = self._INSTRUCTIONS.split(marker, 1)
         return f"{head}{self._EXPECTED_CONTRACT}{marker}{tail}"
 
+    def _operation_scope(self, substage: str):
+        context = getattr(self.gateway, "operation_context", None)
+        if not callable(context):
+            return nullcontext()
+        try:
+            parameters = inspect.signature(context).parameters.values()
+            supports_run_id = any(
+                parameter.name == "run_id"
+                or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters
+            )
+        except (TypeError, ValueError):
+            supports_run_id = True
+        kwargs = {"substage": f"success_tests.{substage}"}
+        if supports_run_id:
+            kwargs["run_id"] = self.run_id
+        # Signature inspection avoids catching a TypeError from adapter work
+        # and accidentally retrying the scope or its provider call.
+        return context(**kwargs)
+
     def compile(self, prompt: str) -> CompiledSuccessTests:
         parse_rejections: list[RejectedSuccessTest | MalformedSuccessTest] = []
 
@@ -350,18 +372,19 @@ class SuccessTestCompiler:
                 >= WRITER_REPLY_RECOVERY_MIN_VERSION,
             )
 
-        proposed = read_writer_reply(
-            self.gateway,
-            model=self.writer_model,
-            instructions=self._instructions(),
-            state={"prompt": prompt},
-            read=read,
-            operation="success_tests",
-            instruction_version=self.instruction_version,
-            attempts=self.writer_attempts,
-            run_id=self.run_id,
-            round_number=self.round_number,
-        )
+        with self._operation_scope("generate"):
+            proposed = read_writer_reply(
+                self.gateway,
+                model=self.writer_model,
+                instructions=self._instructions(),
+                state={"prompt": prompt},
+                read=read,
+                operation="success_tests",
+                instruction_version=self.instruction_version,
+                attempts=self.writer_attempts,
+                run_id=self.run_id,
+                round_number=self.round_number,
+            )
         if not proposed:
             return CompiledSuccessTests(
                 (),
@@ -372,7 +395,8 @@ class SuccessTestCompiler:
                 else None,
             )
 
-        proposed = self._repair_descriptions(prompt, proposed)
+        with self._operation_scope("repair_descriptions"):
+            proposed = self._repair_descriptions(prompt, proposed)
         incomplete = tuple(
             test for test in proposed if self._missing_descriptions(test)
         )
@@ -397,7 +421,8 @@ class SuccessTestCompiler:
             )
 
         if self.screen_protocol_version == 1:
-            return self._compile_legacy(prompt, proposed, incomplete_rejections)
+            with self._operation_scope("screen_legacy"):
+                return self._compile_legacy(prompt, proposed, incomplete_rejections)
 
         state = {
             "prompt": prompt,
@@ -430,19 +455,20 @@ class SuccessTestCompiler:
         initial_log = getattr(self.gateway, "decision_log", ())
         before = len(initial_log) if isinstance(initial_log, Sequence) else 0
         screen_error: str | None = None
-        try:
-            responses = (
-                list(
-                    self.gateway.decide_batch(
-                        requests, role="judge", run_id=self.run_id
+        with self._operation_scope("screen"):
+            try:
+                responses = (
+                    list(
+                        self.gateway.decide_batch(
+                            requests, role="judge", run_id=self.run_id
+                        )
                     )
+                    if requests
+                    else []
                 )
-                if requests
-                else []
-            )
-        except ProviderError as exc:
-            responses = []
-            screen_error = exc.kind or "provider_error"
+            except ProviderError as exc:
+                responses = []
+                screen_error = exc.kind or "provider_error"
         log = getattr(self.gateway, "decision_log", ())
         if log is initial_log and isinstance(log, Sequence):
             entries = list(log)[before:]
@@ -622,16 +648,19 @@ class SuccessTestCompiler:
         before_usage = self.gateway.usage_report()
         initial_log = getattr(self.gateway, "decision_log", ())
         before_log = len(initial_log) if isinstance(initial_log, Sequence) else 0
-        try:
-            answers = list(
-                self.gateway.decide_batch(requests, role="judge", run_id=self.run_id)
-            )
-            error = None
-        except ProviderError as exc:
-            if exc.provider == "replay":
-                raise
-            answers = []
-            error = exc.kind or "provider_error"
+        with self._operation_scope("relations"):
+            try:
+                answers = list(
+                    self.gateway.decide_batch(
+                        requests, role="judge", run_id=self.run_id
+                    )
+                )
+                error = None
+            except ProviderError as exc:
+                if exc.provider == "replay":
+                    raise
+                answers = []
+                error = exc.kind or "provider_error"
         log = getattr(self.gateway, "decision_log", ())
         entries = (
             list(log)[before_log:]

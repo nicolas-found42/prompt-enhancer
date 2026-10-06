@@ -138,7 +138,7 @@ export type Job = {
   run_id: string;
   kind: "optimize" | "resume" | "skip" | "continue";
   prompt?: string;
-  state: "queued" | "running" | "done";
+  state: "queued" | "running" | "done" | "interrupted";
   stage: string | null;
   round: JobRound;
   stages_seen: string[];
@@ -146,6 +146,8 @@ export type Job = {
   /** Accumulated provider cost in USD from the run's progress events. */
   cost_total?: number;
   cancel_requested: boolean;
+  /** True while a requested cancellation is still waiting for active work to stop. */
+  cancellation_pending?: boolean;
   result: OptimizeResult | null;
 };
 
