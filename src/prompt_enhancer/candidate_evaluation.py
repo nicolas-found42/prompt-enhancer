@@ -592,15 +592,22 @@ def evaluate_candidate_packages(
                     "success-test grade when tests exist. If no success tests "
                     "exist, preserve downstream_verification as unverified; do "
                     "not invent a pass or reject solely for missing tests. "
-                    + (
-                        "An unverified downstream result is neutral when success_tests "
-                        "is empty. structure_added measures whether structure was added, "
-                        "not whether the requested style or unchanged original is "
-                        "acceptable. "
-                        if not legacy_evidence
-                        else ""
+                    "Otherwise reject it."
+                    if legacy_evidence
+                    else (
+                        "Should this prompt be accepted for the original task? Check "
+                        "all stated constraints, requested presentation style, fidelity "
+                        "and score-vector floors. Use the supplied success tests, grades, "
+                        "and weak outputs when tests exist. Use comparison and review "
+                        "judgments, and verification/audit judgments only when those "
+                        "checks are applicable. Empty verification/audit mappings mean "
+                        "no applicable checks, not failures. An unchanged original may "
+                        "be accepted without a rewrite, strategy application, added "
+                        "structure, or measured improvement. Strategy names are "
+                        "suggestions, not acceptance criteria. No-tests downstream "
+                        "verification must stay unverified and is neutral. Reject "
+                        "substantive failures or insufficient applicable evidence."
                     )
-                    + "Otherwise reject it."
                 ),
                 state={
                     "candidate_id": candidate_id,

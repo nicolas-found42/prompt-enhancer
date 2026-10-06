@@ -1054,6 +1054,12 @@ def run_round(
         for item in (strong.to_dict().get("candidates", ()) if strong else ())
         if isinstance(item, Mapping)
     }
+    if plan.writer_instruction_version >= 15 and strong is not None:
+        strong_evidence["original"] = {
+            "model": strong.model,
+            "score": strong.original_score,
+            "source": "original_baseline",
+        }
     candidate_outputs: dict[str, list[dict[str, Any]]] = {}
     for output in panel.results:
         candidate_outputs.setdefault(output.candidate_id, []).append(output.to_dict())

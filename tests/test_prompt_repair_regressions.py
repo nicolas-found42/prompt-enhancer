@@ -202,6 +202,74 @@ def test_absent_success_tests_do_not_send_zero_grade_to_acceptance():
     assert evidence["downstream_verification"] == "unverified"
 
 
+@pytest.mark.parametrize("failed_check", [None, "verify", "audit"])
+def test_baseline_acceptance_preserves_failed_applicable_checks(failed_check):
+    requests = []
+
+    def decide(q, **_kwargs):
+        requests.append(q)
+        if q["type"] == "choice":
+            return {"type": "choice", "choice": "same", "probabilities": {"same": 1.0}}
+        failed = failed_check and q["key"].startswith(f"evaluate:{failed_check}:")
+        return {"type": "noul", "noul": 0.01 if failed else 0.99}
+
+    prompt = "Make a plan using a single heading."
+    result = evaluate_candidate_packages(
+        ScriptedGateway(decision=decide),
+        prompt,
+        [RankingCandidate("original", prompt)],
+        constraints=("Use a single heading.",),
+        improvement_style="structured",
+        style_bundle=("specify_output_format",),
+        success_tests=(),
+        candidate_outputs={},
+        strong_evidence={},
+        judge_model="judge",
+        run_id="applicable-checks",
+        round_number=1,
+    )
+    assert result.candidates["original"]["accept"]["accepted"]
+    assert result.candidates["original"]["eligible"] is (failed_check is None)
+    accept = next(q for q in requests if q["key"].startswith("evaluate:accept:"))
+    assert "only when those checks are applicable" in accept["query"]
+    assert "An unchanged original may" in accept["query"]
+
+
+def test_original_baseline_retains_measured_strong_check_evidence():
+    from test_score_vector import WEAK, _gateway
+
+    base = _gateway()
+
+    def decide(q, **kwargs):
+        if q["key"].startswith("output-screen:") or (
+            q["key"].startswith("success-test-screen:")
+            and q.get("dimension") == "evaluator_instructions"
+        ):
+            return {"type": "noul", "noul": 0.01}
+        return base.decide(q, **kwargs)
+
+    outcome = run_round(
+        ScriptedGateway(chat=base.chat, decision=decide),
+        RoundPlan(
+            "Explain rainbows.",
+            "Explain rainbows.",
+            "baseline-strong",
+            42,
+            {},
+            (),
+            Settings(weak_models=WEAK),
+            0.8,
+            15,
+            applied_style="audience_fit",
+        ),
+    )
+    report = outcome.report()
+    strong = report["evaluation_evidence"]["candidates"]["original"]["strong_check"]
+    assert strong["source"] == "original_baseline"
+    assert strong["score"] == report["strong_check"]["original_score"]
+    assert strong["model"] == report["strong_check"]["model"]
+
+
 @pytest.mark.parametrize(
     "reply,kind",
     [
