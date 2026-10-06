@@ -61,25 +61,27 @@ else:
     return tool
 
 
+def codeql_command(repo, tool, output):
+    return [
+        sys.executable,
+        str(SCRIPTS / "run_codeql.py"),
+        "--repo",
+        str(repo),
+        "--codeql",
+        str(tool),
+        "--language",
+        "python",
+        "--output",
+        str(output),
+    ]
+
+
 def test_codeql_uses_committed_snapshot_and_records_completed_analysis(repo, tmp_path):
     (repo / "source.py").write_text("print('dirty')\n")
     (repo / "coverage").mkdir()
     (repo / "coverage" / "generated.js").write_text("generated")
     output = tmp_path / "results"
-    result = command(
-        [
-            sys.executable,
-            str(SCRIPTS / "run_codeql.py"),
-            "--repo",
-            str(repo),
-            "--codeql",
-            str(fake_codeql(tmp_path)),
-            "--language",
-            "python",
-            "--output",
-            str(output),
-        ]
-    )
+    result = command(codeql_command(repo, fake_codeql(tmp_path), output))
     assert result.returncode == 0, result.stderr
     receipt = json.loads((output / "receipt.json").read_text())
     assert receipt["status"] == "complete"
@@ -95,20 +97,7 @@ def test_codeql_never_reports_success_from_failed_or_malformed_output(
     repo, tmp_path, mode
 ):
     output = tmp_path / "results"
-    result = command(
-        [
-            sys.executable,
-            str(SCRIPTS / "run_codeql.py"),
-            "--repo",
-            str(repo),
-            "--codeql",
-            str(fake_codeql(tmp_path, mode)),
-            "--language",
-            "python",
-            "--output",
-            str(output),
-        ]
-    )
+    result = command(codeql_command(repo, fake_codeql(tmp_path, mode), output))
     assert result.returncode != 0
     assert json.loads((output / "receipt.json").read_text())["status"] == "failed"
 
@@ -275,18 +264,7 @@ def test_codeql_honors_repo_despite_inherited_hook_git_context(repo, tmp_path):
     )
     # Deliberately bypass the test helper's isolation to exercise the CLI boundary.
     result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPTS / "run_codeql.py"),
-            "--repo",
-            str(repo),
-            "--codeql",
-            str(fake_codeql(tmp_path)),
-            "--language",
-            "python",
-            "--output",
-            str(tmp_path / "results"),
-        ],
+        codeql_command(repo, fake_codeql(tmp_path), tmp_path / "results"),
         env={
             **os.environ,
             "GIT_DIR": str(foreign / ".git"),
@@ -298,3 +276,33 @@ def test_codeql_honors_repo_despite_inherited_hook_git_context(repo, tmp_path):
     )
     assert result.returncode == 0, result.stdout
     assert command(["git", "-C", str(foreign), "status", "--porcelain"]).stdout == ""
+
+
+def test_codeql_evidence_requires_reviewed_commit_even_with_identical_tree(
+    repo, tmp_path
+):
+    make_validation_receipt(repo, tmp_path)
+    output = tmp_path / "codeql-results"
+    assert command(codeql_command(repo, fake_codeql(tmp_path), output)).returncode == 0
+    args = [
+        sys.executable,
+        str(SCRIPTS / "build_review_evidence.py"),
+        "--repo",
+        str(repo),
+        "--base",
+        "HEAD~1",
+        "--receipt",
+        str(output / "receipt.json"),
+    ]
+    assert command([*args, "--output", str(tmp_path / "accepted.json")]).returncode == 0
+    assert (
+        command(
+            ["git", "-C", str(repo), "commit", "--allow-empty", "-m", "same tree"]
+        ).returncode
+        == 0
+    )
+    rejected = tmp_path / "rejected.json"
+    result = command([*args, "--output", str(rejected)])
+    assert result.returncode == 1
+    assert "commit differs" in result.stdout
+    assert not rejected.exists()

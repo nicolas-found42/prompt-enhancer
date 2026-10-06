@@ -22,7 +22,7 @@ def artifact(directory: Path, name: str, expected: str) -> str:
     return data.decode()
 
 
-def read_receipt(path: Path, source: str, hooks: list[str]) -> list[dict]:
+def read_receipt(path: Path, source: str, hooks: list[str], head: str) -> list[dict]:
     data = json.loads(path.read_text())
     if (
         data.get("schema_version") != 1
@@ -47,6 +47,8 @@ def read_receipt(path: Path, source: str, hooks: list[str]) -> list[dict]:
         ):
             raise ValueError("receipt does not cover the reviewed hook configuration")
     elif data.get("kind") == "codeql":
+        if data.get("commit") != head:
+            raise ValueError("CodeQL receipt commit differs from reviewed head")
         analyses = data.get("analyses", [])
         if not analyses or not data.get("codeql_version"):
             raise ValueError("missing CodeQL analysis metadata")
@@ -103,7 +105,7 @@ def main() -> int:
             ]
             evidence = [{"id": "reviewed-patch", "text": patch}]
             for path in args.receipt:
-                evidence.extend(read_receipt(path.resolve(), source, hooks))
+                evidence.extend(read_receipt(path.resolve(), source, hooks, head))
         bundle = {
             "schema_version": 1,
             "base": base,

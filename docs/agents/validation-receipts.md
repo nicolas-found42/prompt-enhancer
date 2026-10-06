@@ -68,7 +68,8 @@ uv run --locked python scripts/build_review_evidence.py \
 ```
 
 The builder verifies receipt schema, final phase, completed checks, source
-identity, configured hook coverage, and log/SARIF hashes. A failed, reproduction,
+identity, configured hook coverage, and log/SARIF hashes. CodeQL receipts must
+also match the exact reviewed commit, even when two commits have identical trees. A failed, reproduction,
 modified, incomplete, or stale receipt is rejected. Use `--phase reproduction`
 on either runner to label red-test evidence; keep those receipts separate from
 final completion claims.
