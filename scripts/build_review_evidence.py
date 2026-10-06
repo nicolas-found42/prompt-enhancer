@@ -16,9 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def dependency_source(repo: Path, head: str, name: str) -> str:
     entry = git(repo, "ls-tree", "-z", head, "--", name).decode()
-    if not entry.startswith(("100644 blob ", "100755 blob ")) or entry.count("\0") != 1:
+    metadata, separator, path = entry.rstrip("\0").partition("\t")
+    if (
+        not metadata.startswith(("100644 blob ", "100755 blob "))
+        or entry.count("\0") != 1
+        or not separator
+        or path != name
+    ):
         raise ValueError(f"Dependency must be a committed regular file: {name}")
-    return git(repo, "show", f"{head}:{name}").decode()
+    return git(repo, "cat-file", "blob", metadata.split()[2]).decode()
 
 
 def artifact(directory: Path, name: str, expected: str) -> str:

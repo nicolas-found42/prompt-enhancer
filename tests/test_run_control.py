@@ -15,6 +15,7 @@ from functools import partial
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
@@ -226,8 +227,12 @@ def test_time_limit_pause_then_stop_then_continue_rejected() -> None:
     assert listed[run_id]["status"] == "failed"
 
 
-def test_approval_continue_resumes_from_pause_boundary() -> None:
-    client, jobs = _client(_rejected_gateway(cost_per_call=1.0))
+@pytest.mark.parametrize(
+    "limits", [{}, {"time_limit_s": 1200, "spend_limit_usd": 1000}]
+)
+def test_approval_continue_resumes_from_pause_boundary(limits) -> None:
+    store = RunStore(":memory:")
+    client, jobs = _client(_rejected_gateway(cost_per_call=1.0), store)
 
     run_id = _paused_run_id(client, jobs, spend_limit_usd=0.0)
     paused = client.get(f"/api/jobs/{run_id}").json()["result"]
@@ -235,7 +240,7 @@ def test_approval_continue_resumes_from_pause_boundary() -> None:
 
     # Approval continues without the spent limit, so the run must finish
     # instead of pausing again at the next boundary.
-    started = client.post(f"/api/jobs/{run_id}/continue", json={})
+    started = client.post(f"/api/jobs/{run_id}/continue", json=limits)
     assert started.status_code == 202
     finished = jobs.wait(run_id, timeout=30)["result"]
 
@@ -245,6 +250,21 @@ def test_approval_continue_resumes_from_pause_boundary() -> None:
     assert len(finished["report"]["history"]) >= 2
     assert finished["report"]["history"][0] == paused["report"]["history"][0]
     assert float(finished["cost"]["total"]) >= paused_spent
+    record = store.get_run(run_id)
+    assert record["initial_configuration"]["run_control"] == {
+        "time_limit_s": None,
+        "spend_limit_usd": 0.0,
+    }
+    assert record["configuration"]["run_control"] == {
+        "time_limit_s": limits.get("time_limit_s"),
+        "spend_limit_usd": limits.get("spend_limit_usd"),
+    }
+    assert (
+        record["configuration_history"][-1]["configuration"] == record["configuration"]
+    )
+    assert {key: record["options"][key] for key in limits} == limits
+    if not limits:
+        assert "spend_limit_usd" not in record["options"]
 
 
 def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
@@ -448,3 +468,96 @@ def test_continue_rejects_runs_not_awaiting_approval() -> None:
     assert client.post(f"/api/jobs/{run_id}/continue", json={}).status_code == 409
     assert client.post(f"/api/runs/{run_id}/stop").status_code == 409
     assert client.post("/api/runs/unknown/stop").status_code == 404
+
+
+def test_continuation_save_preserves_concurrent_configuration_history(monkeypatch):
+    store = RunStore(":memory:")
+    optimizer = PromptOptimizer(
+        store=store, gateway=_rejected_gateway(cost_per_call=1.0)
+    )
+    paused = optimizer.optimize("whats 2 plus 2", {"spend_limit_usd": 0.0})
+    run_id = paused["run_id"]
+    assert paused["report"]["status"] == "awaiting_approval"
+    saving = threading.Event()
+    read = threading.Event()
+    attempted = threading.Event()
+    finished = threading.Event()
+    triggered = False
+    errors = []
+    original_get = store.get_run
+    original_save = optimizer._save_continued_run
+
+    def get_run(key):
+        nonlocal triggered
+        record = original_get(key)
+        if (
+            saving.is_set()
+            and not triggered
+            and threading.current_thread() is threading.main_thread()
+        ):
+            triggered = True
+            read.set()
+            assert attempted.wait(5)
+        return record
+
+    def save(*args, **kwargs):
+        saving.set()
+        try:
+            return original_save(*args, **kwargs)
+        finally:
+            finished.set()
+
+    def append_history():
+        store.update_run(
+            run_id,
+            lambda current: {
+                **current,
+                "configuration_history": [
+                    *current["configuration_history"],
+                    {
+                        "operation": "concurrent-observation",
+                        "recorded_at": "2026-10-06T00:00:00Z",
+                        "configuration": current["configuration"],
+                    },
+                ],
+            },
+        )
+
+    def writer():
+        try:
+            assert read.wait(5)
+            # Try the write at exactly the read/save boundary. If the save owns
+            # the transaction, retry after it finishes; otherwise write now.
+            acquired = store._lock.acquire(blocking=False)
+            if acquired:
+                try:
+                    append_history()
+                finally:
+                    store._lock.release()
+                    attempted.set()
+            else:
+                attempted.set()
+                assert finished.wait(5)
+                append_history()
+        except BaseException as error:
+            errors.append(error)
+            attempted.set()
+
+    monkeypatch.setattr(store, "get_run", get_run)
+    monkeypatch.setattr(optimizer, "_save_continued_run", save)
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        result = optimizer.continue_run(run_id)
+    finally:
+        finished.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert not errors
+    assert result["status"] == "completed"
+    record = store.get_run(run_id)
+    assert [entry["operation"] for entry in record["configuration_history"]] == [
+        "optimize",
+        "continue",
+        "concurrent-observation",
+    ]

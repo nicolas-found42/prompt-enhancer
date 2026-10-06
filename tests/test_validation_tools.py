@@ -342,7 +342,7 @@ def test_partition_covers_both_sides_of_rename(repo, tmp_path):
     assert all(patch in bundle["diff"] for patch in patches.values())
 
 
-@pytest.mark.parametrize("name", ["missing.py", "folder", "link.py"])
+@pytest.mark.parametrize("name", ["missing.py", "folder", "folder/", "link.py"])
 def test_invalid_dependency_is_bounded_rejection(repo, tmp_path, name):
     (repo / "folder").mkdir()
     (repo / "folder" / "nested.py").write_text("pass\n")

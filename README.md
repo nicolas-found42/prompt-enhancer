@@ -143,7 +143,8 @@ and retains source/settings hashes, limits, final job and history. It inherits
 server-side credentials from the runtime environment and excludes credentials
 from provenance. New run records retain effective model/budget configuration.
 `initial_configuration` preserves the initial execution settings, `configuration`
-holds the latest effective settings, and `configuration_history` records each
+holds the latest effective settings (including approved time/spend limits), and
+`configuration_history` records each
 optimization or continuation before its provider calls. Historical records
 without this metadata still have unknown historical configuration.
 

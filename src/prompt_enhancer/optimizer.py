@@ -558,19 +558,25 @@ class PromptOptimizer:
         except Exception:  # noqa: BLE001 - progress must never fail a run
             return 0.0
 
-    def _configuration(self, settings: Settings) -> dict[str, Any]:
+    def _configuration(self, settings: Settings, control: RunControl) -> dict[str, Any]:
         gateway_config = getattr(self.gateway, "config", None)
         return {
             "models": settings.model_roles(),
             "operation_timeout_s": getattr(gateway_config, "operation_timeout_s", None),
             "request_timeout_s": getattr(gateway_config, "timeout", None),
+            "run_control": {
+                "time_limit_s": control.time_limit_s,
+                "spend_limit_usd": control.spend_limit_usd,
+            },
         }
 
     def run_configuration(
         self, options: Mapping[str, Any] | None = None
     ) -> dict[str, Any]:
-        """Snapshot effective per-run roles and transport bounds without keys."""
-        return self._configuration(self._run_settings(options or {}))
+        """Snapshot effective roles, transport bounds and approval limits without keys."""
+        return self._configuration(
+            self._run_settings(options or {}), RunControl.from_options(options)
+        )
 
     def _record_configuration(
         self,
@@ -578,22 +584,21 @@ class PromptOptimizer:
         settings: Settings,
         operation: str,
         *,
+        control: RunControl,
         initial_record: dict[str, Any] | None = None,
     ) -> None:
         """Record actual execution settings before the operation's provider calls."""
-        configuration = self._configuration(settings)
+        configuration = self._configuration(settings, control)
 
         def update(previous: dict[str, Any] | None) -> dict[str, Any]:
             previous = previous or initial_record
             if previous is None:
                 raise RunNotFoundError(run_id)
-            initial = (
+            initial = previous.get(
+                "initial_configuration",
                 configuration
                 if operation == "optimize"
-                else previous.get(
-                    "initial_configuration",
-                    previous.get("configuration", configuration),
-                )
+                else previous.get("configuration", configuration),
             )
             return {
                 **previous,
@@ -620,7 +625,8 @@ class PromptOptimizer:
         progress: ProgressCallback | None = None,
     ) -> OptimizeResult:
         supplied_options, run_settings, run_seed = self._prepare(prompt, options)
-        configuration = self._configuration(run_settings)
+        control = RunControl.from_options(supplied_options)
+        configuration = self._configuration(run_settings, control)
         run_id = run_id or new_run_id()
         started_perf = perf_counter()
         started_at = utc_now()
@@ -628,6 +634,7 @@ class PromptOptimizer:
             run_id,
             run_settings,
             "optimize",
+            control=control,
             initial_record={
                 "run_id": run_id,
                 "created_at": started_at,
@@ -1434,7 +1441,10 @@ class PromptOptimizer:
         stored_options = (metadata or {}).get("options", {})
         options = dict(stored_options) if isinstance(stored_options, Mapping) else {}
         run_settings = self._run_settings(options)
-        self._record_configuration(run_id, run_settings, "clarification-continuation")
+        control = RunControl.from_options(options)
+        self._record_configuration(
+            run_id, run_settings, "clarification-continuation", control=control
+        )
         assumptions = state.get("assumptions", [])
         stored_options = (metadata or {}).get("options", {})
         style = str(
@@ -1455,7 +1465,7 @@ class PromptOptimizer:
         )
         return self._run_rounds(
             context,
-            control=RunControl.from_options(options),
+            control=control,
             options=options,
             started_perf=perf_counter(),
             started_at=utc_now(),
@@ -1541,8 +1551,11 @@ class PromptOptimizer:
             {"time_limit_s": time_limit_s, "spend_limit_usd": spend_limit_usd}
         )
         options = dict(saved.get("options") or {})
+        options.pop("time_limit_s", None)
+        options.pop("spend_limit_usd", None)
+        options.update(control.as_options())
         run_settings = self._run_settings(options)
-        self._record_configuration(run_id, run_settings, "continue")
+        self._record_configuration(run_id, run_settings, "continue", control=control)
         prompt = str(record.get("prompt") or "")
         saved_diagnosis = saved.get("diagnosis")
         diagnosis: Mapping[str, Any] = (
@@ -1626,7 +1639,9 @@ class PromptOptimizer:
             [item for item in previous_judgments if isinstance(item, Mapping)],
             original_prompt=str(record.get("prompt") or ""),
         )
-        return self._save_continued_run(record, cast(OptimizeResult, result))
+        return self._save_continued_run(
+            record, cast(OptimizeResult, result), options=options
+        )
 
     def stop_run(self, run_id: str) -> OptimizeResult:
         """Permanently stop a budget-paused run, keeping completed rounds."""
@@ -1654,25 +1669,29 @@ class PromptOptimizer:
         resume_ctx = take_resume_context(cast(dict[str, Any], result))
         evidence = self._training_evidence(result, record)
         self._attach_jev_evidence(result, evidence)
-        cleaned = {
-            key: value for key, value in record.items() if key != RESUME_CONTEXT_KEY
-        }
-        saved: dict[str, Any] = {
-            **cleaned,
-            "result": result,
-            "cost": result.get("cost", cleaned.get("cost", {})),
-            "timing": result.get("timing", cleaned.get("timing", {})),
-            **evidence,
-        }
-        latest = self.store.get_run(str(record["run_id"])) or {}
-        for key in ("configuration", "initial_configuration", "configuration_history"):
-            if key in latest:
-                saved[key] = latest[key]
-        if options is not None:
-            saved["options"] = dict(options)
-        if resume_ctx is not None:
-            saved[RESUME_CONTEXT_KEY] = resume_ctx
-        self.store.save_run(saved)
+        run_id = str(record["run_id"])
+
+        def update(current: dict[str, Any] | None) -> dict[str, Any]:
+            if current is None:
+                raise RunNotFoundError(run_id)
+            saved: dict[str, Any] = {
+                **{
+                    key: value
+                    for key, value in current.items()
+                    if key != RESUME_CONTEXT_KEY
+                },
+                "result": result,
+                "cost": result.get("cost", current.get("cost", {})),
+                "timing": result.get("timing", current.get("timing", {})),
+                **evidence,
+            }
+            if options is not None:
+                saved["options"] = dict(options)
+            if resume_ctx is not None:
+                saved[RESUME_CONTEXT_KEY] = resume_ctx
+            return saved
+
+        self.store.update_run(run_id, update)
         return result
 
     def skip_clarification(
@@ -1703,24 +1722,12 @@ class PromptOptimizer:
             raise RunNotFoundError(run_id)
         result = dict(result)
         result["timing"] = _finished_timing(result.get("timing"), started_perf)
-        resume_ctx = take_resume_context(result)
         record = self.store.get_run(run_id)
         if record is not None:
             result["cost"] = _add_usage_delta(
                 dict(record.get("cost") or {}), usage_before, self._usage_cost()
             )
-            evidence = self._training_evidence(result, record)
-            self._attach_jev_evidence(cast(OptimizeResult, result), evidence)
-            saved: dict[str, Any] = {
-                **record,
-                "result": result,
-                "cost": result.get("cost", record.get("cost", {})),
-                "timing": result.get("timing", record.get("timing", {})),
-                **evidence,
-            }
-            if resume_ctx is not None:
-                saved[RESUME_CONTEXT_KEY] = resume_ctx
-            self.store.save_run(saved)
+            return self._save_continued_run(record, cast(OptimizeResult, result))
         return cast(OptimizeResult, result)
 
     def update_assumption(
