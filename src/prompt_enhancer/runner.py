@@ -5,11 +5,12 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from .config import DEFAULT_FIXED_WEAK_PANEL, Settings
-from .gateway import Gateway
+from .gateway import MAX_CONCURRENT_TRANSPORT_REQUESTS, Gateway
 from .strategies import CandidateDraft
 
 DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_FIXED_WEAK_PANEL
@@ -135,14 +136,23 @@ def _run_panel(
         for model in models
         for sample in range(samples)
     ]
-    workers = len(requests) if max_workers is None else min(len(requests), max_workers)
+    requested_workers = len(requests) if max_workers is None else max_workers
+    workers = min(len(requests), requested_workers, MAX_CONCURRENT_TRANSPORT_REQUESTS)
     if max(workers, 1) == 1:
         return [_execute_one(gateway, *request) for request in requests]
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        # executor.map preserves input order, and requests are deliberately ordered.
-        return list(
-            executor.map(lambda request: _execute_one(gateway, *request), requests)
-        )
+        # Each model call needs its own context copy: Context instances cannot
+        # be entered by multiple threads, and executor tasks do not inherit the
+        # caller's Gateway cancellation/observer context automatically.
+        futures = [
+            executor.submit(context.run, _execute_one, gateway, *request)
+            for context, request in zip(
+                (copy_context() for _ in requests), requests, strict=True
+            )
+        ]
+        # Reading futures in request order keeps results stable regardless of
+        # which model finishes first.
+        return [cast(PanelResult, future.result()) for future in futures]
 
 
 def run_candidates(

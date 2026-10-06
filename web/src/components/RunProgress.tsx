@@ -22,6 +22,7 @@ export default function RunProgress({ job, onCancel }: Props) {
   const current = job.stage ? stageOrder.indexOf(job.stage) : -1;
   const round = job.round.round ? ` · round ${job.round.round}` : "";
   const spent = spentText(job.cost_total);
+  const cancellationPending = job.cancellation_pending ?? job.cancel_requested;
 
   return (
     <section
@@ -47,9 +48,9 @@ export default function RunProgress({ job, onCancel }: Props) {
           className="secondary"
           type="button"
           onClick={onCancel}
-          disabled={job.cancel_requested}
+          disabled={cancellationPending}
         >
-          {job.cancel_requested ? "Cancelling…" : "Cancel"}
+          {cancellationPending ? "Cancelling…" : "Cancel"}
         </button>
       </div>
       <ol className="stages">

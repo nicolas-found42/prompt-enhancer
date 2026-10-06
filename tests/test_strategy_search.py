@@ -1,13 +1,19 @@
 """Public behavior tests for strategy search, weak-panel evaluation, and ranking."""
 
+import threading
+
 import pytest
 
 from prompt_enhancer.config import Settings
-from prompt_enhancer.gateway import ScriptedGateway
+from prompt_enhancer.gateway import GatewayConfig, HttpGateway, ScriptedGateway
 from prompt_enhancer.grading import GradeReport
 from prompt_enhancer.runner import run_candidates
 from prompt_enhancer.selector import RankingCandidate, rank_candidates
-from prompt_enhancer.strategies import search_strategies
+from prompt_enhancer.strategies import (
+    CandidateDraft,
+    RewriteStrategy,
+    search_strategies,
+)
 from prompt_enhancer.strong_check import StrongCheckOutcome, StrongCheckReport
 
 
@@ -121,6 +127,132 @@ def test_run_candidates_rejects_short_or_duplicate_panels_before_gateway_calls()
             run_candidates(candidates, models, gateway)
 
     assert calls == []
+
+
+def test_cancellation_reaches_weak_panel_requests_running_in_executor_threads():
+    from prompt_enhancer.failures import RunCancelled
+
+    entered = threading.Event()
+    release = threading.Event()
+    cancelled = threading.Event()
+    aborted = threading.Event()
+    request_lock = threading.Lock()
+    request_count = 0
+    events = []
+
+    class BlockingTransport:
+        supports_request_id = True
+
+        def request(self, _url, **_kwargs):
+            nonlocal request_count
+            with request_lock:
+                request_count += 1
+                if request_count == 2:
+                    entered.set()
+            assert release.wait(5)
+            if aborted.is_set():
+                raise TimeoutError("socket closed by cancellation")
+            return {
+                "status_code": 200,
+                "json": {"choices": [{"message": {"content": "answer"}}]},
+            }
+
+        def abort_request(self, _request_id):
+            aborted.set()
+            release.set()
+
+    gateway = HttpGateway(
+        BlockingTransport(),
+        config=GatewayConfig(operation_timeout_s=30, max_retries=2),
+    )
+    candidate = CandidateDraft(
+        candidate_id="candidate-1",
+        text="A concise rewrite.",
+        strategy=RewriteStrategy(
+            name="clearer",
+            kind="safe",
+            description="Use clear language.",
+        ),
+    )
+    settings = Settings(
+        weak_models=("weak-a", "weak-b"),
+        weak_model_count=2,
+        weak_samples=1,
+    )
+
+    def cancel_after_panel_starts():
+        entered.wait(2)
+        cancelled.set()
+        aborted.wait(2)
+        # Release the mock transport even if executor work lost its context.
+        release.set()
+
+    cancel_thread = threading.Thread(target=cancel_after_panel_starts)
+    with gateway.operation_context(
+        cancel_check=cancelled.is_set, observer=events.append
+    ):
+        cancel_thread.start()
+        with pytest.raises(RunCancelled):
+            run_candidates(
+                [candidate],
+                None,
+                gateway,
+                settings=settings,
+                max_workers=2,
+                run_id="run-weak-cancel",
+            )
+    cancel_thread.join(2)
+
+    assert not cancel_thread.is_alive()
+    assert entered.is_set()
+    assert aborted.is_set()
+    assert request_count == 2
+    assert not any(event["event"] == "retry" for event in events)
+
+
+def test_default_weak_panel_queues_healthy_requests_beyond_transport_worker_cap():
+    entered_lock = threading.Lock()
+    entered_count = 0
+    first_batch_entered = threading.Event()
+    release_first_batch = threading.Event()
+    total_started = 0
+
+    class BatchingTransport:
+        def request(self, _url, **_kwargs):
+            nonlocal entered_count, total_started
+            with entered_lock:
+                entered_count += 1
+                total_started += 1
+                if entered_count == 8:
+                    first_batch_entered.set()
+                should_hold = entered_count <= 8
+            if should_hold:
+                assert release_first_batch.wait(5)
+            return {
+                "status_code": 200,
+                "json": {"choices": [{"message": {"content": "answer"}}]},
+            }
+
+    gateway = HttpGateway(BatchingTransport())
+    candidate = CandidateDraft(
+        candidate_id="candidate-1",
+        text="A concise rewrite.",
+        strategy=RewriteStrategy(
+            name="clearer",
+            kind="safe",
+            description="Use clear language.",
+        ),
+    )
+    release_thread = threading.Thread(
+        target=lambda: (first_batch_entered.wait(2), release_first_batch.set())
+    )
+    release_thread.start()
+    result = run_candidates([candidate], None, gateway)
+    release_thread.join(2)
+
+    assert not release_thread.is_alive()
+    assert len(result.results) == 15
+    assert total_started == 15
 
 
 def _grade(worst: float, mean: float = 0.0, spread: float = 0.0) -> GradeReport:

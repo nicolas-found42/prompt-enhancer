@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException, Response
@@ -101,7 +102,7 @@ def create_app(
     app_optimizer = optimizer or PromptOptimizer(store=app_store, config=app_settings)
     app_settings = getattr(app_optimizer, "config", app_settings)
     app = FastAPI(title="Prompt Enhancer", version="0.1.0")
-    jobs = RunJobs()
+    jobs = RunJobs(store=app_store)
     app.state.jobs = jobs
     app.state.optimizer = app_optimizer
     app.state.store = app_store
@@ -154,15 +155,37 @@ def create_app(
         return str((record or {}).get("prompt") or "")
 
     def submit(
-        run_id: str, kind: str, work: Callable[[Any], Any], prompt: str | None = None
+        run_id: str,
+        kind: str,
+        work: Callable[[Any], Any],
+        prompt: str | None = None,
+        options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         job_prompt = prompt if prompt is not None else recorded_prompt(run_id)
+
+        def cancellation_aware(progress, cancel_check, observe_operation):
+            gateway = getattr(app_optimizer, "gateway", None)
+            context_factory = getattr(gateway, "operation_context", None)
+            context = (
+                context_factory(cancel_check=cancel_check, observer=observe_operation)
+                if callable(context_factory)
+                else nullcontext()
+            )
+            with context:
+                return work(progress)
 
         def on_failure(exc: BaseException) -> dict[str, Any]:
             return dict(app_optimizer.failure_result(run_id, job_prompt, exc))
 
         try:
-            return jobs.submit(run_id, kind, work, on_failure, prompt=job_prompt)
+            return jobs.submit(
+                run_id,
+                kind,
+                cancellation_aware,
+                on_failure,
+                prompt=job_prompt,
+                options=options,
+            )
         except JobBusy as exc:
             raise HTTPException(
                 status_code=409, detail="this run is already in progress"
@@ -187,6 +210,7 @@ def create_app(
                 request.prompt, options, run_id=run_id, progress=progress
             ),
             prompt=request.prompt,
+            options=options,
         )
 
     @app.post("/api/jobs/{run_id}/resume", status_code=202)

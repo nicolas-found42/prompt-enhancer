@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -219,6 +220,15 @@ class RunStore:
             )
             self._connection.commit()
         return run_id
+
+    def update_run(
+        self,
+        run_id: str,
+        update: Callable[[dict[str, Any] | None], dict[str, Any]],
+    ) -> str:
+        """Read, modify, and save a run without another local write intervening."""
+        with self._lock:
+            return self.save_run(update(self.get_run(run_id)))
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         with self._lock:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 
 import pytest
 
@@ -10,6 +11,48 @@ from prompt_enhancer.success_tests import (
     SuccessTestCompiler,
     SuccessTestScreenCache,
 )
+
+
+def test_success_test_generation_is_reported_as_a_timed_substage() -> None:
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: {
+            "choices": [{"message": {"content": '{"tests": []}'}}]
+        }
+    )
+    substages = []
+
+    @contextmanager
+    def operation_context(*, substage=None, **_kwargs):
+        substages.append(substage)
+        yield
+
+    gateway.operation_context = operation_context
+
+    SuccessTestCompiler(gateway).compile("Explain photosynthesis.")
+
+    assert substages == ["success_tests.generate"]
+
+
+def test_type_error_from_writer_call_is_not_retried_by_operation_scope() -> None:
+    calls = []
+
+    def fail_once(*_args, **_kwargs):
+        calls.append("called")
+        raise TypeError("writer adapter bug")
+
+    gateway = ScriptedGateway(chat=fail_once)
+
+    @contextmanager
+    def older_operation_context(*, substage):
+        assert substage == "success_tests.generate"
+        yield
+
+    gateway.operation_context = older_operation_context
+
+    with pytest.raises(TypeError, match="writer adapter bug"):
+        SuccessTestCompiler(gateway).compile("Explain photosynthesis.")
+
+    assert calls == ["called"]
 
 
 def test_evaluator_directed_criterion_is_discarded_even_when_faithful() -> None:

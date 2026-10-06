@@ -9,20 +9,24 @@ response or exception.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import json as json_module
 import math
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .catalog import (
     DEFAULT_GO_STRONG,
@@ -34,6 +38,8 @@ from .catalog import (
 )
 from .jev import batch_decision_payload, decision_payload
 from .usage import UsageLedger
+
+MAX_CONCURRENT_TRANSPORT_REQUESTS = 8
 
 LEGACY_JEV_ALIAS = "typesafe/jev-1.13"
 
@@ -121,6 +127,15 @@ def completion_text(value: Any) -> str:
 
 
 class GatewayTransport(Protocol):
+    """Synchronous transport boundary.
+
+    Optional request-scoped cancellation is supported by adapters that set
+    ``supports_request_id = True``, accept ``request_id`` in ``request``, and
+    provide ``abort_request(request_id)``. Other adapters remain source
+    compatible; their call worker is kept daemonized and bounded by the Gateway
+    worker limit if they ignore the supplied timeout.
+    """
+
     def request(
         self,
         url: str,
@@ -143,6 +158,10 @@ class GatewayConfig:
     decisions_path: str = "/alpha/decisions"
     jev_model: str = JEV_MODEL
     timeout: float = 120.0
+    # A deadline for one complete Gateway operation, including retries and
+    # retry delays. RunControl.time_limit_s remains a separate Round-boundary
+    # pause control.
+    operation_timeout_s: float = 180.0
     max_retries: int = 2
     backoff: float = 0.0
     user_agent: str = DEFAULT_USER_AGENT
@@ -166,6 +185,9 @@ class GatewayConfig:
                 "OPENROUTER_MODELS_URL", f"{openrouter_base}/models"
             ),
             timeout=float(env.get("PROMPT_ENHANCER_TIMEOUT", "120")),
+            operation_timeout_s=float(
+                env.get("PROMPT_ENHANCER_OPERATION_TIMEOUT", "180")
+            ),
             max_retries=int(env.get("PROMPT_ENHANCER_MAX_RETRIES", "2")),
             jev_model=env.get("PROMPT_ENHANCER_JEV_MODEL", JEV_MODEL),
             backoff=float(env.get("PROMPT_ENHANCER_RETRY_BACKOFF", "0")),
@@ -224,11 +246,37 @@ class ProviderError(RuntimeError):
         }
 
 
+class _GatewayDeadlineExceeded(TimeoutError):
+    """A Gateway retry or operation could not fit within its deadline."""
+
+
 class HttpTransport:
     """Minimal JSON HTTP transport; no provider-specific behavior."""
 
+    supports_request_id = True
+
     def __init__(self, opener: Callable[..., Any] | None = None) -> None:
         self._opener = opener or urllib.request.urlopen
+        self._active_responses: dict[str, Any] = {}
+        self._active_lock = threading.Lock()
+
+    def abort_request(self, request_id: str) -> None:
+        """Close a response body that is currently being read, when available."""
+        with self._active_lock:
+            response = self._active_responses.get(request_id)
+        if response is None:
+            return
+        # Closing the underlying socket interrupts a blocking read on the
+        # worker thread. Some test/custom response wrappers expose only close.
+        raw = getattr(getattr(response, "fp", None), "raw", None)
+        sock = getattr(raw, "_sock", None)
+        close_socket = getattr(sock, "close", None)
+        if callable(close_socket):
+            close_socket()
+            return
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
 
     def request(
         self,
@@ -238,6 +286,7 @@ class HttpTransport:
         headers: Mapping[str, str] | None = None,
         json: Any | None = None,
         timeout: float | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         # Preserve insertion order in Choice criteria: their declared option
         # order is an experimental input. Replay keys use the canonical,
@@ -256,7 +305,15 @@ class HttpTransport:
             request.add_header("Content-Type", "application/json")
         try:
             with self._opener(request, timeout=timeout) as response:
-                body = response.read()
+                if request_id is not None:
+                    with self._active_lock:
+                        self._active_responses[request_id] = response
+                try:
+                    body = self._read_body(response, timeout)
+                finally:
+                    if request_id is not None:
+                        with self._active_lock:
+                            self._active_responses.pop(request_id, None)
                 status = getattr(
                     response, "status", getattr(response, "status_code", 200)
                 )
@@ -267,7 +324,15 @@ class HttpTransport:
                     "headers": dict(response.headers.items()),
                 }
         except urllib.error.HTTPError as exc:
-            body = exc.read() if hasattr(exc, "read") else b""
+            if request_id is not None:
+                with self._active_lock:
+                    self._active_responses[request_id] = exc
+            try:
+                body = self._read_body(exc, timeout) if hasattr(exc, "read") else b""
+            finally:
+                if request_id is not None:
+                    with self._active_lock:
+                        self._active_responses.pop(request_id, None)
             return {
                 "status_code": exc.code,
                 "json": _decode_body(body),
@@ -275,6 +340,27 @@ class HttpTransport:
             }
         # URLError, timeout, and connection errors intentionally propagate to
         # HttpGateway, which retries and wraps them as ProviderError.
+
+    @staticmethod
+    def _read_body(response: Any, timeout: float | None) -> bytes:
+        read_chunk = getattr(response, "read1", None)
+        if not callable(read_chunk) or timeout is None:
+            return response.read()
+        deadline = time.monotonic() + max(0.001, timeout)
+        chunks: list[bytes] = []
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("HTTP response exceeded its total deadline")
+            raw = getattr(getattr(response, "fp", None), "raw", None)
+            sock = getattr(raw, "_sock", None)
+            settimeout = getattr(sock, "settimeout", None)
+            if callable(settimeout):
+                settimeout(remaining)
+            chunk = read_chunk(64 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
 
 
 def json_module_dumps(value: Any) -> str:
@@ -351,12 +437,14 @@ class HttpGateway:
         usage: UsageLedger | None = None,
         go_models: Iterable[str | ModelInfo] | None = None,
         sleep: Callable[[float], None] | None = None,
+        monotonic: Callable[[], float] | None = None,
     ) -> None:
         self.config = config or GatewayConfig()
         self.transport = transport or HttpTransport()
         self.catalog = catalog
         self.usage = usage or UsageLedger()
         self._sleep = sleep or time.sleep
+        self._monotonic = monotonic or time.monotonic
         self._session = uuid.uuid4().hex
         self._sessions: dict[str, str] = {}
         self._go_model_ids: set[str] = {
@@ -371,6 +459,93 @@ class HttpGateway:
         self.transport_attempts_by_role: dict[str, int] = {}
         self.decision_log: list[dict[str, Any]] = []
         self._provider_status: dict[str, dict[str, Any]] = {}
+        # A timed-out generic transport has no portable interruption API. Keep
+        # abandoned calls bounded even when a custom adapter cannot abort them.
+        self._transport_workers = threading.BoundedSemaphore(
+            MAX_CONCURRENT_TRANSPORT_REQUESTS
+        )
+        self._operation_context: ContextVar[dict[str, Any] | None] = ContextVar(
+            f"gateway-operation-context-{id(self)}", default=None
+        )
+
+    @contextmanager
+    def operation_context(
+        self,
+        *,
+        cancel_check: Callable[[], bool] | None = None,
+        observer: Callable[[Mapping[str, Any]], None] | None = None,
+        substage: str | None = None,
+        run_id: str | None = None,
+    ):
+        """Attach per-run cancellation and sanitized operation evidence.
+
+        ContextVars keep concurrent callers isolated and do not add control
+        fields to provider payloads or recordings.
+        """
+        current = dict(self._operation_context.get() or {})
+        if cancel_check is not None:
+            current["cancel_check"] = cancel_check
+        if observer is not None:
+            current["observer"] = observer
+        if substage is not None:
+            current["substage"] = substage
+        if run_id is not None:
+            current["run_id"] = run_id
+        token = self._operation_context.set(current)
+        started = self._monotonic()
+        if substage is not None:
+            self._emit_operation(
+                {
+                    "event": "start",
+                    "operation": substage,
+                    "run_id": current.get("run_id"),
+                }
+            )
+        try:
+            yield
+        except BaseException as exc:
+            if substage is not None:
+                self._emit_operation(
+                    {
+                        "event": "error",
+                        "operation": substage,
+                        "run_id": current.get("run_id"),
+                        "elapsed_ms": max(
+                            0, round((self._monotonic() - started) * 1000)
+                        ),
+                        "error_kind": type(exc).__name__,
+                    }
+                )
+            raise
+        else:
+            if substage is not None:
+                self._emit_operation(
+                    {
+                        "event": "end",
+                        "operation": substage,
+                        "run_id": current.get("run_id"),
+                        "elapsed_ms": max(
+                            0, round((self._monotonic() - started) * 1000)
+                        ),
+                    }
+                )
+        finally:
+            self._operation_context.reset(token)
+
+    def _emit_operation(self, event: Mapping[str, Any]) -> None:
+        observer = (self._operation_context.get() or {}).get("observer")
+        if callable(observer):
+            # The event is deliberately allow-listed at construction sites;
+            # never include request payloads, headers, response bodies or keys.
+            observer(dict(event))
+
+    def _check_cancelled(self, run_id: str | None) -> None:
+        check = (self._operation_context.get() or {}).get("cancel_check")
+        if callable(check) and check():
+            from .failures import RunCancelled
+
+            self._emit_operation({"event": "cancel_pending", "run_id": run_id})
+            raise RunCancelled(run_id or "")
 
     @classmethod
     def from_env(
@@ -479,16 +654,116 @@ class HttpGateway:
         )
 
     def _request(
-        self, decision: RouteDecision, payload: Mapping[str, Any], *, role: str
+        self,
+        decision: RouteDecision | None,
+        payload: Mapping[str, Any] | Callable[[RouteDecision], Mapping[str, Any]],
+        *,
+        role: str,
+        operation: str,
+        run_id: str | None,
+        route_factory: Callable[[], RouteDecision] | None = None,
     ) -> Any:
+        started = self._monotonic()
+        deadline = started + max(0.001, float(self.config.operation_timeout_s))
+        self._emit_operation(
+            {
+                "event": "start",
+                "operation": self._named_operation(operation),
+                "role": role,
+                "run_id": run_id,
+                "timeout_s": self.config.operation_timeout_s,
+            }
+        )
+        model_info: ModelInfo | None = None
+        if decision is None and route_factory is None:
+            raise ValueError("a Gateway route or route factory is required")
+
+        def resolve_with_pricing() -> RouteDecision:
+            nonlocal model_info
+            if decision is None:
+                if route_factory is None:
+                    raise ValueError("a Gateway route or route factory is required")
+                resolved = route_factory()
+            else:
+                resolved = decision
+            # Default Jev routing skips catalog I/O, but its first pricing
+            # lookup may still fetch the live catalog. Keep both in the same
+            # bounded worker; accounting must not trigger an unbounded fetch.
+            model_info = self._model_info(resolved.model)
+            return resolved
+
+        try:
+            self._check_cancelled(run_id)
+            decision = self._bounded_catalog_route(
+                resolve_with_pricing,
+                model="unknown",
+                role=role,
+                run_id=run_id,
+                deadline=deadline,
+            )
+        except Exception as exc:
+            from .failures import RunCancelled
+
+            error_kind = (
+                "cancelled"
+                if isinstance(exc, RunCancelled)
+                else "deadline_exceeded"
+                if isinstance(exc, _GatewayDeadlineExceeded)
+                else type(exc).__name__
+            )
+            self._emit_operation(
+                {
+                    "event": "error",
+                    "operation": self._named_operation(operation),
+                    "role": role,
+                    "run_id": run_id,
+                    "elapsed_ms": max(0, round((self._monotonic() - started) * 1000)),
+                    "error_kind": error_kind,
+                }
+            )
+            if isinstance(exc, RunCancelled):
+                raise
+            if isinstance(exc, ProviderError):
+                raise
+            raise ProviderError(
+                "catalog",
+                "model routing",
+                None,
+                "model routing failed or exceeded its deadline",
+                role=role,
+                kind="timeout"
+                if isinstance(exc, _GatewayDeadlineExceeded)
+                else "catalog",
+            ) from exc
+        request_payload = (
+            cast(Mapping[str, Any], payload(decision)) if callable(payload) else payload
+        )
         attempts = max(0, self.config.max_retries) + 1
         last_status: int | None = None
         for attempt in range(attempts):
             try:
+                self._check_cancelled(run_id)
+                remaining = deadline - self._monotonic()
+                if remaining <= 0:
+                    raise _GatewayDeadlineExceeded(
+                        "gateway operation deadline exceeded"
+                    )
                 self.transport_attempts_by_role[role] = (
                     self.transport_attempts_by_role.get(role, 0) + 1
                 )
-                response = self._attempt(decision, payload)
+                response = self._bounded_transport_request(
+                    decision,
+                    request_payload,
+                    timeout=min(max(0.001, self.config.timeout), remaining),
+                    deadline=deadline,
+                    run_id=run_id,
+                    role=role,
+                )
+                self._check_cancelled(run_id)
+                if deadline - self._monotonic() <= 0:
+                    raise _GatewayDeadlineExceeded(
+                        "gateway operation deadline exceeded"
+                    )
                 status = _response_status(response)
                 last_status = status
                 if status is not None and status >= 400:
@@ -511,10 +786,22 @@ class HttpGateway:
                             else None
                         )
                         delay = _retry_after_seconds(retry_after)
-                        if delay is not None:
-                            self._sleep(delay)
-                        else:
-                            self._backoff(attempt)
+                        if delay is None:
+                            delay = self.config.backoff * (2**attempt)
+                        self._emit_operation(
+                            {
+                                "event": "retry",
+                                "operation": self._named_operation(operation),
+                                "role": role,
+                                "run_id": run_id,
+                                "attempt": attempt + 1,
+                                "delay_s": min(
+                                    delay, max(0.0, deadline - self._monotonic())
+                                ),
+                                "status": status,
+                            }
+                        )
+                        self._wait_retry(delay, deadline, run_id)
                         continue
                     if status in ACCESS_DENIED_STATUS:
                         self._note_provider(
@@ -526,7 +813,6 @@ class HttpGateway:
                 self._note_provider(decision.provider, "ok", status, decision.model)
                 decoded = _response_json(response)
                 usage = decoded if isinstance(decoded, Mapping) else {}
-                model_info = self._model_info(decision.model)
                 self.usage.record(
                     role=role,
                     provider=decision.provider,
@@ -546,16 +832,434 @@ class HttpGateway:
                         else None
                     ),
                 )
+                self._emit_operation(
+                    {
+                        "event": "end",
+                        "operation": self._named_operation(operation),
+                        "role": role,
+                        "run_id": run_id,
+                        "elapsed_ms": max(
+                            0, round((self._monotonic() - started) * 1000)
+                        ),
+                        "attempts": attempt + 1,
+                        "status": status,
+                    }
+                )
                 return decoded
-            except ProviderError:
+            except ProviderError as exc:
+                self._emit_operation(
+                    {
+                        "event": "error",
+                        "operation": self._named_operation(operation),
+                        "role": role,
+                        "run_id": run_id,
+                        "elapsed_ms": max(
+                            0, round((self._monotonic() - started) * 1000)
+                        ),
+                        "attempts": attempt + 1,
+                        "status": exc.status,
+                        "error_kind": exc.kind,
+                    }
+                )
                 raise
             except Exception as exc:
+                from .failures import RunCancelled
+
+                if isinstance(exc, RunCancelled):
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": self._named_operation(operation),
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "attempts": attempt + 1,
+                            "error_kind": "cancelled",
+                        }
+                    )
+                    raise
+                remaining = deadline - self._monotonic()
+                if remaining <= 0 or isinstance(exc, _GatewayDeadlineExceeded):
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": self._named_operation(operation),
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "attempts": attempt + 1,
+                            "error_kind": "deadline_exceeded",
+                        }
+                    )
+                    raise ProviderError(
+                        decision.provider,
+                        decision.model,
+                        last_status,
+                        "operation deadline exceeded",
+                        role=role,
+                        kind="timeout",
+                    ) from exc
                 if attempt + 1 >= attempts:
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": self._named_operation(operation),
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "attempts": attempt + 1,
+                            "error_kind": type(exc).__name__,
+                        }
+                    )
                     raise ProviderError(
                         decision.provider, decision.model, last_status, role=role
                     ) from exc
-                self._backoff(attempt)
+                try:
+                    self._wait_retry(
+                        self.config.backoff * (2**attempt), deadline, run_id
+                    )
+                except _GatewayDeadlineExceeded as deadline_error:
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": self._named_operation(operation),
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "attempts": attempt + 1,
+                            "error_kind": "deadline_exceeded",
+                        }
+                    )
+                    raise ProviderError(
+                        decision.provider,
+                        decision.model,
+                        last_status,
+                        "operation deadline exceeded",
+                        role=role,
+                        kind="timeout",
+                    ) from deadline_error
         raise ProviderError(decision.provider, decision.model, last_status, role=role)
+
+    def _named_operation(self, operation: str) -> str:
+        substage = (self._operation_context.get() or {}).get("substage")
+        return f"{substage}.{operation}" if isinstance(substage, str) else operation
+
+    def _bounded_catalog_route(
+        self,
+        route_factory: Callable[[], RouteDecision],
+        *,
+        model: str,
+        role: str,
+        run_id: str | None,
+        deadline: float,
+    ) -> RouteDecision:
+        """Resolve a possibly live model catalog within the operation budget."""
+        self._emit_operation(
+            {
+                "event": "start",
+                "operation": "route_model",
+                "role": role,
+                "run_id": run_id,
+                "timeout_s": max(0.0, deadline - self._monotonic()),
+            }
+        )
+        finished = threading.Event()
+        result: list[Any] = []
+        started = self._monotonic()
+        if not self._transport_workers.acquire(blocking=False):
+            self._emit_operation(
+                {
+                    "event": "error",
+                    "operation": "route_model",
+                    "role": role,
+                    "run_id": run_id,
+                    "elapsed_ms": 0,
+                    "error_kind": "transport_busy",
+                }
+            )
+            raise ProviderError(
+                "catalog",
+                model,
+                None,
+                "too many provider requests are still shutting down",
+                role=role,
+                kind="transport_busy",
+            )
+
+        def resolve() -> None:
+            try:
+                result.append(route_factory())
+            except BaseException as exc:
+                result.append(exc)
+            finally:
+                finished.set()
+                self._transport_workers.release()
+
+        worker = threading.Thread(target=resolve, name="gateway-route", daemon=True)
+        try:
+            worker.start()
+        except BaseException as exc:
+            self._transport_workers.release()
+            self._emit_operation(
+                {
+                    "event": "error",
+                    "operation": "route_model",
+                    "role": role,
+                    "run_id": run_id,
+                    "elapsed_ms": max(0, round((self._monotonic() - started) * 1000)),
+                    "error_kind": type(exc).__name__,
+                }
+            )
+            raise
+        cancel_reported = False
+        while True:
+            if finished.is_set():
+                try:
+                    self._check_cancelled(run_id)
+                except Exception as exc:
+                    from .failures import RunCancelled
+
+                    if not isinstance(exc, RunCancelled):
+                        raise
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": "route_model",
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "error_kind": "cancelled",
+                        }
+                    )
+                    raise
+                if deadline - self._monotonic() <= 0:
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": "route_model",
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "error_kind": "deadline_exceeded",
+                        }
+                    )
+                    raise _GatewayDeadlineExceeded(
+                        "Gateway catalog routing exceeded its deadline"
+                    )
+                value = result[0]
+                if isinstance(value, BaseException):
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": "route_model",
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "error_kind": type(value).__name__,
+                        }
+                    )
+                    raise value
+                self._emit_operation(
+                    {
+                        "event": "end",
+                        "operation": "route_model",
+                        "role": role,
+                        "run_id": run_id,
+                        "elapsed_ms": max(
+                            0, round((self._monotonic() - started) * 1000)
+                        ),
+                    }
+                )
+                return value
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                try:
+                    self._check_cancelled(run_id)
+                except Exception as exc:
+                    from .failures import RunCancelled
+
+                    if not isinstance(exc, RunCancelled):
+                        raise
+                    self._emit_operation(
+                        {
+                            "event": "error",
+                            "operation": "route_model",
+                            "role": role,
+                            "run_id": run_id,
+                            "elapsed_ms": max(
+                                0, round((self._monotonic() - started) * 1000)
+                            ),
+                            "error_kind": "cancelled",
+                        }
+                    )
+                    raise
+                self._emit_operation(
+                    {
+                        "event": "error",
+                        "operation": "route_model",
+                        "role": role,
+                        "run_id": run_id,
+                        "elapsed_ms": max(
+                            0, round((self._monotonic() - started) * 1000)
+                        ),
+                        "error_kind": "deadline_exceeded",
+                    }
+                )
+                raise _GatewayDeadlineExceeded(
+                    "Gateway catalog routing exceeded its deadline"
+                )
+            if not cancel_reported:
+                check = (self._operation_context.get() or {}).get("cancel_check")
+                if callable(check) and check():
+                    self._emit_operation(
+                        {
+                            "event": "cancel_pending",
+                            "operation": "route_model",
+                            "run_id": run_id,
+                        }
+                    )
+                    cancel_reported = True
+            finished.wait(min(0.05, remaining))
+
+    def _bounded_transport_request(
+        self,
+        decision: RouteDecision,
+        payload: Mapping[str, Any],
+        *,
+        timeout: float,
+        deadline: float,
+        run_id: str | None,
+        role: str,
+    ) -> Any:
+        """Return by the logical deadline even if a transport ignores timeout.
+
+        The transport runs in a daemon thread because a generic synchronous
+        transport has no portable abort method. Cancellation stays pending
+        until that request returns or reaches its deadline; the worker cannot
+        keep the process alive after the caller has recorded a terminal result.
+        """
+        finished = threading.Event()
+        result: list[Any] = []
+        request_id = uuid.uuid4().hex
+        payload_snapshot = copy.deepcopy(dict(payload))
+        headers_snapshot = dict(decision.headers)
+        if not self._transport_workers.acquire(blocking=False):
+            raise ProviderError(
+                decision.provider,
+                decision.model,
+                None,
+                "too many provider requests are still shutting down",
+                role=role,
+                kind="transport_busy",
+            )
+
+        def request() -> None:
+            try:
+                result.append(
+                    self.transport.request(
+                        decision.url,
+                        method="POST",
+                        headers=headers_snapshot,
+                        json=payload_snapshot,
+                        timeout=timeout,
+                        **(
+                            {"request_id": request_id}
+                            if getattr(self.transport, "supports_request_id", False)
+                            else {}
+                        ),
+                    )
+                )
+            except BaseException as exc:  # propagate in the caller thread
+                result.append(exc)
+            finally:
+                finished.set()
+                self._transport_workers.release()
+
+        worker = threading.Thread(target=request, name="gateway-request", daemon=True)
+        try:
+            worker.start()
+        except BaseException:
+            self._transport_workers.release()
+            raise
+        cancel_reported = False
+        abort_requested = False
+        while True:
+            if finished.is_set():
+                # Closing an active request can make its worker report a
+                # transport error. Once the run requested cancellation, that
+                # error is a consequence of cancellation and must not enter
+                # Gateway retry or provider-error handling.
+                self._check_cancelled(run_id)
+                value = result[0]
+                if isinstance(value, BaseException):
+                    raise value
+                return value
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                abort = getattr(self.transport, "abort_request", None)
+                if (
+                    callable(abort)
+                    and getattr(self.transport, "supports_request_id", False)
+                    and not abort_requested
+                ):
+                    try:
+                        abort(request_id)
+                        abort_requested = True
+                    except Exception:  # noqa: BLE001 - timeout outcome takes precedence
+                        abort_requested = True
+                self._check_cancelled(run_id)
+                raise _GatewayDeadlineExceeded("gateway operation deadline exceeded")
+            if not cancel_reported:
+                check = (self._operation_context.get() or {}).get("cancel_check")
+                if callable(check) and check():
+                    self._emit_operation({"event": "cancel_pending", "run_id": run_id})
+                    cancel_reported = True
+                    abort = getattr(self.transport, "abort_request", None)
+                    if callable(abort) and getattr(
+                        self.transport, "supports_request_id", False
+                    ):
+                        self._emit_operation(
+                            {
+                                "event": "cancel_abort_requested",
+                                "role": role,
+                                "run_id": run_id,
+                            }
+                        )
+                        try:
+                            abort(request_id)
+                        except Exception:  # noqa: BLE001 - cancellation takes precedence
+                            pass
+                        abort_requested = True
+            finished.wait(min(0.05, remaining))
+
+    def _wait_retry(self, delay: float, deadline: float, run_id: str | None) -> None:
+        remaining = deadline - self._monotonic()
+        if remaining <= 0 or delay >= remaining:
+            raise _GatewayDeadlineExceeded("gateway operation deadline exceeded")
+        if not callable((self._operation_context.get() or {}).get("cancel_check")):
+            self._sleep(max(0.0, delay))
+            return
+        end = self._monotonic() + max(0.0, delay)
+        while True:
+            self._check_cancelled(run_id)
+            left = end - self._monotonic()
+            if left <= 0:
+                return
+            self._sleep(min(0.1, left))
 
     def _note_provider(
         self, provider: str, status: str, http_status: int | None, model: str
@@ -643,47 +1347,65 @@ class HttpGateway:
     ) -> Any:
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
-        decision = self.route_model(model, run_id=run_id)
-        payload: dict[str, Any] = {"model": model, "messages": list(messages), **params}
-        if decision.url.endswith("/messages"):
-            system = "\n".join(
-                str(message.get("content", ""))
-                for message in messages
-                if message.get("role") == "system"
-            )
-            payload = {
+        routed_decisions: list[RouteDecision] = []
+
+        def build_payload(decision: RouteDecision) -> Mapping[str, Any]:
+            routed_decisions.append(decision)
+            payload: dict[str, Any] = {
                 "model": model,
-                "messages": [
-                    dict(message)
+                "messages": list(messages),
+                **params,
+            }
+            if decision.url.endswith("/messages"):
+                system = "\n".join(
+                    str(message.get("content", ""))
                     for message in messages
-                    if message.get("role") != "system"
-                ],
-                "max_tokens": params.get("max_tokens", 1024),
-                **({"system": system} if system else {}),
-                **(
-                    {"temperature": params["temperature"]}
-                    if "temperature" in params
-                    else {}
-                ),
-            }
-        elif decision.url.endswith("/responses"):
-            payload = {
-                "model": model,
-                "input": list(messages),
-                "max_output_tokens": params.get(
-                    "max_tokens", 4096 if model.startswith("muse-spark-") else 1024
-                ),
-            }
-        self.calls.append(
-            {
-                "operation": "chat",
-                "role": role,
-                "model": model,
-                "provider": decision.provider,
-                "run_id": run_id,
-            }
+                    if message.get("role") == "system"
+                )
+                payload = {
+                    "model": model,
+                    "messages": [
+                        dict(message)
+                        for message in messages
+                        if message.get("role") != "system"
+                    ],
+                    "max_tokens": params.get("max_tokens", 1024),
+                    **({"system": system} if system else {}),
+                    **(
+                        {"temperature": params["temperature"]}
+                        if "temperature" in params
+                        else {}
+                    ),
+                }
+            elif decision.url.endswith("/responses"):
+                payload = {
+                    "model": model,
+                    "input": list(messages),
+                    "max_output_tokens": params.get(
+                        "max_tokens",
+                        4096 if model.startswith("muse-spark-") else 1024,
+                    ),
+                }
+            self.calls.append(
+                {
+                    "operation": "chat",
+                    "role": role,
+                    "model": model,
+                    "provider": decision.provider,
+                    "run_id": run_id,
+                }
+            )
+            return payload
+
+        response = self._request(
+            None,
+            build_payload,
+            role=role,
+            operation="chat",
+            run_id=run_id,
+            route_factory=lambda: self.route_model(model, run_id=run_id),
         )
-        response = self._request(decision, payload, role=role)
+        decision = routed_decisions[0]
         if decision.url.endswith("/messages") and isinstance(response, Mapping):
             content = response.get("content", [])
             text = (
@@ -724,7 +1446,6 @@ class HttpGateway:
     ) -> Any:
         request = dict(payload)
         key, envelope = decision_payload(request, model=self.config.jev_model)
-        decision = self._decisions_route(run_id)
         self.calls.append(
             {
                 "operation": "decide",
@@ -735,9 +1456,12 @@ class HttpGateway:
             }
         )
         response = self._request(
-            decision,
+            None,
             envelope,
             role=role,
+            operation="decide",
+            run_id=run_id,
+            route_factory=lambda: self._decisions_route(run_id),
         )
         try:
             answer = _decision_answers(response, [key])[0]
@@ -770,9 +1494,12 @@ class HttpGateway:
             }
         )
         response = self._request(
-            self._decisions_route(run_id),
+            None,
             envelope,
             role=role,
+            operation="decide_batch",
+            run_id=run_id,
+            route_factory=lambda: self._decisions_route(run_id),
         )
         try:
             answers = _decision_answers(response, keys)

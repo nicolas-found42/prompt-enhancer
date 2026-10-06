@@ -39,7 +39,12 @@ RESUME_CONTEXT_KEY = "run_control"
 
 @dataclass(frozen=True, slots=True)
 class RunControl:
-    """Optional user-set limits; reaching one pauses the run for approval."""
+    """Optional user-set limits; reaching one pauses at a Round boundary.
+
+    ``time_limit_s`` remains a user approval control checked after a completed
+    Round when another Round would start. It does not bound an in-flight
+    Gateway operation; ``GatewayConfig.operation_timeout_s`` does that.
+    """
 
     time_limit_s: float | None = None
     spend_limit_usd: float | None = None

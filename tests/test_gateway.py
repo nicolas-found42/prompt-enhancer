@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import contextvars
 import json
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
 from prompt_enhancer.catalog import (
     JEV_MODEL,
+    CatalogSnapshot,
     LiveModelCatalog,
     ModelInfo,
     StaticModelCatalog,
@@ -13,6 +18,7 @@ from prompt_enhancer.catalog import (
 from prompt_enhancer.gateway import (
     GatewayConfig,
     HttpGateway,
+    HttpTransport,
     ProviderError,
     ReplayGateway,
     ScriptedGateway,
@@ -49,6 +55,13 @@ def test_default_go_route_uses_subscription_endpoint():
     assert (
         GatewayConfig.from_env({}).go_models_url
         == "https://opencode.ai/zen/go/v1/models"
+    )
+    assert GatewayConfig.from_env({}).operation_timeout_s == 180.0
+    assert (
+        GatewayConfig.from_env(
+            {"PROMPT_ENHANCER_OPERATION_TIMEOUT": "45"}
+        ).operation_timeout_s
+        == 45.0
     )
 
 
@@ -685,6 +698,663 @@ def test_529_retry_honors_retry_after():
     assert gateway.chat("model", "prompt") == {"ok": True}
     assert delays == [2.0]
     assert len(transport.requests) == 2
+
+
+def test_gateway_operation_deadline_bounds_each_transport_attempt():
+    now = [0.0]
+
+    class SlowFailureTransport:
+        requests = []
+
+        def request(self, url, **kwargs):
+            self.requests.append(kwargs)
+            now[0] += 0.6
+            raise TimeoutError("slow transport")
+
+    transport = SlowFailureTransport()
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(timeout=10.0, operation_timeout_s=0.5, max_retries=3),
+        monotonic=lambda: now[0],
+    )
+
+    with pytest.raises(ProviderError, match="failed") as error:
+        gateway.chat("model", "prompt")
+
+    assert error.value.kind == "timeout"
+    assert len(transport.requests) == 1
+    assert transport.requests[0]["timeout"] == pytest.approx(0.5)
+
+
+def test_gateway_observer_records_success_test_substage_boundaries():
+    events = []
+    gateway = HttpGateway(QueueTransport([Response(200, {"ok": True})]))
+
+    with gateway.operation_context(observer=events.append):
+        with gateway.operation_context(
+            substage="writing_tests.generate", run_id="run-trace"
+        ):
+            gateway.chat("model", "private prompt", run_id="run-trace")
+
+    assert events[0] == {
+        "event": "start",
+        "operation": "writing_tests.generate",
+        "run_id": "run-trace",
+    }
+    assert events[1]["operation"] == "writing_tests.generate.chat"
+    assert events[1]["event"] == "start"
+    assert events[2]["operation"] == "route_model"
+    assert events[2]["event"] == "start"
+    assert events[3]["operation"] == "route_model"
+    assert events[3]["event"] == "end"
+    assert events[4]["event"] == "end"
+    assert events[5]["event"] == "end"
+    assert all("private prompt" not in repr(event) for event in events)
+
+
+def test_model_catalog_routing_is_inside_gateway_deadline_and_trace():
+    catalog_entered = threading.Event()
+    release_catalog = threading.Event()
+    finished = threading.Event()
+    result = []
+    events = []
+
+    class BlockingCatalog:
+        def fetch(self, *, force=False):
+            del force
+            catalog_entered.set()
+            release_catalog.wait(2)
+            return CatalogSnapshot(go=(ModelInfo(id="model", provider="go"),))
+
+    class RecordingTransport:
+        requests = []
+
+        def request(self, url, **kwargs):
+            self.requests.append({"url": url, **kwargs})
+            return Response(200, {"ok": True})
+
+    transport = RecordingTransport()
+    gateway = HttpGateway(
+        transport,
+        catalog=BlockingCatalog(),
+        config=GatewayConfig(operation_timeout_s=0.05, max_retries=0),
+    )
+
+    def request():
+        try:
+            with gateway.operation_context(observer=events.append):
+                gateway.chat("model", "prompt")
+        except BaseException as exc:
+            result.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    try:
+        assert catalog_entered.wait(1)
+        assert finished.wait(0.5), "catalog routing exceeded its caller deadline"
+    finally:
+        release_catalog.set()
+        worker.join(1)
+
+    assert len(result) == 1
+    assert isinstance(result[0], ProviderError)
+    assert result[0].kind == "timeout"
+    assert transport.requests == []
+    assert any(
+        event.get("operation") == "route_model" and event.get("event") == "start"
+        for event in events
+    )
+
+
+def test_cancellation_during_catalog_routing_stays_pending_then_cancels():
+    from prompt_enhancer.failures import RunCancelled
+
+    catalog_entered = threading.Event()
+    release_catalog = threading.Event()
+    cancelled = threading.Event()
+    finished = threading.Event()
+    result = []
+    events = []
+
+    class BlockingCatalog:
+        def fetch(self, *, force=False):
+            del force
+            catalog_entered.set()
+            release_catalog.wait(2)
+            return CatalogSnapshot(go=(ModelInfo(id="model", provider="go"),))
+
+    gateway = HttpGateway(
+        QueueTransport([Response(200, {})]),
+        catalog=BlockingCatalog(),
+        config=GatewayConfig(operation_timeout_s=0.05, max_retries=0),
+    )
+
+    def request():
+        try:
+            with gateway.operation_context(
+                cancel_check=cancelled.is_set, observer=events.append
+            ):
+                gateway.chat("model", "prompt", run_id="catalog-cancel")
+        except BaseException as exc:
+            result.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    try:
+        assert catalog_entered.wait(1)
+        cancelled.set()
+        assert finished.wait(0.5), "catalog cancellation was not deadline bounded"
+    finally:
+        release_catalog.set()
+        worker.join(1)
+
+    assert len(result) == 1
+    assert isinstance(result[0], RunCancelled)
+    assert any(event.get("event") == "cancel_pending" for event in events)
+
+
+@pytest.mark.parametrize("operation", ["decide", "decide_batch"])
+def test_decision_model_catalog_routing_is_inside_gateway_deadline_and_trace(
+    operation,
+):
+    catalog_entered = threading.Event()
+    release_catalog = threading.Event()
+    finished = threading.Event()
+    result = []
+    events = []
+
+    class BlockingCatalog:
+        def fetch(self, *, force=False):
+            del force
+            catalog_entered.set()
+            release_catalog.wait(2)
+            return CatalogSnapshot(go=(ModelInfo(id="custom-jev", provider="go"),))
+
+    transport = QueueTransport([Response(200, {"model": "custom-jev", "answers": {}})])
+    gateway = HttpGateway(
+        transport,
+        catalog=BlockingCatalog(),
+        config=GatewayConfig(
+            jev_model="custom-jev", operation_timeout_s=0.05, max_retries=0
+        ),
+    )
+
+    def request():
+        try:
+            with gateway.operation_context(observer=events.append):
+                if operation == "decide":
+                    gateway.decide({"state": "prompt", "instructions": "judge"})
+                else:
+                    gateway.decide_batch(
+                        [{"key": "k", "type": "noul", "query": "q", "state": "prompt"}]
+                    )
+        except BaseException as exc:
+            result.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    try:
+        assert catalog_entered.wait(1)
+        assert finished.wait(0.5), "decision catalog routing exceeded caller deadline"
+    finally:
+        release_catalog.set()
+        worker.join(1)
+
+    assert len(result) == 1
+    assert isinstance(result[0], ProviderError)
+    assert result[0].kind == "timeout"
+    assert transport.requests == []
+    assert any(
+        event.get("operation") == "route_model" and event.get("event") == "start"
+        for event in events
+    )
+
+
+@pytest.mark.parametrize("operation", ["decide", "decide_batch"])
+def test_default_jev_pricing_catalog_lookup_obeys_operation_deadline(operation):
+    catalog_entered = threading.Event()
+    release_catalog = threading.Event()
+    finished = threading.Event()
+    result = []
+    events = []
+
+    class BlockingCatalog:
+        def fetch(self, *, force=False):
+            del force
+            catalog_entered.set()
+            release_catalog.wait(5)
+            return CatalogSnapshot(go=(), openrouter=())
+
+    transport = QueueTransport(
+        [Response(200, {"model": JEV_MODEL, "answers": {"k": True}})]
+    )
+    gateway = HttpGateway(
+        transport,
+        catalog=BlockingCatalog(),
+        config=GatewayConfig(operation_timeout_s=0.05, max_retries=0),
+    )
+
+    def request():
+        try:
+            with gateway.operation_context(observer=events.append):
+                payload = {"key": "k", "type": "noul", "query": "q", "state": "seed"}
+                if operation == "decide":
+                    gateway.decide(payload, run_id="pricing-deadline")
+                else:
+                    gateway.decide_batch([payload], run_id="pricing-deadline")
+        except BaseException as exc:
+            result.append(exc)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=request)
+    worker.start()
+    try:
+        assert catalog_entered.wait(5)
+        assert finished.wait(1), "pricing catalog lookup escaped the Gateway deadline"
+    finally:
+        release_catalog.set()
+        worker.join(5)
+    assert not worker.is_alive()
+    assert len(result) == 1
+    assert isinstance(result[0], ProviderError)
+    assert result[0].kind == "timeout"
+    assert transport.requests == []
+    assert any(
+        event.get("operation") == "route_model"
+        and event.get("event") == "error"
+        and event.get("error_kind") == "deadline_exceeded"
+        for event in events
+    )
+
+
+def test_stalled_transport_returns_deadline_failure_and_aborts_when_supported():
+    started = threading.Event()
+    release = threading.Event()
+    late_response_done = threading.Event()
+
+    class StalledTransport:
+        supports_request_id = True
+        aborted = False
+
+        def request(self, _url, **_kwargs):
+            started.set()
+            release.wait()
+            late_response_done.set()
+            return Response(200, {"usage": {"cost": 123.0}, "late": True})
+
+        def abort_request(self, _request_id):
+            self.aborted = True
+            release.set()
+
+    transport = StalledTransport()
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(timeout=10.0, operation_timeout_s=0.03, max_retries=0),
+    )
+    began = time.monotonic()
+
+    with pytest.raises(ProviderError) as error:
+        gateway.chat("model", "prompt")
+
+    assert started.is_set()
+    assert error.value.kind == "timeout"
+    assert time.monotonic() - began < 0.5
+    assert transport.aborted is True
+    assert release.is_set()
+    assert late_response_done.wait(0.5)
+    assert gateway.usage_report()["total"] == 0
+
+
+def test_http_transport_closes_a_stalled_response_body_at_deadline():
+    release = threading.Event()
+
+    class Socket:
+        closed = False
+
+        def settimeout(self, _timeout):
+            pass
+
+        def close(self):
+            self.closed = True
+            release.set()
+
+    sock = Socket()
+
+    class Raw:
+        _sock = sock
+
+    class FilePointer:
+        raw = Raw()
+
+    class Response:
+        status = 200
+        headers = {}
+        fp = FilePointer()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read1(self, _size):
+            release.wait()
+            return b"{}"
+
+    gateway = HttpGateway(
+        HttpTransport(opener=lambda *_args, **_kwargs: Response()),
+        config=GatewayConfig(timeout=5.0, operation_timeout_s=0.03, max_retries=0),
+    )
+    began = time.monotonic()
+
+    with pytest.raises(ProviderError) as error:
+        gateway.chat("model", "prompt")
+
+    assert error.value.kind == "timeout"
+    assert time.monotonic() - began < 0.5
+    assert sock.closed is True
+
+
+def test_unresponsive_transport_workers_are_capped_across_gateway_calls():
+    release = threading.Event()
+    all_started = threading.Event()
+    started_count = [0]
+    started_lock = threading.Lock()
+    operation_time = [0.0]
+    transport_workers = []
+
+    class NeverCompletingTransport:
+        def request(self, _url, **_kwargs):
+            with started_lock:
+                transport_workers.append(threading.current_thread())
+                started_count[0] += 1
+                if started_count[0] == 8:
+                    all_started.set()
+            release.wait()
+            return Response(200, {})
+
+    gateway = HttpGateway(
+        NeverCompletingTransport(),
+        config=GatewayConfig(operation_timeout_s=0.03, max_retries=0),
+        monotonic=lambda: operation_time[0],
+    )
+    pool = ThreadPoolExecutor(max_workers=8)
+    try:
+        futures = [pool.submit(gateway.chat, "model", "prompt") for _ in range(8)]
+        assert all_started.wait(5), "transport workers did not all start"
+        # Hold logical time fixed until all eight workers are actually blocked
+        # in transport, then expire each operation deterministically.
+        operation_time[0] = 1.0
+        for future in futures:
+            with pytest.raises(ProviderError) as error:
+                future.result(timeout=5)
+            assert error.value.kind == "timeout"
+
+        with pytest.raises(ProviderError) as saturated:
+            gateway.chat("model", "prompt")
+        assert saturated.value.kind == "transport_busy"
+    finally:
+        release.set()
+        pool.shutdown(wait=True)
+        with started_lock:
+            workers = list(transport_workers)
+        join_deadline = time.monotonic() + 5
+        for worker in workers:
+            worker.join(timeout=max(0, join_deadline - time.monotonic()))
+        assert not any(worker.is_alive() for worker in workers)
+
+
+def test_gateway_operation_deadline_is_shared_by_retries_and_retry_delay():
+    now = [0.0]
+
+    class TimedTransport:
+        requests = []
+
+        def request(self, url, **kwargs):
+            self.requests.append(kwargs)
+            now[0] += 0.4
+            return {"status_code": 503, "headers": {}}
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    transport = TimedTransport()
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(
+            timeout=4.0,
+            operation_timeout_s=1.0,
+            max_retries=3,
+            backoff=0.2,
+        ),
+        sleep=sleep,
+        monotonic=lambda: now[0],
+    )
+
+    with pytest.raises(ProviderError) as error:
+        gateway.chat("model", "prompt")
+
+    assert error.value.kind == "timeout"
+    assert len(transport.requests) == 2
+    assert [item["timeout"] for item in transport.requests] == pytest.approx([1.0, 0.4])
+
+
+def test_gateway_cancellation_before_request_sends_no_transport_call():
+    from prompt_enhancer.failures import RunCancelled
+
+    transport = QueueTransport([Response(200, {"ok": True})])
+    gateway = HttpGateway(transport)
+
+    with gateway.operation_context(cancel_check=lambda: True):
+        with pytest.raises(RunCancelled):
+            gateway.chat("model", "prompt", run_id="run-2")
+
+    assert transport.requests == []
+
+
+def test_gateway_cancellation_after_active_response_discards_response():
+    from prompt_enhancer.failures import RunCancelled
+
+    cancelled = [False]
+
+    class CancelOnResponse:
+        requests = []
+
+        def request(self, url, **kwargs):
+            self.requests.append(kwargs)
+            cancelled[0] = True
+            return Response(200, {"ok": True})
+
+    transport = CancelOnResponse()
+    gateway = HttpGateway(transport)
+
+    with gateway.operation_context(cancel_check=lambda: cancelled[0]):
+        with pytest.raises(RunCancelled):
+            gateway.chat("model", "prompt", run_id="run-3")
+
+    assert len(transport.requests) == 1
+
+
+def test_cancel_during_stalled_transport_stays_pending_then_aborts_as_cancelled():
+    from prompt_enhancer.failures import RunCancelled
+
+    cancelled = [False]
+    release = threading.Event()
+    events = []
+
+    class CancellableTransport:
+        supports_request_id = True
+        aborted = False
+
+        def request(self, _url, **_kwargs):
+            cancelled[0] = True
+            release.wait()
+            return Response(200, {})
+
+        def abort_request(self, _request_id):
+            self.aborted = True
+            release.set()
+
+    transport = CancellableTransport()
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(operation_timeout_s=0.03, max_retries=0),
+    )
+
+    with gateway.operation_context(
+        cancel_check=lambda: cancelled[0], observer=events.append
+    ):
+        with pytest.raises(RunCancelled):
+            gateway.chat("model", "prompt", run_id="run-cancel")
+
+    assert transport.aborted is True
+    assert any(event["event"] == "cancel_pending" for event in events)
+    assert release.is_set()
+
+
+@pytest.mark.parametrize("max_retries", [0, 2])
+def test_cancellation_aborts_active_transport_before_deadline_without_retry(
+    max_retries,
+):
+    from prompt_enhancer.failures import RunCancelled
+
+    cancelled = threading.Event()
+    entered = threading.Event()
+    release = threading.Event()
+    aborted = threading.Event()
+    request_count = 0
+    events = []
+    results = []
+
+    class AbortRaisesTransport:
+        supports_request_id = True
+
+        def request(self, _url, **_kwargs):
+            nonlocal request_count
+            request_count += 1
+            entered.set()
+            assert release.wait(5)
+            raise TimeoutError("socket closed by cancellation")
+
+        def abort_request(self, _request_id):
+            aborted.set()
+            release.set()
+
+    gateway = HttpGateway(
+        AbortRaisesTransport(),
+        config=GatewayConfig(operation_timeout_s=30, max_retries=max_retries),
+    )
+
+    def run_request():
+        try:
+            gateway.chat("model", "prompt", run_id="run-cancel-immediate")
+        except BaseException as exc:  # capture worker outcome for the test thread
+            results.append(exc)
+
+    with gateway.operation_context(
+        cancel_check=cancelled.is_set, observer=events.append
+    ):
+        request_context = contextvars.copy_context()
+        request_thread = threading.Thread(
+            target=lambda: request_context.run(run_request)
+        )
+        request_thread.start()
+        try:
+            assert entered.wait(2)
+            cancelled.set()
+            abort_observed = aborted.wait(2)
+        finally:
+            # Release the test transport even when the regression fails.
+            release.set()
+            request_thread.join(2)
+
+    assert not request_thread.is_alive()
+    assert abort_observed
+    assert request_count == 1
+    assert len(results) == 1 and isinstance(results[0], RunCancelled)
+    assert any(event["event"] == "cancel_abort_requested" for event in events)
+    assert not any(event.get("error_kind") == "deadline_exceeded" for event in events)
+
+
+def test_retry_after_cannot_extend_gateway_operation_deadline():
+    now = [0.0]
+    delays = []
+    transport = QueueTransport([{"status_code": 429, "headers": {"Retry-After": "10"}}])
+
+    def sleep(seconds):
+        delays.append(seconds)
+        now[0] += seconds
+
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(operation_timeout_s=1.0, max_retries=2),
+        sleep=sleep,
+        monotonic=lambda: now[0],
+    )
+
+    with pytest.raises(ProviderError) as error:
+        gateway.chat("model", "prompt")
+
+    assert error.value.kind == "timeout"
+    assert len(transport.requests) == 1
+    assert delays == []
+
+
+def test_network_retry_backoff_must_fit_inside_gateway_operation_deadline():
+    class NetworkFailureTransport:
+        requests = []
+
+        def request(self, url, **kwargs):
+            self.requests.append({"url": url, **kwargs})
+            raise TimeoutError("temporary network failure")
+
+    transport = NetworkFailureTransport()
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(operation_timeout_s=0.5, max_retries=2, backoff=1.0),
+        sleep=lambda _seconds: pytest.fail("backoff must not exceed remaining budget"),
+    )
+
+    with pytest.raises(ProviderError) as error:
+        gateway.chat("model", "prompt")
+
+    assert error.value.kind == "timeout"
+    assert len(transport.requests) == 1
+
+
+def test_gateway_cancellation_interrupts_retry_wait_and_records_safe_events():
+    from prompt_enhancer.failures import RunCancelled
+
+    cancelled = [False]
+    events = []
+    transport = QueueTransport([{"status_code": 503, "headers": {"Retry-After": "5"}}])
+
+    def sleep(_seconds):
+        cancelled[0] = True
+
+    gateway = HttpGateway(
+        transport,
+        config=GatewayConfig(max_retries=2),
+        sleep=sleep,
+    )
+    with gateway.operation_context(
+        cancel_check=lambda: cancelled[0], observer=events.append
+    ):
+        with pytest.raises(RunCancelled):
+            gateway.chat("model", "private prompt", run_id="run-1")
+
+    assert len(transport.requests) == 1
+    assert events[0]["event"] == "start"
+    assert any(event["event"] == "cancel_pending" for event in events)
+    assert events[-1]["error_kind"] == "cancelled"
+    assert "private prompt" not in repr(events)
 
 
 def test_configured_jev_pin_is_sent_to_decisions_api():

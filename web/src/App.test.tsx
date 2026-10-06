@@ -309,6 +309,39 @@ it("does not scroll when the page reattaches to a run after a reload", async () 
   expect(scrolled).not.toContain("run-outcome");
 });
 
+it("shows a recovered interrupted run as a terminal operational failure", async () => {
+  const interrupted: Job = {
+    ...runningJob,
+    state: "interrupted" as Job["state"],
+    stage: null,
+    cancel_requested: true,
+    cancellation_pending: false,
+    result: {
+      status: "failed",
+      run_id: runningJob.run_id,
+      report: {
+        failure: {
+          kind: "interrupted",
+          message: "The server stopped before this run finished.",
+        },
+      },
+      cost: { total: 0 },
+      timing: { total_ms: 1 },
+    },
+  } as Job;
+  vi.mocked(getActiveJobs).mockResolvedValue([interrupted]);
+
+  render(<App />);
+
+  expect(await screen.findByText("RUN FAILED")).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "The run stopped before finishing" })
+  ).toBeVisible();
+  expect(screen.queryByText("Improving your prompt")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Cancelling…" })).toBeNull();
+  expect(getJob).not.toHaveBeenCalled();
+});
+
 function reattachedFailure(failure: Record<string, unknown>): void {
   const result: OptimizeResult = {
     status: "failed",
