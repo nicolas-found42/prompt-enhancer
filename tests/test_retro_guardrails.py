@@ -471,8 +471,9 @@ def test_background_override_provenance_survives_interruption_recovery(tmp_path)
         store.close()
 
 
-@pytest.mark.parametrize("evidence", [None, [], {}, 42, "  "])
-def test_nontext_disposition_evidence_remains_unresolved(evidence):
+@pytest.mark.parametrize("status", ["fixed", None, [], {}])
+@pytest.mark.parametrize("evidence", ["checked", None, [], {}, 42, "  "])
+def test_malformed_disposition_remains_unresolved(status, evidence):
     comment = {"id": 10, "commit_id": "head", "user": {"login": "qodo"}}
     result = assess(
         "head",
@@ -480,15 +481,16 @@ def test_nontext_disposition_evidence_remains_unresolved(evidence):
         [comment],
         {
             "10": {
-                "status": "fixed",
+                "status": status,
                 "evidence": evidence,
                 "fingerprint": fingerprint(comment),
             }
         },
         reviewer="qodo",
     )
-    assert result["status"] == "needs_triage"
-    assert result["unresolved"] == ["10"]
+    valid = status == "fixed" and evidence == "checked"
+    assert result["unresolved"] == ([] if valid else ["10"])
+    assert result["status"] == ("pending" if valid else "needs_triage")
 
 
 @pytest.mark.parametrize("contents", [None, "{", "[]"])

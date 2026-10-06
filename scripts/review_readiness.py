@@ -85,6 +85,7 @@ def assess(
 def valid_disposition(value, current_fingerprint: str) -> bool:
     return (
         isinstance(value, dict)
+        and isinstance(value.get("status"), str)
         and value.get("status") in {"fixed", "dismissed", "deferred"}
         and isinstance(value.get("evidence"), str)
         and bool(value["evidence"].strip())
