@@ -20,7 +20,7 @@ from prompt_enhancer.store import RunStore
 sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
 from bootstrap import require_quality_tools
 from isolated_run import prepare, verify_settings
-from review_readiness import assess
+from review_readiness import assess, fingerprint
 from validation.bundles import partition
 from validation.receipts import receipt_status
 
@@ -94,12 +94,20 @@ def test_latest_head_review_requires_every_comment_disposition():
         {"id": 11, "commit_id": "new", "user": {"login": reviewer}},
     ]
     dispositions = {
-        "10": {"status": "dismissed", "evidence": "test shows contract preserved"}
+        "10": {
+            "status": "dismissed",
+            "evidence": "test shows contract preserved",
+            "fingerprint": fingerprint(comments[0]),
+        }
     }
     result = assess("new", reviews, comments, dispositions, reviewer=reviewer)
     assert result["status"] == "needs_triage"
     assert result["unresolved"] == ["11"]
-    dispositions["11"] = {"status": "fixed", "evidence": "regression passes at fix SHA"}
+    dispositions["11"] = {
+        "status": "fixed",
+        "evidence": "regression passes at fix SHA",
+        "fingerprint": fingerprint(comments[1]),
+    }
     assert (
         assess("new", reviews, comments, dispositions, reviewer=reviewer)["status"]
         == "triaged"
@@ -108,6 +116,114 @@ def test_latest_head_review_requires_every_comment_disposition():
     assert assess("new", reviews, comments, dispositions, reviewer=reviewer)[
         "unresolved"
     ] == ["11"]
+
+
+def test_edited_review_comment_invalidates_disposition_and_settling_signature():
+    reviewer = "qodo-code-review[bot]"
+    reviews = [
+        {
+            "id": 1,
+            "commit_id": "head",
+            "state": "COMMENTED",
+            "user": {"login": reviewer},
+        }
+    ]
+    comment = {
+        "id": 10,
+        "commit_id": "head",
+        "user": {"login": reviewer},
+        "body": "Original finding",
+        "updated_at": "2026-10-06T12:00:00Z",
+    }
+    dispositions = {
+        "10": {
+            "status": "fixed",
+            "evidence": "test passes",
+            "fingerprint": fingerprint(comment),
+        }
+    }
+    before = assess("head", reviews, [comment], dispositions, reviewer=reviewer)
+    assert before["status"] == "triaged"
+    comment.update(body="Changed finding", updated_at="2026-10-06T12:00:01Z")
+    after = assess("head", reviews, [comment], dispositions, reviewer=reviewer)
+    assert after["status"] == "needs_triage"
+    assert after["unresolved"] == ["10"]
+    assert after["comment_ids"] == before["comment_ids"]
+    assert after["comment_fingerprints"] != before["comment_fingerprints"]
+    dispositions["10"]["fingerprint"] = fingerprint(comment)
+    assert (
+        assess("head", reviews, [comment], dispositions, reviewer=reviewer)["status"]
+        == "triaged"
+    )
+
+
+def test_readiness_wait_settles_again_after_same_id_comment_edit(tmp_path, monkeypatch):
+    import review_readiness as readiness
+
+    clock = [0.0]
+    reviewer = "qodo-code-review[bot]"
+    comment = {
+        "id": 10,
+        "commit_id": "head",
+        "user": {"login": reviewer},
+        "body": "Original",
+    }
+    dispositions = tmp_path / "dispositions.json"
+    dispositions.write_text(
+        json.dumps(
+            {
+                "10": {
+                    "status": "fixed",
+                    "evidence": "original finding checked",
+                    "fingerprint": fingerprint(comment),
+                }
+            }
+        )
+    )
+    output = tmp_path / "receipt.json"
+
+    def fetch(endpoint, deadline):
+        if endpoint.endswith("/reviews"):
+            return [
+                [
+                    {
+                        "id": 1,
+                        "commit_id": "head",
+                        "state": "COMMENTED",
+                        "user": {"login": reviewer},
+                    }
+                ]
+            ]
+        if endpoint.endswith("/comments"):
+            return [[{**comment, "body": "Edited" if clock[0] >= 5 else "Original"}]]
+        return [{"head": {"sha": "head"}}]
+
+    monkeypatch.setattr(readiness, "gh_json", fetch)
+    monkeypatch.setattr(readiness.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        readiness.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay)
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "review_readiness.py",
+            "1",
+            "--head",
+            "head",
+            "--timeout",
+            "30",
+            "--dispositions",
+            str(dispositions),
+            "--output",
+            str(output),
+        ],
+    )
+    assert readiness.main() == 1
+    assert clock[0] == 15
+    receipt = json.loads(output.read_text())
+    assert receipt["status"] == "needs_triage"
+    assert receipt["unresolved"] == ["10"]
 
 
 def test_partition_preserves_all_unicode_evidence_and_complete_patches():

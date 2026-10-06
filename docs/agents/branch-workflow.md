@@ -45,7 +45,9 @@ dirty checkout), use `SKIP=no-commit-to-branch uv run --locked pre-commit run --
    The command waits at most five minutes and requires ten seconds of stable
    review/comment metadata. Each captured finding needs a `fixed`, `dismissed`
    or `deferred` disposition with an evidence reference. Example JSON:
-   `{"4197420107": {"status": "fixed", "evidence": "test name and fix SHA"}}`.
+   `{"4197420107": {"status": "fixed", "evidence": "test name and fix SHA", "fingerprint": "<comment_fingerprints value from receipt>"}}`.
+   Copy the captured fingerprint for each disposition. An edited finding
+   invalidates the old disposition and resets the settling clock.
    A stale head, untriaged finding, unavailable API or timeout is explicit.
    Keep judgments advisory: report and assess unresolved findings; a completed
    review is not an approval. If Qodo times out, record that gap in the PR before

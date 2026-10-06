@@ -1,6 +1,7 @@
 """Capture latest-head advisory review readiness with bounded waiting."""
 
 import argparse
+import hashlib
 import json
 import math
 import subprocess
@@ -13,6 +14,14 @@ from validation.receipts import write_json
 
 class ReadinessTimeout(TimeoutError):
     pass
+
+
+def fingerprint(item: dict) -> str:
+    fields = {
+        key: item.get(key)
+        for key in ("id", "body", "updated_at", "state", "path", "line", "side")
+    }
+    return hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
 
 
 def gh_json(endpoint: str, deadline: float) -> list:
@@ -50,12 +59,19 @@ def assess(
         if c.get("user", {}).get("login") == reviewer and c.get("commit_id") == head
     ]
     ids = [str(c["id"]) for c in findings]
-    unresolved = [cid for cid in ids if not valid_disposition(dispositions.get(cid))]
+    fingerprints = {str(c["id"]): fingerprint(c) for c in findings}
+    unresolved = [
+        cid
+        for cid in ids
+        if not valid_disposition(dispositions.get(cid), fingerprints[cid])
+    ]
     return {
         "head": head,
         "reviewer": reviewer,
         "review_ids": [r["id"] for r in relevant],
+        "review_fingerprints": {str(r["id"]): fingerprint(r) for r in relevant},
         "comment_ids": ids,
+        "comment_fingerprints": fingerprints,
         "unresolved": unresolved,
         "status": "triaged"
         if relevant and not unresolved
@@ -66,11 +82,12 @@ def assess(
     }
 
 
-def valid_disposition(value) -> bool:
+def valid_disposition(value, current_fingerprint: str) -> bool:
     return (
         isinstance(value, dict)
         and value.get("status") in {"fixed", "dismissed", "deferred"}
         and bool(str(value.get("evidence", "")).strip())
+        and value.get("fingerprint") == current_fingerprint
     )
 
 
@@ -112,7 +129,7 @@ def main() -> int:
             result = assess(
                 args.head, reviews, comments, dispositions, reviewer=args.reviewer
             )
-            signature = (result["review_ids"], result["comment_ids"])
+            signature = (result["review_fingerprints"], result["comment_fingerprints"])
             if signature != last_signature:
                 last_signature = signature
                 stable_since = time.monotonic()
