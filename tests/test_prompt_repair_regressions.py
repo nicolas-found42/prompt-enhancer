@@ -89,7 +89,10 @@ def test_timeout_description_names_deadline_without_network_diagnosis():
     assert "internet" not in failure["hint"]
 
 
-def test_current_round_reports_absent_grades_and_retains_unverified_status():
+@pytest.mark.parametrize("prior_vector", [None, {"scores": {}, "passed": False}])
+def test_current_round_reports_absent_grades_and_retains_unverified_status(
+    prior_vector,
+):
     from test_score_vector import WEAK, _gateway
 
     prompt = "Explain how rainbows form to a 10-year-old in no more than 120 words."
@@ -107,6 +110,8 @@ def test_current_round_reports_absent_grades_and_retains_unverified_status():
             15,
             applied_style="audience_fit",
             route_strategies=(),
+            prior_vector=prior_vector,
+            round_number=4 if prior_vector is not None else 1,
         ),
     )
     report = outcome.report()
@@ -114,6 +119,9 @@ def test_current_round_reports_absent_grades_and_retains_unverified_status():
     assert report["selection_evidence"]["original_score"] is None
     assert report["selection_evidence"]["winner_score"] is None
     assert report["convergence"]["verification"] == "unverified"
+    assert report["convergence"]["gain"] is None
+    if prior_vector is not None:
+        assert "first round" not in outcome.summary
 
 
 @pytest.mark.parametrize(

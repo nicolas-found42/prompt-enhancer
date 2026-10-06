@@ -1222,9 +1222,17 @@ def run_round(
         if ranking is not None
         else None
     )
+    prior_vector = plan.prior_vector
+    if (
+        plan.writer_instruction_version >= 15
+        and prior_vector is not None
+        and not prior_vector.get("scores")
+    ):
+        # An unmeasured rejected round is absent evidence, not a zero vector.
+        prior_vector = None
     decision = convergence_decision(
         vector,
-        previous_vector=plan.prior_vector,
+        previous_vector=prior_vector,
         epsilon=settings.convergence_epsilon,
     )
     convergence = decision.to_dict()
@@ -1237,7 +1245,10 @@ def run_round(
     if decision.converged:
         status = CONVERGED_STATUS
         summary = convergence_summary(
-            decision.scores, decision.floors, gain=decision.gain
+            decision.scores,
+            decision.floors,
+            gain=decision.gain,
+            first_round=plan.writer_instruction_version < 15 or plan.round_number == 1,
         )
         reported_failure = None
     return RoundOutcome(
