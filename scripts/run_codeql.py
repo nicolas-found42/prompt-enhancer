@@ -71,64 +71,70 @@ def main() -> int:
         sha=commit(repo, args.ref),
     )
     try:
-        source = receipt.output / "source"
-        receipt.value["source_digest"] = snapshot(repo, receipt.value["commit"], source)
-        version = receipt.run(
-            "version", [args.codeql, "version", "--format=json"], cwd=source
-        )
-        receipt.value["codeql_version"] = json.loads(version.read_text())["version"]
-        if (
-            not isinstance(receipt.value["codeql_version"], str)
-            or not receipt.value["codeql_version"]
-        ):
-            raise ValueError("missing CodeQL CLI version")
-        receipt.value["analyses"] = []
-        for language in dict.fromkeys(args.language or SUITES):
-            database = receipt.output / f"database-{language}"
-            sarif = receipt.output / f"{language}.sarif"
-            suite = SUITES[language]
-            receipt.run(
-                f"create-{language}",
-                [
-                    args.codeql,
-                    "database",
-                    "create",
-                    str(database),
-                    f"--language={language}",
-                    "--build-mode=none",
-                    f"--source-root={source}",
-                ],
-                cwd=source,
+        with receipt.interruptions():
+            source = receipt.output / "source"
+            receipt.value["source_digest"] = snapshot(
+                repo, receipt.value["commit"], source
             )
-            receipt.run(
-                f"analyze-{language}",
-                [
-                    args.codeql,
-                    "database",
-                    "analyze",
-                    str(database),
-                    suite,
-                    "--format=sarif-latest",
-                    f"--output={sarif}",
-                ],
-                cwd=source,
+            version = receipt.run(
+                "version", [args.codeql, "version", "--format=json"], cwd=source
             )
-            receipt.value["analyses"].append(
-                {
-                    "language": language,
-                    "query_suite": suite,
-                    "sarif": sarif.name,
-                    **summarize(sarif),
-                }
-            )
-            receipt.save()
-        receipt.finish()
-        for analysis in receipt.value["analyses"]:
-            print(
-                f"{analysis['language']}: analysis completed; {analysis['finding_count']} findings"
-            )
-        print(f"Receipt: {receipt.path}")
-        return 0
+            receipt.value["codeql_version"] = json.loads(version.read_text())["version"]
+            if (
+                not isinstance(receipt.value["codeql_version"], str)
+                or not receipt.value["codeql_version"]
+            ):
+                raise ValueError("missing CodeQL CLI version")
+            receipt.value["analyses"] = []
+            for language in dict.fromkeys(args.language or SUITES):
+                database = receipt.output / f"database-{language}"
+                sarif = receipt.output / f"{language}.sarif"
+                suite = SUITES[language]
+                receipt.run(
+                    f"create-{language}",
+                    [
+                        args.codeql,
+                        "database",
+                        "create",
+                        str(database),
+                        f"--language={language}",
+                        "--build-mode=none",
+                        f"--source-root={source}",
+                    ],
+                    cwd=source,
+                )
+                receipt.run(
+                    f"analyze-{language}",
+                    [
+                        args.codeql,
+                        "database",
+                        "analyze",
+                        str(database),
+                        suite,
+                        "--format=sarif-latest",
+                        f"--output={sarif}",
+                    ],
+                    cwd=source,
+                )
+                receipt.value["analyses"].append(
+                    {
+                        "language": language,
+                        "query_suite": suite,
+                        "sarif": sarif.name,
+                        **summarize(sarif),
+                    }
+                )
+                receipt.save()
+            receipt.finish()
+            for analysis in receipt.value["analyses"]:
+                print(
+                    f"{analysis['language']}: analysis completed; {analysis['finding_count']} findings"
+                )
+            print(f"Receipt: {receipt.path}")
+            return 0
+    except KeyboardInterrupt:
+        print(f"CodeQL interrupted. Receipt: {receipt.path}")
+        return 130
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         receipt.fail(exc)
         print(f"CodeQL failed: {exc}")

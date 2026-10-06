@@ -416,7 +416,7 @@ def create_app(
             "gateway_limits": {
                 key: value
                 for key, value in app_optimizer.run_configuration().items()
-                if key != "models"
+                if key in {"operation_timeout_s", "request_timeout_s"}
             },
             "live_health": health_service.settings(),
         }

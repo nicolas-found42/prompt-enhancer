@@ -141,8 +141,12 @@ limits explicitly when comparing configurations. The launcher uses a fresh
 database, checks effective models and exported score floors before submission,
 and retains source/settings hashes, limits, final job and history. It inherits
 server-side credentials from the runtime environment and excludes credentials
-from provenance. New run records retain effective model/budget configuration;
-historical records without it still have unknown historical configuration.
+from provenance. New run records retain effective model/budget configuration.
+`initial_configuration` preserves the initial execution settings, `configuration`
+holds the latest effective settings (including approved time/spend limits), and
+`configuration_history` records each
+optimization or continuation before its provider calls. Historical records
+without this metadata still have unknown historical configuration.
 
 The commit hook checks file hygiene, GitHub Actions syntax, staged secrets,
 and `uv.lock`; lints and formats staged Python and web files; then checks
