@@ -109,7 +109,7 @@ class RunJobs:
             max_workers=1, thread_name_prefix="prompt-run"
         )
         self._jobs: OrderedDict[str, _Job] = OrderedDict()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._keep = keep
         self._store = store
         self._monotonic = monotonic
@@ -151,7 +151,13 @@ class RunJobs:
                 "timing": {"started_at": job.started_at},
             }
             record["job"] = self._job_record(job)
-            if recovery_result is not None:
+            saved_result = record.get("result")
+            needs_result = (
+                not isinstance(saved_result, Mapping)
+                or not saved_result
+                or saved_result.get("status") in {"queued", "running"}
+            )
+            if recovery_result is not None and needs_result:
                 record["result"] = dict(recovery_result)
                 timing = record.get("timing")
                 record["timing"] = {
@@ -161,18 +167,17 @@ class RunJobs:
             elif job.state == "done" and job.result is not None:
                 # Optimizer usually saved its canonical result already. Keep any
                 # richer record it wrote; generic jobs still get a durable result.
-                saved_result = record.get("result")
-                if (
-                    not isinstance(saved_result, Mapping)
-                    or not saved_result
-                    or saved_result.get("status") in {"queued", "running"}
-                ):
+                if needs_result:
                     record["result"] = dict(job.result)
             record["cost"] = record.get("cost") or {"total": job.cost_total}
             record["timing"] = record.get("timing") or {}
             return record
 
-        self._store.update_run(job.run_id, update)
+        # Ownership and the write are one critical section: an older job may
+        # still finish a cancellation callback after a continuation replaced it.
+        with self._lock:
+            if self._jobs.get(job.run_id) is job:
+                self._store.update_run(job.run_id, update)
 
     def _recover(self) -> None:
         store = self._store
@@ -270,6 +275,13 @@ class RunJobs:
             )
             if data.get("cancel_requested"):
                 job.cancel.set()
+            saved_result = record.get("result")
+            if (
+                isinstance(saved_result, Mapping)
+                and saved_result
+                and saved_result.get("status") not in {"queued", "running"}
+            ):
+                job.result = dict(saved_result)
             self._jobs[run_id] = job
             self._persist(job, recovery_result=job.result)
 
@@ -304,7 +316,7 @@ class RunJobs:
                 if self._jobs[oldest].state in {"queued", "running"}:
                     break
                 self._jobs.pop(oldest)
-        self._persist(job)
+            self._persist(job)
         self._executor.submit(self._run, job, work, on_failure)
         return job.snapshot()
 
@@ -352,10 +364,11 @@ class RunJobs:
         except Exception as exc:  # noqa: BLE001 - every failure must reach the client
             job.result = dict(on_failure(exc))
         finally:
-            job.finished_at = time.time()
-            job.monotonic_finished = self._monotonic()
-            job.state = "done"
-            self._persist(job)
+            with self._lock:
+                job.finished_at = time.time()
+                job.monotonic_finished = self._monotonic()
+                job.state = "done"
+                self._persist(job)
 
     def get(self, run_id: str) -> dict[str, Any]:
         with self._lock:

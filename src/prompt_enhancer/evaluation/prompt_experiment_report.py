@@ -67,7 +67,15 @@ def _classification_results(
             if not isinstance(result, Mapping):
                 continue
             sample_id = result.get("id")
-            if isinstance(sample_id, str) and sample_id.startswith("sample"):
+            if isinstance(sample_id, str):
+                previous = found.get(sample_id)
+                if previous is not None and (
+                    previous.get("classification") != result.get("classification")
+                    or previous.get("decision") != result.get("decision")
+                ):
+                    raise PromptExperimentReportError(
+                        f"conflicting classification for sample {sample_id!r}"
+                    )
                 found[sample_id] = result
     return found
 
@@ -281,7 +289,7 @@ def build_prompt_experiment_report(
     records: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, str, int]] = set()
     seen_sample_ids: set[str] = set()
-    original_prompts: set[str] = set()
+    variant_prompts: dict[str, set[str]] = {}
     for index, (answer_raw, metric_raw) in enumerate(
         zip(answers, metric_rows, strict=True)
     ):
@@ -314,8 +322,7 @@ def build_prompt_experiment_report(
         if sample_id in seen_sample_ids:
             raise PromptExperimentReportError(f"duplicate sample id {sample_id!r}")
         seen_sample_ids.add(sample_id)
-        if variant == original_variant:
-            original_prompts.add(variant_prompt)
+        variant_prompts.setdefault(variant, set()).add(variant_prompt)
         pair_key = (variant, model, sample_index)
         if pair_key in seen_pairs:
             raise PromptExperimentReportError(
@@ -360,12 +367,17 @@ def build_prompt_experiment_report(
         raise PromptExperimentReportError(
             "exactly two variants, including original, are required"
         )
-    if len(original_prompts) != 1:
-        raise PromptExperimentReportError(
-            "all original variant samples must use the same original prompt"
-        )
-    original_prompt = next(iter(original_prompts))
+    for variant, prompts in variant_prompts.items():
+        if len(prompts) != 1:
+            raise PromptExperimentReportError(
+                f"all {variant} variant samples must use the same {variant} prompt"
+            )
+    original_prompt = next(iter(variant_prompts[original_variant]))
     rewrite_variant = next(item for item in variants if item != original_variant)
+    if original_prompt.strip() == next(iter(variant_prompts[rewrite_variant])).strip():
+        raise PromptExperimentReportError(
+            "original and rewrite prompts must be distinct"
+        )
     by_key: dict[tuple[str, int], dict[str, dict[str, Any]]] = {}
     for item in records:
         key = (item["model"], item["sample_index"])

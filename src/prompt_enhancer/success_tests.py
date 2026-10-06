@@ -455,8 +455,8 @@ class SuccessTestCompiler:
         initial_log = getattr(self.gateway, "decision_log", ())
         before = len(initial_log) if isinstance(initial_log, Sequence) else 0
         screen_error: str | None = None
-        with self._operation_scope("screen"):
-            try:
+        try:
+            with self._operation_scope("screen"):
                 responses = (
                     list(
                         self.gateway.decide_batch(
@@ -466,9 +466,9 @@ class SuccessTestCompiler:
                     if requests
                     else []
                 )
-            except ProviderError as exc:
-                responses = []
-                screen_error = exc.kind or "provider_error"
+        except ProviderError as exc:
+            responses = []
+            screen_error = exc.kind or "provider_error"
         log = getattr(self.gateway, "decision_log", ())
         if log is initial_log and isinstance(log, Sequence):
             entries = list(log)[before:]
@@ -648,19 +648,19 @@ class SuccessTestCompiler:
         before_usage = self.gateway.usage_report()
         initial_log = getattr(self.gateway, "decision_log", ())
         before_log = len(initial_log) if isinstance(initial_log, Sequence) else 0
-        with self._operation_scope("relations"):
-            try:
+        try:
+            with self._operation_scope("relations"):
                 answers = list(
                     self.gateway.decide_batch(
                         requests, role="judge", run_id=self.run_id
                     )
                 )
                 error = None
-            except ProviderError as exc:
-                if exc.provider == "replay":
-                    raise
-                answers = []
-                error = exc.kind or "provider_error"
+        except ProviderError as exc:
+            if exc.provider == "replay":
+                raise
+            answers = []
+            error = exc.kind or "provider_error"
         log = getattr(self.gateway, "decision_log", ())
         entries = (
             list(log)[before_log:]

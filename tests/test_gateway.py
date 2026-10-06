@@ -1097,6 +1097,9 @@ def test_unresponsive_transport_workers_are_capped_across_gateway_calls():
                 future.result(timeout=5)
             assert error.value.kind == "timeout"
 
+        # Use a moving clock for the capacity wait; expired workers retain
+        # all eight slots and must not allow a ninth worker to start.
+        gateway._monotonic = time.monotonic
         with pytest.raises(ProviderError) as saturated:
             gateway.chat("model", "prompt")
         assert saturated.value.kind == "transport_busy"
@@ -1366,3 +1369,190 @@ def test_configured_jev_pin_is_sent_to_decisions_api():
     assert gateway.decide({"state": "prompt", "instructions": "judge"}) is True
     assert transport.requests[0]["json"]["model"] == pin
     assert gateway.decision_log[0]["answered_by"] == pin
+
+
+@pytest.mark.parametrize("phase", ["route", "transport"])
+def test_gateway_waits_for_transient_worker_capacity_within_deadline(phase):
+    acquired = threading.Event()
+    semaphore = threading.BoundedSemaphore(1)
+    assert semaphore.acquire(blocking=False)
+
+    class ObservedCapacity:
+        def acquire(self, *args, **kwargs):
+            acquired.set()
+            return semaphore.acquire(*args, **kwargs)
+
+        def release(self):
+            semaphore.release()
+
+    gateway = HttpGateway(
+        QueueTransport([Response(200, {"ok": True})]),
+        config=GatewayConfig(operation_timeout_s=2, max_retries=0),
+    )
+    gateway._transport_workers = ObservedCapacity()
+    if phase == "transport":
+        gateway._bounded_catalog_route = lambda factory, **kwargs: factory()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(gateway.chat, "model", "prompt")
+        assert acquired.wait(1)
+        semaphore.release()
+        assert future.result(timeout=2) == {"ok": True}
+
+
+def test_cancellation_while_waiting_for_worker_capacity_starts_no_request():
+    from prompt_enhancer.failures import RunCancelled
+
+    cancelled = threading.Event()
+    waiting = threading.Event()
+    semaphore = threading.BoundedSemaphore(1)
+    assert semaphore.acquire(blocking=False)
+
+    class ObservedCapacity:
+        def acquire(self, *args, **kwargs):
+            waiting.set()
+            return semaphore.acquire(*args, **kwargs)
+
+        def release(self):
+            semaphore.release()
+
+    transport = QueueTransport([Response(200, {})])
+    gateway = HttpGateway(transport, config=GatewayConfig(operation_timeout_s=2))
+    gateway._transport_workers = ObservedCapacity()
+
+    def call():
+        with gateway.operation_context(cancel_check=cancelled.is_set):
+            return gateway.chat("model", "prompt")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(call)
+        assert waiting.wait(1)
+        cancelled.set()
+        with pytest.raises(RunCancelled):
+            future.result(timeout=0.5)
+    assert transport.requests == []
+    semaphore.release()
+
+
+def test_completed_paid_response_is_accounted_before_cancellation():
+    from prompt_enhancer.failures import RunCancelled
+
+    cancelled = threading.Event()
+
+    class PaidResponse:
+        def request(self, _url, **_kwargs):
+            cancelled.set()
+            return Response(
+                200,
+                {
+                    "usage": {
+                        "prompt_tokens": 11,
+                        "completion_tokens": 7,
+                        "cost": 0.03,
+                    },
+                    "answer": "paid",
+                },
+            )
+
+    gateway = HttpGateway(PaidResponse())
+    with gateway.operation_context(cancel_check=cancelled.is_set):
+        with pytest.raises(RunCancelled):
+            gateway.chat("model", "prompt")
+    usage = gateway.usage_report()
+    assert usage["calls"] == 1
+    assert usage["tokens"]["total_tokens"] == 18
+    assert usage["total"] == 0.03
+
+
+def test_http_abort_interrupts_real_socket_body_read():
+    import socket
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    release_server = threading.Event()
+    reading = threading.Event()
+    finished = threading.Event()
+    errors = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "100")
+            self.end_headers()
+            self.wfile.write(b"{")
+            self.wfile.flush()
+            release_server.wait(5)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    serving = threading.Thread(target=server.serve_forever, daemon=True)
+    serving.start()
+    transport = HttpTransport()
+    read_body = transport._read_body
+
+    def observed_read(response, timeout):
+        reading.set()
+        return read_body(response, timeout)
+
+    transport._read_body = observed_read
+
+    def download():
+        try:
+            transport.request(
+                f"http://127.0.0.1:{server.server_port}/", timeout=4, request_id="body"
+            )
+        except (OSError, ValueError) as exc:
+            errors.append(type(exc).__name__)
+        finally:
+            finished.set()
+
+    worker = threading.Thread(target=download)
+    worker.start()
+    try:
+        assert reading.wait(2)
+        with transport._active_lock:
+            response = transport._active_responses["body"]
+            sock = response.fp.raw._sock
+        transport.abort_request("body")
+        assert finished.wait(0.5), "abort left the makefile body read blocked"
+    finally:
+        if not finished.is_set():
+            sock.shutdown(socket.SHUT_RDWR)
+        release_server.set()
+        worker.join(5)
+        server.shutdown()
+        server.server_close()
+        serving.join(2)
+    assert not worker.is_alive()
+
+
+def test_eight_way_panel_survives_one_lingering_worker_slot():
+    release = threading.Event()
+    seven_started = threading.Event()
+    lock = threading.Lock()
+    started = 0
+
+    class PanelTransport:
+        def request(self, _url, **_kwargs):
+            nonlocal started
+            with lock:
+                started += 1
+                if started == 7:
+                    seven_started.set()
+            assert release.wait(5)
+            return Response(200, {"ok": True})
+
+    gateway = HttpGateway(
+        PanelTransport(), config=GatewayConfig(operation_timeout_s=3, max_retries=0)
+    )
+    assert gateway._transport_workers.acquire(blocking=False)
+    with ThreadPoolExecutor(max_workers=8) as panel:
+        futures = [panel.submit(gateway.chat, "model", "prompt") for _ in range(8)]
+        try:
+            assert seven_started.wait(2)
+        finally:
+            gateway._transport_workers.release()
+            release.set()
+        assert [future.result(timeout=3) for future in futures] == [{"ok": True}] * 8
+    assert gateway.usage_report()["calls"] == 8

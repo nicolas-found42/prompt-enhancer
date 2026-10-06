@@ -3,6 +3,7 @@ import threading
 from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
@@ -590,3 +591,139 @@ def test_providers_endpoint_offers_fallback_models() -> None:
 
     assert body["providers"] == {}
     assert body["fallback"]["writer"] and body["fallback"]["strong"]
+
+
+def test_stale_cancel_cannot_persist_over_a_replacement_job(tmp_path):
+    store = RunStore(tmp_path / "replacement.sqlite")
+    jobs = RunJobs(store=store)
+    first_entered = threading.Event()
+    first_release = threading.Event()
+    stale_entered = threading.Event()
+    stale_release = threading.Event()
+    replacement_entered = threading.Event()
+    replacement_release = threading.Event()
+    persist = jobs._persist
+
+    def hold_old_cancel(job, **kwargs):
+        if threading.current_thread().name == "held-cancel":
+            stale_entered.set()
+            assert stale_release.wait(5)
+        return persist(job, **kwargs)
+
+    jobs._persist = hold_old_cancel
+
+    def first(_progress, _cancel, _observe):
+        first_entered.set()
+        assert first_release.wait(5)
+        return {"status": "completed"}
+
+    def replacement(_progress, _cancel, observe):
+        observe({"event": "start", "operation": "replacement"})
+        replacement_entered.set()
+        assert replacement_release.wait(5)
+        return {"status": "completed"}
+
+    jobs.submit("same-run", "optimize", first, lambda exc: {})
+    canceller = threading.Thread(
+        target=lambda: jobs.cancel("same-run"), name="held-cancel"
+    )
+    try:
+        assert first_entered.wait(5)
+        canceller.start()
+        assert stale_entered.wait(5)
+        first_release.set()
+        jobs.wait("same-run")
+        jobs.submit("same-run", "continue", replacement, lambda exc: {})
+        assert replacement_entered.wait(5)
+        stale_release.set()
+        canceller.join(5)
+        assert not canceller.is_alive()
+        saved = store.get_run("same-run")["job"]
+        assert saved["kind"] == "continue"
+        assert saved["state"] == "running"
+        assert saved["cancel_requested"] is False
+        assert saved["operation"]["operation"] == "replacement"
+    finally:
+        first_release.set()
+        stale_release.set()
+        replacement_release.set()
+        canceller.join(5)
+        jobs._executor.shutdown(wait=True)
+        store.close()
+
+
+@pytest.mark.parametrize("kind", ["resume", "skip", "continue", "optimize"])
+@pytest.mark.parametrize("status", ["paused", "completed"])
+def test_restart_preserves_saved_canonical_result(tmp_path, kind, status):
+    from prompt_enhancer.optimizer import PAUSED_REPORT_STATUS, RESUME_CONTEXT_KEY
+
+    store = RunStore(tmp_path / "canonical.sqlite")
+    result = {
+        "status": status,
+        "final_prompt": "Accepted changed prompt.",
+        "report": {
+            "status": PAUSED_REPORT_STATUS if status == "paused" else "completed"
+        },
+    }
+    context = {"round": 2}
+    store.save_run(
+        {
+            "run_id": "canonical",
+            "prompt": "Original.",
+            "result": result,
+            "timing": {"finished_at": "saved-time"},
+            RESUME_CONTEXT_KEY: context,
+            "job": {"state": "running", "kind": kind},
+        }
+    )
+    jobs = RunJobs(store=store)
+    try:
+        assert jobs.get("canonical")["state"] == "interrupted"
+        assert jobs.get("canonical")["result"] == result
+        saved = store.get_run("canonical")
+        assert saved["result"] == result
+        assert saved["timing"]["finished_at"] == "saved-time"
+        assert saved[RESUME_CONTEXT_KEY] == context
+        if status == "paused":
+            optimizer = PromptOptimizer(store=store, gateway=ScriptedGateway())
+            assert optimizer._paused_record("canonical")[1:] == (result, context)
+    finally:
+        jobs._executor.shutdown(wait=True)
+        store.close()
+
+
+def test_cancelled_api_job_persists_completed_provider_spend(tmp_path):
+    entered = threading.Event()
+    release = threading.Event()
+
+    class PaidTransport:
+        def request(self, _url, **_kwargs):
+            entered.set()
+            assert release.wait(5)
+            return {
+                "status_code": 200,
+                "json": {
+                    "usage": {"prompt_tokens": 11, "completion_tokens": 7, "cost": 0.03}
+                },
+            }
+
+    gateway = HttpGateway(PaidTransport(), config=GatewayConfig(max_retries=0))
+    store = RunStore(tmp_path / "paid.sqlite")
+    app = create_app(optimizer=PromptOptimizer(store=store, gateway=gateway))
+    client = TestClient(app)
+    run_id = client.post(
+        "/api/jobs/optimize", json={"prompt": "Explain a seed."}
+    ).json()["run_id"]
+    try:
+        assert entered.wait(5)
+        client.post(f"/api/jobs/{run_id}/cancel")
+        release.set()
+        result = app.state.jobs.wait(run_id)["result"]
+        assert result["report"]["status"] == "cancelled"
+        assert result["cost"]["total"] == 0.03
+        assert store.get_run(run_id)["cost"]["total"] == 0.03
+        assert RunHistory(store).get_run(run_id)["cost"]["total"] == 0.03
+    finally:
+        release.set()
+        app.state.jobs._executor.shutdown(wait=True)
+        store.close()

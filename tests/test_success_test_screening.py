@@ -381,3 +381,68 @@ def test_fenced_success_test_replies_keep_final_delimiter_repair(missing: int) -
     assert [test.question for test in compiled.tests] == [
         "Does the summary run to two sentences?"
     ]
+
+
+@pytest.mark.parametrize("phase", ["screen", "relations"])
+def test_handled_provider_failure_emits_error_for_the_success_test_substage(phase):
+    from prompt_enhancer.gateway import HttpGateway, ProviderError
+
+    events = []
+    telemetry = HttpGateway()
+
+    def decide(request, **_kwargs):
+        is_relation = request["key"].startswith("success-test-set:")
+        if is_relation == (phase == "relations"):
+            raise ProviderError("openrouter", "jev", None, kind="unavailable")
+        return {
+            "type": "noul",
+            "noul": 0.01 if request["key"].endswith("evaluator_instructions") else 0.99,
+            "confidence": 0.99,
+        }
+
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "tests": [
+                                    {
+                                        "question": "Is the first requested fact included?",
+                                        "kind": "noul",
+                                        "expected": "yes",
+                                    },
+                                    {
+                                        "question": "Is the second requested fact included?",
+                                        "kind": "noul",
+                                        "expected": "yes",
+                                    },
+                                ]
+                            }
+                        )
+                    }
+                }
+            ]
+        },
+        decision=decide,
+    )
+    gateway.operation_context = telemetry.operation_context
+    with telemetry.operation_context(observer=events.append):
+        compiled = SuccessTestCompiler(gateway, observe_set_relations=True).compile(
+            "Explain both facts."
+        )
+    substage = f"success_tests.{phase}"
+    terminal = [
+        event
+        for event in events
+        if event.get("operation") == substage and event["event"] != "start"
+    ]
+    assert len(terminal) == 1
+    assert terminal[0]["event"] == "error"
+    assert terminal[0]["error_kind"] == "ProviderError"
+    if phase == "screen":
+        assert compiled.tests == ()
+    else:
+        assert len(compiled.tests) == 2
+        assert compiled.set_relation_observation["error"] == "unavailable"
