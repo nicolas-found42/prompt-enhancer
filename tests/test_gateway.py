@@ -1402,6 +1402,7 @@ def test_gateway_waits_for_transient_worker_capacity_within_deadline(phase):
 def test_cancellation_while_waiting_for_worker_capacity_starts_no_request():
     from prompt_enhancer.failures import RunCancelled
 
+    events = []
     cancelled = threading.Event()
     waiting = threading.Event()
     semaphore = threading.BoundedSemaphore(1)
@@ -1420,7 +1421,9 @@ def test_cancellation_while_waiting_for_worker_capacity_starts_no_request():
     gateway._transport_workers = ObservedCapacity()
 
     def call():
-        with gateway.operation_context(cancel_check=cancelled.is_set):
+        with gateway.operation_context(
+            cancel_check=cancelled.is_set, observer=events.append
+        ):
             return gateway.chat("model", "prompt")
 
     with ThreadPoolExecutor(max_workers=1) as pool:
@@ -1430,6 +1433,9 @@ def test_cancellation_while_waiting_for_worker_capacity_starts_no_request():
         with pytest.raises(RunCancelled):
             future.result(timeout=0.5)
     assert transport.requests == []
+    routing = [event for event in events if event.get("operation") == "route_model"]
+    assert [event["event"] for event in routing] == ["start", "error"]
+    assert routing[-1]["error_kind"] == "cancelled"
     semaphore.release()
 
 

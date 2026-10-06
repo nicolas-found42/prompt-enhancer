@@ -727,3 +727,51 @@ def test_cancelled_api_job_persists_completed_provider_spend(tmp_path):
         release.set()
         app.state.jobs._executor.shutdown(wait=True)
         store.close()
+
+
+@pytest.mark.parametrize("operation", ["get", "active", "cancel"])
+def test_job_status_and_cancel_signal_do_not_wait_for_sqlite_io(tmp_path, operation):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store = RunStore(tmp_path / "slow-io.sqlite")
+    jobs = RunJobs(store=store)
+    writing = threading.Event()
+    release_write = threading.Event()
+    save = store.save_run
+
+    def slow_operation_write(record):
+        if (record.get("job", {}).get("operation") or {}).get(
+            "operation"
+        ) == "held-write" and not writing.is_set():
+            writing.set()
+            assert release_write.wait(5)
+        return save(record)
+
+    store.save_run = slow_operation_write
+
+    def work(_progress, cancel_check, observe):
+        observe({"event": "start", "operation": "held-write"})
+        if cancel_check():
+            raise RunCancelled("slow")
+        return {"status": "completed"}
+
+    jobs.submit("slow", "optimize", work, lambda exc: {"status": "cancelled"})
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        assert writing.wait(2)
+        if operation == "cancel":
+            future = pool.submit(jobs.cancel, "slow")
+            # The cancellation response may await its durable write, but the
+            # provider-facing signal must not wait for unrelated SQLite I/O.
+            assert jobs._jobs["slow"].cancel.wait(0.5)
+        elif operation == "get":
+            future = pool.submit(jobs.get, "slow")
+            assert future.result(timeout=0.5)["state"] == "running"
+        else:
+            future = pool.submit(jobs.active)
+            assert future.result(timeout=0.5)[0]["run_id"] == "slow"
+    finally:
+        release_write.set()
+        pool.shutdown(wait=True)
+        jobs._executor.shutdown(wait=True)
+        store.close()

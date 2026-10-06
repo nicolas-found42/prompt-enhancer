@@ -1006,7 +1006,25 @@ class HttpGateway:
         finished = threading.Event()
         result: list[Any] = []
         started = self._monotonic()
-        if not self._acquire_worker(deadline, run_id):
+        try:
+            acquired = self._acquire_worker(deadline, run_id)
+        except BaseException as exc:
+            from .failures import RunCancelled
+
+            self._emit_operation(
+                {
+                    "event": "error",
+                    "operation": "route_model",
+                    "role": role,
+                    "run_id": run_id,
+                    "elapsed_ms": max(0, round((self._monotonic() - started) * 1000)),
+                    "error_kind": "cancelled"
+                    if isinstance(exc, RunCancelled)
+                    else type(exc).__name__,
+                }
+            )
+            raise
+        if not acquired:
             self._emit_operation(
                 {
                     "event": "error",

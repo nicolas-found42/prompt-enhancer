@@ -109,7 +109,8 @@ class RunJobs:
             max_workers=1, thread_name_prefix="prompt-run"
         )
         self._jobs: OrderedDict[str, _Job] = OrderedDict()
-        self._lock = threading.RLock()
+        self._lock = threading.Lock()
+        self._persistence_lock = threading.RLock()
         self._keep = keep
         self._store = store
         self._monotonic = monotonic
@@ -175,8 +176,10 @@ class RunJobs:
 
         # Ownership and the write are one critical section: an older job may
         # still finish a cancellation callback after a continuation replaced it.
-        with self._lock:
-            if self._jobs.get(job.run_id) is job:
+        with self._persistence_lock:
+            with self._lock:
+                owns_record = self._jobs.get(job.run_id) is job
+            if owns_record:
                 self._store.update_run(job.run_id, update)
 
     def _recover(self) -> None:
@@ -295,27 +298,28 @@ class RunJobs:
         prompt: str = "",
         options: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        with self._lock:
-            existing = self._jobs.get(run_id)
-            if existing is not None and existing.state in {"queued", "running"}:
-                raise JobBusy(run_id)
-            now = self._monotonic()
-            job = _Job(
-                run_id,
-                kind,
-                prompt,
-                started_at=time.time(),
-                monotonic_started=now,
-                options=dict(options or {}),
-                _monotonic=self._monotonic,
-            )
-            self._jobs[run_id] = job
-            self._jobs.move_to_end(run_id)
-            while len(self._jobs) > self._keep:
-                oldest = next(iter(self._jobs))
-                if self._jobs[oldest].state in {"queued", "running"}:
-                    break
-                self._jobs.pop(oldest)
+        with self._persistence_lock:
+            with self._lock:
+                existing = self._jobs.get(run_id)
+                if existing is not None and existing.state in {"queued", "running"}:
+                    raise JobBusy(run_id)
+                now = self._monotonic()
+                job = _Job(
+                    run_id,
+                    kind,
+                    prompt,
+                    started_at=time.time(),
+                    monotonic_started=now,
+                    options=dict(options or {}),
+                    _monotonic=self._monotonic,
+                )
+                self._jobs[run_id] = job
+                self._jobs.move_to_end(run_id)
+                while len(self._jobs) > self._keep:
+                    oldest = next(iter(self._jobs))
+                    if self._jobs[oldest].state in {"queued", "running"}:
+                        break
+                    self._jobs.pop(oldest)
             self._persist(job)
         self._executor.submit(self._run, job, work, on_failure)
         return job.snapshot()
@@ -364,10 +368,11 @@ class RunJobs:
         except Exception as exc:  # noqa: BLE001 - every failure must reach the client
             job.result = dict(on_failure(exc))
         finally:
-            with self._lock:
-                job.finished_at = time.time()
-                job.monotonic_finished = self._monotonic()
-                job.state = "done"
+            with self._persistence_lock:
+                with self._lock:
+                    job.finished_at = time.time()
+                    job.monotonic_finished = self._monotonic()
+                    job.state = "done"
                 self._persist(job)
 
     def get(self, run_id: str) -> dict[str, Any]:
