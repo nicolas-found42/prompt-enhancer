@@ -1,12 +1,13 @@
 import userEvent from "@testing-library/user-event";
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getActiveJobs,
   getCatalog,
@@ -91,6 +92,10 @@ beforeEach(() => {
   vi.mocked(getCatalog).mockResolvedValue(catalog);
   vi.mocked(getProviders).mockResolvedValue(providers);
   vi.mocked(getSettings).mockResolvedValue(settings);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 async function warningBanner() {
@@ -515,17 +520,22 @@ describe("improvement style selector", () => {
       await screen.findByLabelText("Improvement style"),
       "shorter"
     );
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     await user.click(screen.getByRole("button", { name: "Optimize prompt" }));
 
-    await waitFor(() =>
-      expect(startOptimize).toHaveBeenCalledWith(
-        "Write a note to my neighbour.",
-        "shorter",
-        expect.anything(),
-        undefined
-      )
+    expect(startOptimize).toHaveBeenCalledWith(
+      "Write a note to my neighbour.",
+      "shorter",
+      expect.anything(),
+      undefined
     );
-    const retry = await screen.findByRole("button", { name: "Try again" });
+    expect(
+      screen.queryByRole("button", { name: "Try again" })
+    ).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    const retry = screen.getByRole("button", { name: "Try again" });
     await user.selectOptions(
       screen.getByLabelText("Improvement style"),
       "creative"
@@ -534,7 +544,7 @@ describe("improvement style selector", () => {
 
     await user.click(retry);
 
-    await waitFor(() => expect(startOptimize).toHaveBeenCalledTimes(2));
+    expect(startOptimize).toHaveBeenCalledTimes(2);
     expect(startOptimize).toHaveBeenNthCalledWith(
       2,
       "Write a note to my neighbour.",

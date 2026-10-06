@@ -51,7 +51,15 @@ jobs:
         env:
           # Push runs on main after a PR merges; the guard is for local commits.
           SKIP: no-commit-to-branch
-        run: uv run --locked pre-commit run --all-files
+        run: uv run --locked python scripts/run_validation.py --output .local/validation/ci
+      - name: Preserve validation receipts and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: validation-${{ github.sha }}
+          path: .local/validation/ci/
+          include-hidden-files: true
+          if-no-files-found: ignore
       - name: Test optional CatBoost training path
         run: uv run --locked --extra training pytest -q tests/test_failure_prediction.py
       - name: Audit Python dependencies
