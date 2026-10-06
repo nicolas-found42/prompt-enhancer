@@ -178,13 +178,17 @@ def create_app(
             return dict(app_optimizer.failure_result(run_id, job_prompt, exc))
 
         try:
+            saved = app_optimizer.store.get_run(run_id)
+            configuration = app_optimizer.run_configuration(
+                options if options is not None else (saved or {}).get("options", {})
+            )
             return jobs.submit(
                 run_id,
                 kind,
                 cancellation_aware,
                 on_failure,
                 prompt=job_prompt,
-                options=options,
+                options={**dict(options or {}), "configuration": configuration},
             )
         except JobBusy as exc:
             raise HTTPException(
@@ -409,6 +413,11 @@ def create_app(
     def get_settings() -> dict[str, Any]:
         return {
             **app_optimizer.get_model_settings(),
+            "gateway_limits": {
+                key: value
+                for key, value in app_optimizer.run_configuration().items()
+                if key != "models"
+            },
             "live_health": health_service.settings(),
         }
 

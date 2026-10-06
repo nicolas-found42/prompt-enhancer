@@ -7,6 +7,7 @@ from pathlib import Path
 
 import yaml
 from run_codeql import summarize
+from validation.bundles import partition
 from validation.receipts import commit, digest, git, snapshot, write_json
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,6 +84,18 @@ def main() -> int:
     parser.add_argument("--receipt", type=Path, action="append", required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--max-bytes", type=int, default=200_000)
+    parser.add_argument(
+        "--partition",
+        action="store_true",
+        help="Plan full per-file reviews and lossless evidence verification chunks",
+    )
+    parser.add_argument("--context-tokens", type=int, default=32_000)
+    parser.add_argument("--reserve-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--dependencies",
+        type=Path,
+        help="JSON mapping changed paths to committed helper/contract/test paths",
+    )
     args = parser.parse_args()
     try:
         if args.output.exists():
@@ -92,7 +105,7 @@ def main() -> int:
         repo = args.repo.resolve()
         base, head = commit(repo, args.base), commit(repo, args.head)
         patch = git(repo, "diff", "--no-ext-diff", "--no-textconv", base, head).decode()
-        if len(patch) > 50_000:
+        if len(patch) > 50_000 and not args.partition:
             raise ValueError(
                 "patch exceeds Jev whole-change input limit; use per-file review"
             )
@@ -114,7 +127,57 @@ def main() -> int:
             "diff": patch,
             "evidence": evidence,
         }
-        if len(json.dumps(bundle).encode()) > args.max_bytes:
+        if args.partition:
+            paths = (
+                git(repo, "diff", "--name-only", "-z", base, head).decode().split("\0")
+            )
+            patches = [
+                {
+                    "path": path,
+                    "diff": git(
+                        repo,
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        base,
+                        head,
+                        "--",
+                        path,
+                    ).decode(),
+                }
+                for path in paths
+                if path
+            ]
+            requested = (
+                json.loads(args.dependencies.read_text()) if args.dependencies else {}
+            )
+            if not isinstance(requested, dict) or set(requested) - {
+                p["path"] for p in patches
+            }:
+                raise ValueError(
+                    "Dependencies must map changed paths to committed source paths"
+                )
+            dependencies = {}
+            for path, names in requested.items():
+                if not isinstance(names, list) or any(
+                    not isinstance(name, str)
+                    or name.startswith("/")
+                    or ".." in Path(name).parts
+                    for name in names
+                ):
+                    raise ValueError("Invalid dependency source paths")
+                dependencies[path] = [
+                    {"id": name, "text": git(repo, "show", f"{head}:{name}").decode()}
+                    for name in names
+                ]
+            bundle["plan"] = partition(
+                patches,
+                evidence[1:],
+                context_tokens=args.context_tokens,
+                reserve_tokens=args.reserve_tokens,
+                dependencies=dependencies,
+            )
+        elif len(json.dumps(bundle).encode()) > args.max_bytes:
             raise ValueError(
                 "evidence exceeds --max-bytes; select fewer receipts or raise explicitly"
             )

@@ -15,6 +15,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: quality-tooling
+        name: Required check dependencies are available
+        entry: uv run --locked python scripts/bootstrap.py --check
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: actionlint
         name: actionlint (workflow files)
         entry: actionlint

@@ -6,7 +6,8 @@ versions when deciding which checks apply.
 
 ## Local checks and commit hooks
 
-1. Follow the [README setup instructions](../../README.md#check-the-implementation)
+1. Run `python3 scripts/bootstrap.py` to install the locked local check dependencies
+   and the effective Git hook. Follow the [README setup instructions](../../README.md#check-the-implementation)
    for Python, Node, dependencies, Playwright, actionlint, and Gitleaks. On branches
    containing Jev tooling, install its pinned dependencies with
    `npm ci --prefix tools/quality --ignore-scripts` so its offline integration test
@@ -23,6 +24,10 @@ versions when deciding which checks apply.
    unstaged implementation separately. Reuse successful results for unchanged
    scope instead of repeating the same suite. When a fixer edits files, inspect
    the edits, stage the intended changes, and rerun affected checks.
+   The `quality-tooling` hook checks required dependencies before expensive tests;
+   the receipt runner rejects a missing pinned quality CLI before running hooks.
+   Use `scripts/validation_status.py <receipt.json>` to inspect liveness when a
+   run was interrupted or inherited through a handoff.
 4. For documentation-only work, verify content and links; the installed commit
    hook still runs its configured checks. Validation does not itself authorize
    creating a commit when the task is meant to leave changes uncommitted.

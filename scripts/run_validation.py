@@ -6,6 +6,7 @@ import shlex
 from pathlib import Path
 
 import yaml
+from bootstrap import require_quality_tools
 from validation.receipts import Receipt, commit, worktree_digest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,7 @@ def main() -> int:
         sha=commit(repo, "HEAD"),
     )
     try:
+        require_quality_tools(repo)
         config = yaml.safe_load((repo / ".pre-commit-config.yaml").read_text())
         hooks = [hook["id"] for source in config["repos"] for hook in source["hooks"]]
         if not hooks or len(set(hooks)) != len(hooks):
@@ -70,6 +72,9 @@ def main() -> int:
         receipt.finish()
         print(f"Validation completed. Receipt: {receipt.path}")
         return 0
+    except KeyboardInterrupt:
+        print(f"Validation interrupted. Receipt: {receipt.path}")
+        return 130
     except (OSError, ValueError, RuntimeError, KeyError, TypeError) as exc:
         receipt.fail(exc)
         print(f"Validation failed: {exc}")
