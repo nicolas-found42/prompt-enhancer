@@ -334,6 +334,7 @@ def check_candidate_fidelity(
     support_prompt: str | None = None,
     preservation_proof: Mapping[str, Any] | None = None,
     legacy_protocol: bool = False,
+    legacy_evidence: bool = False,
     candidate_id: str | None = None,
     round_number: int | None = None,
     applied_style: str | None = None,
@@ -541,6 +542,11 @@ def check_candidate_fidelity(
         zip((str(request["key"]) for request in requests), raw_answers, strict=True)
     )
     no_invention = True
+    permitted_support = {"supported_by_original"}
+    if confirmed_assumptions:
+        permitted_support.add("supported_by_assumption")
+    if authorization:
+        permitted_support.add("authorized_style_presentation")
     for key, edit in support_edit_by_key.items():
         sentence = next(
             item
@@ -560,18 +566,13 @@ def check_candidate_fidelity(
                 probability = probabilities.get(selected, 0.0)
         except JevResponseError:
             decision = None
+        support_probability = (
+            probability
+            if legacy_evidence
+            else sum(probabilities.get(category, 0.0) for category in permitted_support)
+        )
         accepted = bool(
-            selected
-            in {
-                "supported_by_original",
-                "supported_by_assumption",
-                "authorized_style_presentation",
-            }
-            and probability >= FIDELITY_THRESHOLD
-            and not (
-                selected == "supported_by_assumption" and not confirmed_assumptions
-            )
-            and not (selected == "authorized_style_presentation" and not authorization)
+            selected in permitted_support and support_probability >= FIDELITY_THRESHOLD
         )
         support = {
             "change_id": edit["change_id"],
@@ -581,6 +582,14 @@ def check_candidate_fidelity(
             "source_gap": edit["source_gap"],
             "selected": selected,
             "probability": probability,
+            **(
+                {
+                    "support_probability": support_probability,
+                    "permitted_support_categories": sorted(permitted_support),
+                }
+                if not legacy_evidence
+                else {}
+            ),
             "confidence": confidence,
             "probabilities": probabilities,
             "accepted": accepted,
@@ -599,8 +608,12 @@ def check_candidate_fidelity(
             "authorized_style_presentation",
         }:
             support["reason"] = "malformed or missing support answer"
-        elif probability < FIDELITY_THRESHOLD:
-            support["reason"] = "supported option probability below 0.80"
+        elif support_probability < FIDELITY_THRESHOLD:
+            support["reason"] = (
+                "supported option probability below 0.80"
+                if legacy_evidence
+                else "permitted support probability below 0.80"
+            )
         evidence["sentence_support"].append(support)
         if not accepted:
             no_invention = False

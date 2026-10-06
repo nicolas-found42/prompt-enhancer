@@ -221,11 +221,13 @@ class ProviderError(RuntimeError):
         *,
         role: str | None = None,
         kind: str | None = None,
+        response_details: Mapping[str, Any] | None = None,
     ) -> None:
         self.provider = provider
         self.model = model
         self.status = status
         self.role = role
+        self.response_details = dict(response_details or {})
         # ``http`` has a status; ``network`` never reached a response; and
         # ``invalid_response`` means a reply arrived but could not be used.
         self.kind = kind or ("http" if status is not None else "network")
@@ -238,6 +240,11 @@ class ProviderError(RuntimeError):
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {"response_details": self.response_details}
+                if self.response_details
+                else {}
+            ),
             "provider": self.provider,
             "model": self.model,
             "http_status": self.status,
@@ -1406,6 +1413,14 @@ class HttpGateway:
                 "messages": list(messages),
                 **params,
             }
+            if (
+                decision.provider == "go"
+                and model.startswith("mimo-")
+                and role == "weak"
+            ):
+                # The weak panel evaluates visible answers. MiMo's default
+                # deep thinking can exhaust the operation deadline.
+                payload.setdefault("thinking", {"type": "disabled"})
             if decision.url.endswith("/messages"):
                 system = "\n".join(
                     str(message.get("content", ""))
@@ -1433,7 +1448,7 @@ class HttpGateway:
                     "input": list(messages),
                     "max_output_tokens": params.get(
                         "max_tokens",
-                        4096 if model.startswith("muse-spark-") else 1024,
+                        8192 if model.startswith("muse-spark-") else 1024,
                     ),
                 }
             self.calls.append(

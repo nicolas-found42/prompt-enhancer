@@ -187,6 +187,27 @@ Optional [Jev semantic review](docs/quality-review.md) checks changed code again
 comments, names, test claims, and explicit repository contracts. It runs separately
 from commit hooks, defaults to offline planning, and reports advisory findings.
 
+Runtime grading calibration can be loaded with
+`PROMPT_ENHANCER_CALIBRATION=/absolute/path/to/calibration-artifact.json`.
+The app uses that artifact's policy version and still requires an exact match
+for the question identity and answering Jev snapshot. Inconclusive grading
+remains unresolved when verification calibration is absent, incomplete or
+incompatible. Generate artifacts from labeled observations with the
+[offline calibration workflow](docs/evaluation-data.md#offline-per-question-jev-calibration);
+synthetic test policies are not production calibration.
+
+Current Round protocol 15 combines probability across permissible sentence
+support reasons, judges style on the resulting prompt, and omits grades when
+there are no success tests. Older protocols retain historical request hashes
+and report contracts for replay. Weak-panel generations have a default
+16,384-token output cap, configurable through
+`PROMPT_ENHANCER_WEAK_MAX_OUTPUT_TOKENS`. MiMo weak-panel calls disable deep
+thinking; writer and strong-check calls keep their provider behavior. Muse's
+direct Gateway default reserves 8,192 tokens. Empty and explicitly incomplete
+weak replies stop operationally with allowlisted finish/token metadata rather
+than contributing a prompt-quality score. Operation deadlines remain separate
+from output caps and Round-boundary run limits.
+
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
 [delegated-review follow-up](docs/delegated-evaluation-2026-09-23.md) state

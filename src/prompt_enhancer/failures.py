@@ -32,7 +32,13 @@ def describe_failure(exc: BaseException) -> dict[str, Any]:
         details = exc.to_dict()
         name = _PROVIDER_NAMES.get(exc.provider, exc.provider)
         role = (exc.role or "model").replace("_", " ")
-        if exc.kind == "invalid_response":
+        if exc.kind == "timeout":
+            headline = f"{exc.model} exceeded the model operation deadline"
+            hint = "The model request took too long to complete. Try again, or choose a faster model."
+        elif exc.kind in {"incomplete_response", "empty_response"}:
+            headline = f"The {role} model returned an incomplete or empty answer"
+            hint = f"{exc.model} did not produce a usable complete answer. Increase the output-token budget, or choose a different model."
+        elif exc.kind == "invalid_response":
             headline = f"The {role} model gave an unusable reply"
             hint = f"{exc.model} answered, but not in the format the optimizer needs. Try again, or choose a different {role} model in Model choices."
         elif exc.status in ACCESS_DENIED_STATUS and exc.provider == "go":

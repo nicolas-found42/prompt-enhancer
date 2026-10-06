@@ -163,6 +163,7 @@ def convergence_summary(
     floors: Mapping[str, float],
     *,
     gain: float | None = None,
+    first_round: bool = True,
 ) -> str:
     """Summarize measured convergence without claiming an unmeasured plateau."""
 
@@ -171,6 +172,11 @@ def convergence_summary(
         if gain is None
         else "every quality dimension met its floor and the measured gain was within the configured epsilon"
     )
+    if gain is None and not first_round:
+        evidence = (
+            "every quality dimension met its floor; the previous round "
+            "supplied no score vector for a gain comparison"
+        )
     if scores and floors:
         dimensions = ", ".join(
             f"{name} {scores.get(name, 0.0):.2f} (floor {floors.get(name, 0.0):.2f})"

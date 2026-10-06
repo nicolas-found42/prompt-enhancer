@@ -149,6 +149,7 @@ def score_candidate(
     run_id: str,
     candidate_id: str | None = None,
     round_number: int | None = None,
+    legacy_evidence: bool = False,
 ) -> ScoreVector:
     """Judge the five non-fidelity dimensions in one batch; fail closed.
 
@@ -171,7 +172,9 @@ def score_candidate(
     requests: list[dict[str, Any]] = []
     for dimension in JUDGED_DIMENSIONS:
         if dimension == "style_fit":
-            query = jev_questions.style_fit_question(applied_style, style_bundle)
+            query = jev_questions.style_fit_question(
+                applied_style, style_bundle, legacy_evidence=legacy_evidence
+            )
         else:
             query = jev_questions.SCORE_QUESTIONS[dimension]
         requests.append(

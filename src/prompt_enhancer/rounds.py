@@ -323,6 +323,38 @@ class RoundOutcome:
 
     def report(self) -> dict[str, Any]:
         report = self._report()
+        if self.plan.writer_instruction_version >= 15 and not self.tests:
+            # Internal selector placeholders keep historical ranking behavior;
+            # public evidence cannot turn absent tests into zero pass rates.
+            def absent_grades(value: Any) -> Any:
+                if isinstance(value, list):
+                    return [absent_grades(item) for item in value]
+                if not isinstance(value, dict):
+                    return value
+                return {
+                    key: None
+                    if key in {"grade", "winner_score", "original_score"}
+                    else (
+                        {
+                            **item,
+                            "worst_model_pass_rate": None,
+                            "mean_pass_rate": None,
+                            "sample_spread": None,
+                        }
+                        if key == "metrics" and isinstance(item, dict)
+                        else absent_grades(item)
+                    )
+                    for key, item in value.items()
+                }
+
+            report["candidates"] = absent_grades(report.get("candidates", []))
+            if "selection_evidence" in report:
+                report["selection_evidence"] = absent_grades(
+                    report["selection_evidence"]
+                )
+            per_model = report.get("per_model")
+            if isinstance(per_model, dict) and "ranking" in per_model:
+                per_model["ranking"] = absent_grades(per_model["ranking"])
         if self.writer_attempts is not None:
             report["writer_attempts"] = [dict(item) for item in self.writer_attempts]
         return report
@@ -545,6 +577,7 @@ def _ranking_candidate(
         applied_style=plan.applied_style,
         style_authorization=style_authorization_for(plan.applied_style),
         legacy_protocol=plan.writer_instruction_version < 4,
+        legacy_evidence=plan.writer_instruction_version < 15,
         candidate_id=candidate.candidate_id,
         round_number=plan.round_number,
     )
@@ -553,6 +586,7 @@ def _ranking_candidate(
         working_prompt,
         candidate.text,
         fidelity=fidelity,
+        legacy_evidence=plan.writer_instruction_version < 15,
         applied_style=plan.applied_style,
         style_bundle=_style_bundle(plan),
         floors=settings.score_floors,
@@ -891,6 +925,7 @@ def run_round(
         settings=settings,
         run_seed=plan.seed,
         run_id=plan.run_id,
+        validate_response=plan.writer_instruction_version >= 15,
     )
     stage("grading")
     grading_observation: dict[str, Any] = {}
@@ -962,6 +997,7 @@ def run_round(
         working_prompt,
         working_prompt,
         fidelity=FidelityResult(True, True, True, {"identity": True}),
+        legacy_evidence=plan.writer_instruction_version < 15,
         applied_style=plan.applied_style,
         style_bundle=_style_bundle(plan),
         floors=settings.score_floors,
@@ -1018,6 +1054,12 @@ def run_round(
         for item in (strong.to_dict().get("candidates", ()) if strong else ())
         if isinstance(item, Mapping)
     }
+    if plan.writer_instruction_version >= 15 and strong is not None:
+        strong_evidence["original"] = {
+            "model": strong.model,
+            "score": strong.original_score,
+            "source": "original_baseline",
+        }
     candidate_outputs: dict[str, list[dict[str, Any]]] = {}
     for output in panel.results:
         candidate_outputs.setdefault(output.candidate_id, []).append(output.to_dict())
@@ -1039,6 +1081,7 @@ def run_round(
         run_id=plan.run_id,
         round_number=plan.round_number,
         on_stage=stage,
+        legacy_evidence=plan.writer_instruction_version < 15,
     )
     final_candidates: list[RankingCandidate] = []
     for candidate in ranking_candidates:
@@ -1185,9 +1228,17 @@ def run_round(
         if ranking is not None
         else None
     )
+    prior_vector = plan.prior_vector
+    if (
+        plan.writer_instruction_version >= 15
+        and prior_vector is not None
+        and not prior_vector.get("scores")
+    ):
+        # An unmeasured rejected round is absent evidence, not a zero vector.
+        prior_vector = None
     decision = convergence_decision(
         vector,
-        previous_vector=plan.prior_vector,
+        previous_vector=prior_vector,
         epsilon=settings.convergence_epsilon,
     )
     convergence = decision.to_dict()
@@ -1200,7 +1251,10 @@ def run_round(
     if decision.converged:
         status = CONVERGED_STATUS
         summary = convergence_summary(
-            decision.scores, decision.floors, gain=decision.gain
+            decision.scores,
+            decision.floors,
+            gain=decision.gain,
+            first_round=plan.writer_instruction_version < 15 or plan.round_number == 1,
         )
         reported_failure = None
     return RoundOutcome(

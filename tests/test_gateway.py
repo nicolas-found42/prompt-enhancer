@@ -190,7 +190,27 @@ def test_muse_reserves_room_for_reasoning_before_visible_output():
 
     gateway.chat("muse-spark-1.3-contributor", "Return OK", role="weak")
 
-    assert transport.requests[0]["json"]["max_output_tokens"] == 4096
+    assert transport.requests[0]["json"]["max_output_tokens"] == 8192
+
+
+@pytest.mark.parametrize(
+    "role,params,thinking",
+    [
+        ("weak", {}, {"type": "disabled"}),
+        ("writer", {}, None),
+        ("strong", {}, None),
+        ("weak", {"thinking": {"type": "enabled"}}, {"type": "enabled"}),
+    ],
+)
+def test_mimo_weak_panel_disables_thinking_without_overriding_explicit_params(
+    role, params, thinking
+):
+    transport = QueueTransport(
+        [Response(200, {"choices": [{"message": {"content": "OK"}}]})]
+    )
+    gateway = HttpGateway(transport, catalog=StaticModelCatalog(["mimo-v2.6-flash"]))
+    gateway.chat("mimo-v2.6-flash", "Return OK", role=role, **params)
+    assert transport.requests[0]["json"].get("thinking") == thinking
 
 
 def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():

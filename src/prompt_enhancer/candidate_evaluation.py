@@ -359,6 +359,7 @@ def evaluate_candidate_packages(
     round_number: int,
     on_stage: Callable[[str], None] | None = None,
     style_authorization: Mapping[str, Any] | None = None,
+    legacy_evidence: bool = False,
 ) -> CandidateEvaluation:
     """Rerank and fully evaluate already-eligible candidate packages.
 
@@ -499,7 +500,8 @@ def evaluate_candidate_packages(
                     "score_vector": candidate.metadata.get("score_vector"),
                     "success_test_grade": (
                         candidate.grade.to_dict()
-                        if candidate.grade is not None
+                        if (success_tests or legacy_evidence)
+                        and candidate.grade is not None
                         else None
                     ),
                 },
@@ -564,12 +566,19 @@ def evaluate_candidate_packages(
                 dict(item) for item in candidate_outputs.get(candidate_id, ())
             ],
             "success_test_grade": (
-                candidate.grade.to_dict() if candidate.grade is not None else None
+                candidate.grade.to_dict()
+                if (success_tests or legacy_evidence) and candidate.grade is not None
+                else None
             ),
         }
         rerank = evidence["rerank"]
         if rerank.get("usable"):
             order[candidate_id] = float(rerank["probability"])
+        accept_evidence = deepcopy(evidence)
+        if not success_tests and not legacy_evidence:
+            # Keep raw answers in diagnostic evidence, but do not introduce
+            # an implicit downstream grader without accepted success tests.
+            accept_evidence["success_test_outputs"] = []
         gate_requests.append(
             _request(
                 key=f"evaluate:accept:{round_number}:{_token(candidate_id)}",
@@ -584,6 +593,21 @@ def evaluate_candidate_packages(
                     "exist, preserve downstream_verification as unverified; do "
                     "not invent a pass or reject solely for missing tests. "
                     "Otherwise reject it."
+                    if legacy_evidence
+                    else (
+                        "Should this prompt be accepted for the original task? Check "
+                        "all stated constraints, requested presentation style, fidelity "
+                        "and score-vector floors. Use the supplied success tests, grades, "
+                        "and weak outputs when tests exist. Use comparison and review "
+                        "judgments, and verification/audit judgments only when those "
+                        "checks are applicable. Empty verification/audit mappings mean "
+                        "no applicable checks, not failures. An unchanged original may "
+                        "be accepted without a rewrite, strategy application, added "
+                        "structure, or measured improvement. Strategy names are "
+                        "suggestions, not acceptance criteria. No-tests downstream "
+                        "verification must stay unverified and is neutral. Reject "
+                        "substantive failures or insufficient applicable evidence."
+                    )
                 ),
                 state={
                     "candidate_id": candidate_id,
@@ -600,7 +624,7 @@ def evaluate_candidate_packages(
                         else {}
                     ),
                     "style_bundle": list(style_bundle),
-                    "complete_candidate_evidence": deepcopy(evidence),
+                    "complete_candidate_evidence": accept_evidence,
                 },
             )
         )
