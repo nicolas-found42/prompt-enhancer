@@ -32,6 +32,19 @@ must match the reviewed committed snapshot. Changed source requires a new run.
 Only CI's existing `SKIP=no-commit-to-branch` exception is supported; skipping
 other checks cannot produce a final validation receipt.
 
+Receipts include runner PID/start identity, host, child process identity and a
+heartbeat updated while waiting for a check. SIGINT/SIGTERM stop the child process
+group and retain an `interrupted` receipt. A hard kill cannot update the file;
+inspect it without rewriting the original evidence:
+
+```sh
+uv run --locked python scripts/validation_status.py .local/validation/final-1/receipt.json
+```
+
+The inspector distinguishes active, unresponsive, abandoned and terminal states.
+Legacy receipts and receipts from another host have unknown liveness. Liveness
+does not establish success; only a complete matching receipt is final evidence.
+
 ## Local CodeQL
 
 Install the [CodeQL bundle](https://docs.github.com/en/code-security/codeql-cli/getting-started-with-the-codeql-cli/setting-up-the-codeql-cli)
@@ -82,3 +95,19 @@ never truncates evidence: a patch over 50,000 characters or a bundle exceeding
 `--max-bytes` (200,000 by default) fails explicitly. Select only
 relevant receipts or raise the limit deliberately. It checks local consistency,
 not the authenticity of independently supplied receipt files.
+
+For larger changes, add `--partition --context-tokens 32000 --reserve-tokens 4096`.
+The plan separates complete per-file `patch_review` inputs from lossless
+`claim_verification` evidence chunks. Use `jev_review` for the former and
+`jev_verify` for the latter, or compose a bounded `jev_gate` with relevant tests.
+Coverage includes every changed path, patch hash, evidence hash and ordered chunk
+indices. Retain full receipts even when an individual verification chunk supports
+only a narrower claim. No bytes are silently omitted. A complete patch that does
+not fit fails explicitly. The conservative UTF-8 estimate is a planning bound,
+not a tokenizer; provider counts and operational failures remain authoritative.
+
+Supply `--dependencies dependencies.json` to include complete committed helpers,
+contracts and tests in relevant patch reviews. Its shape is
+`{"src/module.py": ["src/helper.py", "tests/test_module.py"]}`. Inspect this map
+for cross-file coverage before inference. Dependency evidence counts toward each
+patch's budget; it never causes source truncation.

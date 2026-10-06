@@ -558,6 +558,20 @@ class PromptOptimizer:
         except Exception:  # noqa: BLE001 - progress must never fail a run
             return 0.0
 
+    def _configuration(self, settings: Settings) -> dict[str, Any]:
+        gateway_config = getattr(self.gateway, "config", None)
+        return {
+            "models": settings.model_roles(),
+            "operation_timeout_s": getattr(gateway_config, "operation_timeout_s", None),
+            "request_timeout_s": getattr(gateway_config, "timeout", None),
+        }
+
+    def run_configuration(
+        self, options: Mapping[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Snapshot effective per-run roles and transport bounds without keys."""
+        return self._configuration(self._run_settings(options or {}))
+
     def optimize(
         self,
         prompt: str,
@@ -567,9 +581,28 @@ class PromptOptimizer:
         progress: ProgressCallback | None = None,
     ) -> OptimizeResult:
         supplied_options, run_settings, run_seed = self._prepare(prompt, options)
+        configuration = self._configuration(run_settings)
         run_id = run_id or new_run_id()
         started_perf = perf_counter()
         started_at = utc_now()
+        self.store.update_run(
+            run_id,
+            lambda previous: {
+                **(
+                    previous
+                    or {
+                        "run_id": run_id,
+                        "created_at": started_at,
+                        "prompt": prompt,
+                        "options": supplied_options,
+                        "result": {},
+                        "cost": {},
+                        "timing": {},
+                    }
+                ),
+                "configuration": configuration,
+            },
+        )
         self.gateway.new_run(run_id)
         self._run_log_start = len(self.gateway.decision_log)
 
@@ -592,7 +625,9 @@ class PromptOptimizer:
         )
         result["timing"]["started_at"] = started_at
         result["timing"]["finished_at"] = utc_now()
-        self._save_result(prompt, supplied_options, result, started_at)
+        self._save_result(
+            prompt, supplied_options, result, started_at, configuration=configuration
+        )
         return result
 
     def failure_result(
@@ -1773,6 +1808,8 @@ class PromptOptimizer:
         options: dict[str, Any],
         result: OptimizeResult,
         created_at: str,
+        *,
+        configuration: Mapping[str, Any] | None = None,
     ) -> None:
         resume_ctx = take_resume_context(cast(dict[str, Any], result))
         evidence = self._training_evidence(result)
@@ -1787,6 +1824,10 @@ class PromptOptimizer:
             "timing": result["timing"],
             **evidence,
         }
+        previous = self.store.get_run(result["run_id"])
+        configuration = configuration or (previous or {}).get("configuration")
+        if configuration is not None:
+            record["configuration"] = configuration
         if resume_ctx is not None:
             record[RESUME_CONTEXT_KEY] = resume_ctx
         self.store.save_run(record)

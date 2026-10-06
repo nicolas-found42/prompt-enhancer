@@ -113,9 +113,7 @@ Git hook. The hook also uses `actionlint` and `gitleaks` from your PATH
 (`brew install actionlint gitleaks` on macOS):
 
 ```sh
-uv sync --locked
-npm --prefix web ci
-uv run pre-commit install
+python3 scripts/bootstrap.py
 uv run pre-commit run --all-files
 ```
 
@@ -124,6 +122,27 @@ npm alias. The `typescript` alias points to `@typescript/typescript6` because
 `typescript-eslint` still needs the TypeScript 6 compiler API. This follows
 [TypeScript's side-by-side setup](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-60)
 and keeps `npm ci` compatible with the linter's peer dependencies.
+
+The bootstrap installs the locked Python, web and quality-review dependencies,
+Chromium and the effective Git hook. On macOS it installs missing actionlint and
+Gitleaks through an available Homebrew. `python3 scripts/bootstrap.py --check`
+verifies availability without installing anything. CI retains its pinned scanner
+installer. Optional training dependencies remain a separate profile.
+
+For an isolated diagnostic run, export the saved key-free model settings first:
+
+```sh
+uv run --locked python scripts/isolated_run.py --source-settings prompt_enhancer.settings.json --output .local/isolated/example
+```
+
+Preparation makes no model calls. With authorized live inference, add `--run
+--prompt 'Explain photosynthesis.'` and select the judge/operation/request/wall
+limits explicitly when comparing configurations. The launcher uses a fresh
+database, checks effective models and exported score floors before submission,
+and retains source/settings hashes, limits, final job and history. It inherits
+server-side credentials from the runtime environment and excludes credentials
+from provenance. New run records retain effective model/budget configuration;
+historical records without it still have unknown historical configuration.
 
 The commit hook checks file hygiene, GitHub Actions syntax, staged secrets,
 and `uv.lock`; lints and formats staged Python and web files; then checks

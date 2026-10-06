@@ -146,12 +146,18 @@ class RunJobs:
                     "%Y-%m-%dT%H:%M:%SZ", time.gmtime(job.started_at)
                 ),
                 "prompt": job.prompt,
-                "options": job.options,
+                "options": {
+                    key: value
+                    for key, value in job.options.items()
+                    if key != "configuration"
+                },
                 "result": {},
                 "cost": {},
                 "timing": {"started_at": job.started_at},
             }
             record["job"] = self._job_record(job)
+            if "configuration" in job.options:
+                record.setdefault("configuration", job.options["configuration"])
             saved_result = record.get("result")
             needs_result = (
                 not isinstance(saved_result, Mapping)
