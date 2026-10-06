@@ -385,6 +385,13 @@ class SuccessTestCompiler:
                 run_id=self.run_id,
                 round_number=self.round_number,
             )
+        relations: tuple[Mapping[str, Any], ...] = ()
+        relation_observation: Mapping[str, Any] = {}
+        relation_version = (
+            SUCCESS_TEST_SET_RELATION_VERSION if self.observe_set_relations else None
+        )
+        if self.observe_set_relations:
+            relations, relation_observation = self._observe_set_relations(prompt, ())
         if not proposed:
             return CompiledSuccessTests(
                 (),
@@ -393,6 +400,9 @@ class SuccessTestCompiler:
                 screening_version=SUCCESS_TEST_SCREEN_VERSION
                 if self.screen_protocol_version >= 2
                 else None,
+                set_relations=relations,
+                set_relation_observation=relation_observation,
+                set_relation_version=relation_version,
             )
 
         with self._operation_scope("repair_descriptions"):
@@ -418,6 +428,9 @@ class SuccessTestCompiler:
                 screening_version=SUCCESS_TEST_SCREEN_VERSION
                 if self.screen_protocol_version >= 2
                 else None,
+                set_relations=relations,
+                set_relation_observation=relation_observation,
+                set_relation_version=relation_version,
             )
 
         if self.screen_protocol_version == 1:
@@ -568,8 +581,6 @@ class SuccessTestCompiler:
                 before_usage, self.gateway.usage_report()
             ),
         }
-        relations: tuple[Mapping[str, Any], ...] = ()
-        relation_observation: Mapping[str, Any] = {}
         if self.observe_set_relations:
             relations, relation_observation = self._observe_set_relations(
                 prompt, accepted
@@ -582,11 +593,7 @@ class SuccessTestCompiler:
             screening_observation=observation,
             set_relations=relations,
             set_relation_observation=relation_observation,
-            set_relation_version=(
-                SUCCESS_TEST_SET_RELATION_VERSION
-                if self.observe_set_relations
-                else None
-            ),
+            set_relation_version=relation_version,
         )
 
     def _observe_set_relations(

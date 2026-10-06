@@ -43,6 +43,57 @@ def _choice(relation: str) -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize("observe_set_relations", [False, True])
+@pytest.mark.parametrize("incomplete_proposal", [False, True])
+def test_empty_proposals_report_relation_status_without_jev_requests(
+    observe_set_relations: bool, incomplete_proposal: bool
+) -> None:
+    tests = (
+        [
+            {
+                "question": "Which requested format does the answer use?",
+                "kind": "choice",
+                "expected": "json",
+                "options": ["json", "text"],
+            }
+        ]
+        if incomplete_proposal
+        else []
+    )
+    gateway = ScriptedGateway(
+        chat=lambda *_args, **_kwargs: {
+            "choices": [{"message": {"content": json.dumps({"tests": tests})}}]
+        },
+        decision=_screen_or_relation,
+    )
+
+    compiled = SuccessTestCompiler(
+        gateway, observe_set_relations=observe_set_relations
+    ).compile("Answer in JSON.")
+    report = compiled.as_dict()
+
+    assert compiled.tests == ()
+    assert gateway.decision_log == []
+    assert len(compiled.rejected) == int(incomplete_proposal)
+    if incomplete_proposal:
+        assert compiled.rejected[0].reason == "missing Choice descriptions"
+    if observe_set_relations:
+        assert report["set_relation_version"] == SUCCESS_TEST_SET_RELATION_VERSION
+        assert report["set_relations"] == []
+        assert report["set_relation_observation"] == {
+            "status": "not_applicable",
+            "accepted_tests": 0,
+            "compared_tests": 0,
+            "compared_pairs": 0,
+            "omitted_pairs": 0,
+            "gateway_batch_calls": 0,
+        }
+    else:
+        assert "set_relation_version" not in report
+        assert "set_relations" not in report
+        assert "set_relation_observation" not in report
+
+
 def _screen_or_relation(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
     key = request["key"]
     if key.startswith("success-test-set:"):
