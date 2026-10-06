@@ -133,6 +133,19 @@ All results remain visible, including contradicted candidates and uncertainty.
 There is no confidence-based automatic suppression or approval. Jev does not
 write explanations: the report retains the candidate's claim and raw judgments.
 
+## Completion evidence from validation receipts
+
+For an external Jev gate or claim-verification call, use the
+[final evidence builder](agents/validation-receipts.md#final-review-evidence).
+It checks source identity and artifact hashes, rejects reproduction or failed
+receipts, and includes the reviewed patch in both `diff` and `evidence`. The
+bundle is local JSON; building it does not invoke a model. Pass its `diff` to
+patch review and its `evidence` to claim verification. Reproduction logs remain
+separate from evidence that establishes final completion.
+
+The existing `lint`, `plan`, and `run` commands retain their committed-source
+selection and inference policy. Validation receipts supplement their reports.
+
 ## Reports, replay, and evaluation
 
 `--output .local/quality-review/name.json` selects an output file. The custom
