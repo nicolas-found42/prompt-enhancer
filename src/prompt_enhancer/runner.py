@@ -83,23 +83,23 @@ def _stable_seed(run_seed: int, candidate_id: str, model: str, sample: int) -> i
     return int.from_bytes(hashlib.sha256(material).digest()[:8], "big") & 0x7FFFFFFF
 
 
-def _output_text(value: Any) -> str:
+def _output_text(value: Any, *, strict: bool = False) -> str:
     if isinstance(value, str):
         return value
     if value is None:
         return ""
     if isinstance(value, Mapping):
         if isinstance(value.get("message"), Mapping):
-            return _output_text(value["message"])
+            return _output_text(value["message"], strict=strict)
         choices = value.get("choices")
         if choices:
-            return _output_text(choices[0])
+            return _output_text(choices[0], strict=strict)
         for key in ("output", "text", "content", "response", "completion"):
             if key in value and value[key] is not None:
-                return _output_text(value[key])
+                return _output_text(value[key], strict=strict)
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return _output_text(value[0]) if value else ""
-    return str(value)
+        return _output_text(value[0], strict=strict) if value else ""
+    return "" if strict else str(value)
 
 
 def _execute_one(
@@ -123,7 +123,7 @@ def _execute_one(
         temperature=WEAK_TEMPERATURE,
         **({"max_tokens": max_output_tokens} if max_output_tokens is not None else {}),
     )
-    output = _output_text(response)
+    output = _output_text(response, strict=validate_response)
     details: dict[str, Any] = {}
     if validate_response:
         details = _response_details(response, output)

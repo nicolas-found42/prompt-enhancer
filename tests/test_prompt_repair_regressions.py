@@ -217,6 +217,17 @@ def test_absent_success_tests_do_not_send_zero_grade_to_acceptance():
             {"choices": [{"finish_reason": "stop", "message": {"content": ""}}]},
             "empty_response",
         ),
+        (
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": None, "reasoning": "private"},
+                    }
+                ]
+            },
+            "empty_response",
+        ),
         ({"stop_reason": "max_tokens", "content": "partial"}, "incomplete_response"),
     ],
 )
