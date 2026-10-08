@@ -565,3 +565,81 @@ def test_deadline_during_residual_audit_retains_choice_and_original_source(tmp_p
         RunStore(path).get_run(result["run_id"])["result"]["report"]["requirements"]
         == ledger
     )
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["each", "every", "all", "any", "this", "that", "following", "both", "other"],
+)
+def test_generic_section_references_are_not_named_sections(name):
+    assert scoped_counts(f"Give two bullets under the {name} section.") == ()
+
+
+def test_selected_count_and_independent_title_survive_rejected_broad_span(tmp_path):
+    prompt = "Give Section A exactly two bullets. For Section A, give three bullets and add a title."
+    broad_source = "two bullets. For Section A, give three bullets and add a title."
+    gateway = compound_gateway(
+        prompt,
+        [
+            obligation(prompt, broad_source, scope="section:Section A"),
+            obligation(prompt, "add a title.", scope="section:Section A"),
+        ],
+    )
+    decide = gateway.decision_handler
+    chat = gateway.chat_handler
+    states = []
+
+    def conflict(request, **params):
+        if str(request.get("key", "")).startswith("requirements:audit:conflict:"):
+            items = request["state"]["requirements"]
+            return {
+                "type": "noul",
+                "probability_true": 0.99
+                if any(item["source"] == broad_source for item in items)
+                and any(item["kind"] == "bullet_count" for item in items)
+                else 0.01,
+                "confidence": 1.0,
+            }
+        return decide(request, **params)
+
+    def capture(model, messages, **params):
+        if "state.strategies" in messages[0]["content"]:
+            states.append(json.loads(messages[1]["content"]))
+        return chat(model, messages, **params)
+
+    gateway.decision_handler, gateway.chat_handler = conflict, capture
+    path = tmp_path / "contained-title.sqlite"
+    paused = PromptOptimizer(store=RunStore(path), gateway=gateway).optimize(prompt)
+    q = paused["questions"][0]
+    selected = next(
+        option["value"] for option in q["options"] if option["label"] == "two bullets"
+    )
+    result = PromptOptimizer(store=RunStore(path), gateway=gateway).resume(
+        paused["run_id"], {q["id"]: selected}
+    )
+    assert result["status"] == "completed"
+    ledger = result["report"]["requirements"]
+    active = [item for item in ledger["requirements"] if not item.get("superseded_by")]
+    assert any(item["id"] == selected for item in active)
+    assert any(
+        item["source"] == "add a title." and item["audit"]["status"] == "accepted"
+        for item in active
+    )
+    assert states and all(
+        "two bullets" in state["prompt"]
+        and "add a title." in state["prompt"]
+        and "three bullets" not in state["prompt"]
+        for state in states
+    )
+    assert any(
+        "add a title." in value
+        for value in result["report"]["understand"]["hard_constraints"]
+    )
+
+
+@pytest.mark.parametrize("name", ["All", "Other Recommendations"])
+def test_explicit_capitalized_section_name_can_start_with_determiner(name):
+    assert [
+        (item.scope, item.expected)
+        for item in scoped_counts(f"Give two bullets under the {name} section.")
+    ] == [("section:" + name, "2")]

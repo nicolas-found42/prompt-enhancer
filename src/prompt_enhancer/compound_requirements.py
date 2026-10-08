@@ -376,8 +376,17 @@ def apply_ledger_answers(
         for item in result["requirements"]
         if item.get("superseded_by") and item["source_kind"] == "original_prompt"
     ]
+    selected_ids = {
+        conflict.get("selected_requirement_id")
+        for conflict in result.get("contradictions", [])
+        if conflict.get("status") == "resolved_by_user"
+    }
     for item in result["requirements"]:
-        if item.get("superseded_by") or item["source_kind"] != "original_prompt":
+        if (
+            item.get("superseded_by")
+            or item["id"] in selected_ids
+            or item["source_kind"] != "original_prompt"
+        ):
             continue
         span = item["source_span"]
         # A duplicate extraction of the rejected clause is also superseded.
@@ -391,6 +400,11 @@ def apply_ledger_answers(
                 bound["start"] <= span["start"]
                 and end <= bound["end"]
                 and item["scope"].casefold() == losing["scope"].casefold()
+                and (
+                    losing["kind"].endswith("_count")
+                    or prompt[span["start"] : end].strip()
+                    == prompt[bound["start"] : bound["end"]].rstrip(".; \t\n")
+                )
             ):
                 item["superseded_by"] = losing["superseded_by"]
                 break
@@ -785,7 +799,27 @@ def _superseded_spans(prompt: str, ledger: Mapping[str, Any]) -> list[tuple[int,
             if following is not None and not re.search(r"\band\b", prefix[0]):
                 start += 1  # retain the section's separator before the chosen count
                 end += following.end()
-        spans.append((start, end))
+        # A rejected broad semantic extraction cannot delete independently
+        # audited surviving clauses, including the user's selected requirement.
+        retained = sorted(
+            (
+                active["source_span"]["start"],
+                active["source_span"]["end"],
+            )
+            for active in ledger.get("requirements", [])
+            if item["kind"] == "semantic"
+            and not active.get("superseded_by")
+            and active["source_kind"] == "original_prompt"
+            and start <= active["source_span"]["start"]
+            and active["source_span"]["end"] <= end
+        )
+        cursor = start
+        for keep_start, keep_end in retained:
+            if cursor < keep_start:
+                spans.append((cursor, keep_start))
+            cursor = max(cursor, keep_end)
+        if cursor < end:
+            spans.append((cursor, end))
     merged: list[tuple[int, int]] = []
     for start, end in sorted(spans):
         if merged and start <= merged[-1][1]:
@@ -798,5 +832,14 @@ def _superseded_spans(prompt: str, ledger: Mapping[str, Any]) -> list[tuple[int,
 def resolved_ledger_prompt(prompt: str, ledger: Mapping[str, Any]) -> str:
     """Remove only explicitly superseded source clauses from the working copy."""
     for start, end in reversed(_superseded_spans(prompt, ledger)):
-        prompt = prompt[:start] + prompt[end:]
+        separator = (
+            "\n"
+            if start > 0
+            and end < len(prompt)
+            and not prompt[start - 1].isspace()
+            and prompt[end].isalnum()
+            and any(character.isspace() for character in prompt[start:end])
+            else ""
+        )
+        prompt = prompt[:start] + separator + prompt[end:]
     return prompt

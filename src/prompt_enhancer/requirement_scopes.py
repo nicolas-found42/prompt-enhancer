@@ -51,6 +51,24 @@ def scoped_counts(prompt: str) -> tuple[ScopedCount, ...]:
             if any(a < match.end() and match.start() < b for a, b in data_spans):
                 continue
             name = match["name"].strip()
+            if not name[0].isupper() and name.casefold().split()[0] in {
+                "each",
+                "every",
+                "all",
+                "any",
+                "this",
+                "that",
+                "these",
+                "those",
+                "following",
+                "both",
+                "other",
+                "which",
+                "some",
+            }:
+                # Generic references have no single named output boundary.
+                # Leave their obligations to source-backed semantic extraction.
+                continue
             if (
                 pattern is _AFTER
                 and re.search(
