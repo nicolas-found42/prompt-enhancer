@@ -800,18 +800,19 @@ def _superseded_spans(prompt: str, ledger: Mapping[str, Any]) -> list[tuple[int,
                 start += 1  # retain the section's separator before the chosen count
                 end += following.end()
         # A rejected broad semantic extraction cannot delete independently
-        # audited surviving clauses, including the user's selected requirement.
+        # audited surviving clauses, including partial overlaps with the user's
+        # selected requirement.
         retained = sorted(
             (
-                active["source_span"]["start"],
-                active["source_span"]["end"],
+                max(start, active["source_span"]["start"]),
+                min(end, active["source_span"]["end"]),
             )
             for active in ledger.get("requirements", [])
             if item["kind"] == "semantic"
             and not active.get("superseded_by")
             and active["source_kind"] == "original_prompt"
-            and start <= active["source_span"]["start"]
-            and active["source_span"]["end"] <= end
+            and start < active["source_span"]["end"]
+            and active["source_span"]["start"] < end
         )
         cursor = start
         for keep_start, keep_end in retained:

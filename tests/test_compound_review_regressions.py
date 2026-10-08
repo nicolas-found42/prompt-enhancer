@@ -575,9 +575,12 @@ def test_generic_section_references_are_not_named_sections(name):
     assert scoped_counts(f"Give two bullets under the {name} section.") == ()
 
 
-def test_selected_count_and_independent_title_survive_rejected_broad_span(tmp_path):
+@pytest.mark.parametrize("start", ["two bullets", "bullets"])
+def test_selected_count_and_independent_title_survive_rejected_broad_span(
+    tmp_path, start
+):
     prompt = "Give Section A exactly two bullets. For Section A, give three bullets and add a title."
-    broad_source = "two bullets. For Section A, give three bullets and add a title."
+    broad_source = start + ". For Section A, give three bullets and add a title."
     gateway = compound_gateway(
         prompt,
         [
@@ -626,9 +629,10 @@ def test_selected_count_and_independent_title_survive_rejected_broad_span(tmp_pa
         for item in active
     )
     assert states and all(
-        "two bullets" in state["prompt"]
-        and "add a title." in state["prompt"]
-        and "three bullets" not in state["prompt"]
+        "Give Section A exactly two bullets"
+        in state["prompt"].split("\n\nClarifications:", 1)[0]
+        and "add a title." in state["prompt"].split("\n\nClarifications:", 1)[0]
+        and "three bullets" not in state["prompt"].split("\n\nClarifications:", 1)[0]
         for state in states
     )
     assert any(
