@@ -136,6 +136,7 @@ def run_understand(
     run_id: str | None = None,
     protect_requirements: bool = False,
     assumptions: Sequence[Mapping[str, Any]] = (),
+    requirements: Mapping[str, Any] | None = None,
 ) -> UnderstandResult:
     """Run the Understand stage and return its audited result."""
     style = str(requested_style or DEFAULT_STYLE).strip().lower()
@@ -241,7 +242,21 @@ def run_understand(
     hard_constraints: list[str] = [
         value for item in recognized for value in item.protected_values
     ]
-    if recognized:
+    if requirements is not None:
+        provenance["requirements"] = dict(requirements)
+        hard_constraints.extend(
+            item.get("effective_interpretation", {}).get("source", item["source"])
+            for item in requirements.get("requirements", [])
+            if item["kind"] == "semantic"
+            and item.get("audit", {}).get("status") == "accepted"
+            and not item.get("superseded_by")
+            and (
+                "effective_interpretation" not in item
+                or item["effective_interpretation"].get("audit", {}).get("status")
+                == "accepted"
+            )
+        )
+    elif recognized:
         provenance["requirements"] = requirement_ledger(prompt, assumptions)
     if candidates:
         extraction_requests = [

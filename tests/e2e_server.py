@@ -19,8 +19,14 @@ from prompt_enhancer.store import RunStore
 
 def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
     if role != "writer":
-        return "A useful answer."
+        return (
+            "## Section A\n- One\n- Two"
+            if "Section A" in str(messages)
+            else "A useful answer."
+        )
     instruction = messages[0]["content"]
+    if "source-requirements-extraction" in instruction:
+        return '{"obligations":[]}'
     if "Suggest two or three plausible values" in instruction:
         return '{"gaps":{"goal":{"question":"What should the assistant do?","options":[{"value":"summarize","label":"Summarize"},{"value":"analyze","label":"Analyze"}]}}}'
     if "Revise only the stated assumption" in instruction:
@@ -29,8 +35,10 @@ def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
         state = json.loads(messages[1]["content"])
         # Preserve the confirmed goal while giving this lifecycle fixture a
         # changed draft whose clarity, fidelity, and usefulness are judged below.
-        candidate = state["prompt"].replace(
-            "Help me with this.", "Help me with the supplied material."
+        candidate = (
+            state["prompt"]
+            .replace("Help me with this.", "Help me with the supplied material.")
+            .replace("Give Section A", "Provide Section A")
         )
         return json.dumps({item["name"]: candidate for item in state["strategies"]})
     return '{"tests":[]}'
@@ -38,6 +46,8 @@ def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
 
 def decide(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
     key = request.get("key")
+    if str(key).startswith("requirements:audit:"):
+        return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
     if key == "task_type":
         return {
             "type": "choice",

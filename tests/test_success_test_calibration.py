@@ -111,6 +111,8 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
     )
 
     def chat(*_args, **_kwargs):
+        if "source-requirements-extraction" in _args[1][0]["content"]:
+            return '{"obligations":[]}'
         # Compilation and description repair consume the two scripted replies;
         # the required candidate-writing attempt then returns no candidates.
         return {
@@ -333,7 +335,11 @@ def test_choice_with_missing_description_after_repair_has_no_tests() -> None:
 
     gateway = ScriptedGateway(
         chat=echo_candidates_for_diagnosis(
-            lambda *_args, **_kwargs: next(writer_replies, "{}")
+            lambda *_args, **_kwargs: (
+                '{"obligations":[]}'
+                if "source-requirements-extraction" in _args[1][0]["content"]
+                else next(writer_replies, "{}")
+            )
         ),
         decision=decide,
     )

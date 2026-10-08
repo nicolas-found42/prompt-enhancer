@@ -20,6 +20,11 @@ def test_single_oversized_question_retains_all_source_windows_and_stays_incomple
         prompt, progress=lambda stage, facts: activity.append((stage, facts))
     )
     assert result["report"]["outcome"] == "failed_operational"
+    assert result["report"]["requirements"]["coverage"] == "partial"
+    assert (
+        result["report"]["requirements"]["whole_source_audit"]["failure_kind"]
+        == "context_limit"
+    )
     evidence = result["report"]["diagnosis"]["request_evidence"]
     assert evidence["complete"] is False
     questions = evidence["questions"]
@@ -193,8 +198,17 @@ def test_context_subdivision_counts_each_physical_request_and_latency_once():
     evidence = result["report"]["diagnosis"]["request_evidence"]
     assert result["report"]["outcome"] == "failed_operational"
     assert evidence["complete"] is False
-    assert evidence["provider_requests"] == len(requests) <= 8
-    assert len(evidence["request_latencies_ms"]) == len(requests)
+    diagnosis_requests = [
+        payload
+        for payload in requests
+        if "questions" in payload
+        and not any(
+            key.startswith("requirements:audit:") for key in payload["questions"]
+        )
+    ]
+    assert evidence["provider_requests"] == len(diagnosis_requests) <= 8
+    assert len(evidence["request_latencies_ms"]) == len(diagnosis_requests)
+    assert len(requests) == len(diagnosis_requests) + 2  # extraction + coverage audit
     assert any(
         item["attempts"] and item["attempts"][0]["error"]["kind"] == "context_length"
         for item in evidence["questions"]
