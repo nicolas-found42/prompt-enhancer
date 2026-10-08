@@ -226,18 +226,24 @@ def test_existence_cutoff_accepts_the_boundary_and_supported_problem(
 
 
 def test_malformed_existence_for_one_kind_does_not_hide_an_independent_kind() -> None:
-    result = _optimize(
-        "The answer should fit in a tweet.",
-        _gateway(
+    result = PromptOptimizer(
+        store=RunStore(":memory:"),
+        speculative_diagnosis=False,
+        gateway=_gateway(
             existence={"vagueness:0": "malformed", "unresolved_reference:0": 0.95},
-            pointers={
-                "vagueness:0": "s0001",
-                "unresolved_reference:0": "s0001",
-            },
+            pointers={"vagueness:0": "s0001", "unresolved_reference:0": "s0001"},
         ),
+    ).optimize(
+        "The answer should fit in a tweet.",
+        {"clarification_allowed": False, "time_limit_s": 0},
     )
 
+    # Native diagnosis retains independent findings, but a malformed required
+    # existence decision prevents treating the complete diagnosis as usable.
+    assert result["status"] == "failed"
+    assert result["report"]["outcome"] == "failed_operational"
     diagnosis = result["report"]["diagnosis"]
+    assert diagnosis["request_evidence"]["complete"] is False
     assert [item["kind"] for item in diagnosis["problem_sentences"]] == [
         "unresolved_reference"
     ]

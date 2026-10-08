@@ -354,7 +354,13 @@ def run_understand(
         task_type=task_type,
         hard_constraints=tuple(hard_constraints),
         exact_output=any(item.kind == "exact_output" for item in recognized)
-        or is_exact_output(prompt, hard_constraints),
+        or (
+            not any(
+                item.kind in {"json_format", "json_schema", "csv_shape"}
+                for item in recognized
+            )
+            and is_exact_output(prompt, hard_constraints)
+        ),
         screen_embedded=screen_embedded,
         probes=tuple(probes),
         provenance=provenance,

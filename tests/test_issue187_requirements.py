@@ -55,6 +55,129 @@ def test_bare_json_format_is_not_promoted_to_the_exact_literal_json():
     assert result["report"]["understand"]["hard_constraints"] == []
 
 
+@pytest.mark.parametrize(
+    "output", ["not JSON", "NaN", '{"value": Infinity}', "```json\n{}\n```"]
+)
+def test_json_format_failures_cannot_qualify_when_writer_tests_are_rejected(output):
+    original = "Return only JSON."
+    clock = TickingClock()
+    gateway = _gateway(
+        candidate_text="Return valid JSON without any surrounding text.",
+        weak_output=output,
+    )
+    gateway.chat_handler = advancing_chat(gateway.chat_handler, clock, 20)
+    result = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=gateway, clock=clock
+    ).optimize(original)
+    assert result["report"]["outcome"] is None
+    assert result["final_prompt"] == original
+    evidence = result["report"]["history"][0]["evidence"]["selection_evidence"]
+    findings = evidence["ranking"][0]["metadata"]["requirement_findings"]
+    assert findings and all(item["status"] == "failed" for item in findings)
+    assert all(item["check"] == "json_format" for item in findings)
+
+
+@pytest.mark.parametrize(
+    ("output", "status"),
+    [
+        ('{"name":"A","count":2}', "tested"),
+        ('{"name":"B","count":2.0}', "tested"),
+        ('{"name":"A","count":true}', "failed"),
+        ('{"name":2,"count":2}', "failed"),
+        ('{"name":"A"}', "failed"),
+        ('{"name":"A","count":2,"extra":0}', "failed"),
+        ('{"name":"A","count":1,"count":"two"}', "untestable"),
+    ],
+)
+def test_json_keys_and_types_use_only_the_explicit_whole_answer_shape(output, status):
+    original = 'Return a JSON object with exactly these keys and types: {"name":"string","count":"integer"}.'
+    rewrite = 'Respond with a JSON object with exactly these keys and types: {"name":"string","count":"integer"}.'
+    clock = TickingClock()
+    gateway = _gateway(candidate_text=rewrite, weak_output=output)
+    gateway.chat_handler = advancing_chat(gateway.chat_handler, clock, 20)
+    result = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=gateway, clock=clock
+    ).optimize(original)
+    assert result["report"]["outcome"] == (None if status == "failed" else "converged")
+    evidence = result["report"]["history"][0]["evidence"]["selection_evidence"]
+    findings = [
+        item
+        for item in evidence["ranking"][0]["metadata"]["requirement_findings"]
+        if item["scope"] == "whole_output"
+    ]
+    assert len(findings) == 15
+    assert all(
+        item["check"] == "json_schema" and item["status"] == status for item in findings
+    )
+    assert result["report"]["understand"]["exact_output"] is False
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        '{"name":"string","count":"string"}',
+        '{"name":"integer","count":"string"}',
+    ],
+)
+def test_a_rewrite_cannot_change_json_type_bindings_despite_correct_sampled_answers(
+    shape,
+):
+    original = 'Return a JSON object with exactly these keys and types: {"name":"string","count":"integer"}.'
+    clock = TickingClock()
+    gateway = _gateway(
+        candidate_text=f"Respond with a JSON object with exactly these keys and types: {shape}.",
+        weak_output='{"name":"A","count":2}',
+    )
+    gateway.chat_handler = advancing_chat(gateway.chat_handler, clock, 20)
+    result = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=gateway, clock=clock
+    ).optimize(original)
+    assert result["report"]["outcome"] is None
+    assert result["final_prompt"] == original
+    ranking = result["report"]["history"][0]["evidence"]["selection_evidence"][
+        "ranking"
+    ]
+    assert any(
+        item["check"] == "json_type_bindings" and item["status"] == "failed"
+        for item in ranking[0]["metadata"]["requirement_findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "status"),
+    [
+        ("name,count\n", "tested"),
+        ('name,count\n"A,B",2\n', "tested"),
+        ("count,name\n2,A\n", "failed"),
+        ("name,count\nA,2,3\n", "failed"),
+        ("name;count\nA;2\n", "failed"),
+    ],
+)
+def test_csv_shape_checks_keep_header_order_and_allow_unconstrained_rows(
+    output, status
+):
+    original = "Return comma-delimited CSV with exactly this header and matching record width: name,count."
+    rewrite = "Respond with comma-delimited CSV with exactly this header and matching record width: name,count."
+    clock = TickingClock()
+    gateway = _gateway(candidate_text=rewrite, weak_output=output)
+    gateway.chat_handler = advancing_chat(gateway.chat_handler, clock, 20)
+    result = PromptOptimizer(
+        store=RunStore(":memory:"), gateway=gateway, clock=clock
+    ).optimize(original)
+    assert result["report"]["outcome"] == (None if status == "failed" else "converged")
+    evidence = result["report"]["history"][0]["evidence"]["selection_evidence"]
+    findings = [
+        item
+        for item in evidence["ranking"][0]["metadata"]["requirement_findings"]
+        if item["scope"] == "whole_output"
+    ]
+    assert len(findings) == 15
+    assert all(
+        item["check"] == "csv_shape" and item["status"] == status for item in findings
+    )
+    assert result["report"]["understand"]["exact_output"] is False
+
+
 def test_faithful_surrounding_edit_qualifies_with_its_own_literal_findings():
     original = "Reply with exactly PING and nothing else."
     rewrite = "Respond with exactly PING and nothing else."
@@ -331,3 +454,39 @@ def test_whole_answer_count_checks_retain_failures_and_scope_uncertainty(
     findings = evidence["ranking"][0]["metadata"]["requirement_findings"]
     assert len(findings) == 15
     assert all(item["status"] == status for item in findings)
+
+
+def test_json_types_do_not_add_rules_to_unconstrained_nested_values():
+    shape = '{"payload":"object","values":"array","ok":"boolean","missing":"null","ratio":"number"}'
+    original = f"Return a JSON object with exactly these keys and types: {shape}."
+    gateway = _gateway(
+        candidate_text=f"Respond with a JSON object with exactly these keys and types: {shape}.",
+        weak_output='{"payload":{"x":1,"x":2},"values":[1,2],"ok":true,"missing":null,"ratio":1e999}',
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        original
+    )
+    assert result["report"]["outcome"] == "converged"
+    selected = result["report"]["selection_evidence"]["selected_candidate"]
+    findings = [
+        item
+        for item in selected["metadata"]["requirement_findings"]
+        if item["scope"] == "whole_output"
+    ]
+    assert findings and all(item["status"] == "tested" for item in findings)
+
+
+def test_csv_column_list_does_not_invent_a_required_header_row():
+    original = (
+        "Return comma-delimited CSV with exactly these columns in order: name,count."
+    )
+    gateway = _gateway(
+        candidate_text="Provide comma-delimited CSV with exactly these columns in order: name,count.",
+        weak_output="A,2\n",
+    )
+    result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
+        original
+    )
+    assert result["report"]["outcome"] == "converged"
+    assert result["report"]["requirements"]["coverage"] == "partial"
+    assert result["report"]["requirements"]["requirements"] == []

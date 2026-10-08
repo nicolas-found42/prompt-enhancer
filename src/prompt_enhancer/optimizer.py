@@ -12,6 +12,7 @@ import os
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
@@ -1053,7 +1054,7 @@ class PromptOptimizer:
             return result
         self._stage("diagnosing")
         diagnosis_log_start = len(self.gateway.decision_log)
-        diagnosis = self._diagnose(prompt)
+        diagnosis = self._diagnose(prompt, run_id=run_id)
         diagnosis_payload = (
             diagnosis.as_dict()
             if diagnosis is not None
@@ -1733,7 +1734,7 @@ class PromptOptimizer:
         )
         return as_optimize_result(payload)
 
-    def _diagnose(self, prompt: str) -> DiagnosisReport | None:
+    def _diagnose(self, prompt: str, *, run_id: str) -> DiagnosisReport | None:
         rubric = None
         if self.rubric_store is not None:
             try:
@@ -1790,6 +1791,17 @@ class PromptOptimizer:
             if rubric is not None
             else []
         )
+
+        def retain_partial_evidence(evidence: Mapping[str, Any]) -> None:
+            self._retain_deadline_report(
+                run_id,
+                diagnosis={
+                    "confirmed_gaps": [],
+                    "problem_sentences": [],
+                    "request_evidence": deepcopy(dict(evidence)),
+                },
+            )
+
         diagnoser = Diagnoser(
             self.gateway,
             rubric=diagnosis_rubric,
@@ -1802,6 +1814,13 @@ class PromptOptimizer:
                 self.speculative_diagnosis or self.observe_sequential_diagnosis
             ),
             additional_requests=questions,
+            recover_source_windows=self.writer_instruction_version >= 15,
+            on_recovery=self._activity
+            if self.writer_instruction_version >= 15
+            else None,
+            on_evidence=retain_partial_evidence
+            if self.writer_instruction_version >= 15
+            else None,
         )
         report = diagnoser.diagnose(prompt)
         calibration_evidence = dict(report.calibration or {})

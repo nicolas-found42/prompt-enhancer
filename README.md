@@ -222,6 +222,21 @@ and matching requests do not establish effective sampling settings. The
 4,096-token weak output cap is a pilot starting point. Neither service has been
 chosen by a measured pilot, and this profile does not establish the release bar.
 
+Native requirement evidence includes conservative whole-answer JSON validity,
+explicit top-level JSON key/type declarations, and explicit comma-delimited CSV
+headers with matching record width. Values and row counts remain unconstrained when
+the source leaves them open. Duplicate applicable JSON keys and unsupported
+parser conventions retain uncertainty. Recognized constraints keep their exact
+source spans; the ledger still reports partial coverage pending broader audited
+extraction.
+
+Native diagnosis retains the original questions, raw partial answers and errors.
+Oversized single questions use contiguous source windows, with at most sixteen
+windows per question and eight physical requests across bounded recovery.
+Held windows preserve their source, and window answers cannot establish a
+whole-prompt diagnosis. Malformed required answers make diagnosis explicitly
+incomplete; unused speculative answers remain separate from required evidence.
+
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
 [delegated-review follow-up](docs/delegated-evaluation-2026-09-23.md) state

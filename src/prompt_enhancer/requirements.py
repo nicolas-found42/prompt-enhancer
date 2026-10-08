@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
@@ -15,6 +16,13 @@ from .clarification import (
 )
 from .criterion_checks import count_words
 from .criterion_reading import number_candidates
+from .requirement_formats import (
+    CSV_DIRECTIVE,
+    JSON_DIRECTIVE,
+    JSON_SCHEMA_DIRECTIVE,
+    check_format,
+    schema_from_source,
+)
 
 _EXACT_REPLY = re.compile(
     r"(?im)^(?>[ \t]*)(?:reply|respond|output|return|print)(?:[ \t]+with)?[ \t]+"
@@ -46,6 +54,9 @@ RequirementKind = Literal[
     "sentence_count",
     "line_count",
     "bullet_count",
+    "json_format",
+    "json_schema",
+    "csv_shape",
 ]
 _COUNT_KINDS: dict[str, RequirementKind] = {
     "word": "word_count",
@@ -81,7 +92,16 @@ class Requirement:
 
     @property
     def protected_values(self) -> tuple[str, ...]:
-        return () if self.kind.endswith("_count") else (self.expected,)
+        if self.kind == "json_schema":
+            schema = json.loads(self.expected)
+            return tuple(dict.fromkeys((*schema, *schema.values())))
+        if self.kind == "csv_shape":
+            return tuple(json.loads(self.expected))
+        return (
+            (self.expected,)
+            if self.kind in {"exact_output", "punctuation_only", "protected_value"}
+            else ()
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -108,6 +128,50 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
     Those source spans still need semantic extraction and uncertainty coverage.
     """
     found: list[Requirement] = []
+    json_format = JSON_DIRECTIVE.fullmatch(prompt)
+    if json_format is not None:
+        found.append(
+            Requirement(
+                id=f"requirement:{json_format.start()}:{json_format.end()}",
+                source=json_format.group(),
+                start=json_format.start(),
+                end=json_format.end(),
+                kind="json_format",
+                scope="whole_output",
+                expected="valid_json",
+            )
+        )
+    shape = JSON_SCHEMA_DIRECTIVE.fullmatch(prompt)
+    if (
+        shape is not None
+        and (schema := schema_from_source(shape["schema"])) is not None
+    ):
+        found.append(
+            Requirement(
+                id=f"requirement:{shape.start()}:{shape.end()}",
+                source=shape.group(),
+                start=shape.start(),
+                end=shape.end(),
+                kind="json_schema",
+                scope="whole_output",
+                expected=schema,
+            )
+        )
+    csv_format = CSV_DIRECTIVE.fullmatch(prompt)
+    if csv_format is not None:
+        found.append(
+            Requirement(
+                id=f"requirement:{csv_format.start()}:{csv_format.end()}",
+                source=csv_format.group(),
+                start=csv_format.start(),
+                end=csv_format.end(),
+                kind="csv_shape",
+                scope="whole_output",
+                expected=json.dumps(
+                    [column.strip() for column in csv_format["columns"].split(",")]
+                ),
+            )
+        )
     counts = _COUNT_DIRECTIVE.fullmatch(prompt)
     if counts is not None:
         for clause in _COUNT_CLAUSE.finditer(prompt):
@@ -340,6 +404,8 @@ def _ambiguous_word_count(requirement: Requirement, output: Any) -> bool:
 
 
 def _finding_status(requirement: Requirement, output: Any) -> str:
+    if requirement.kind in {"json_format", "json_schema", "csv_shape"}:
+        return check_format(requirement.kind, output, requirement.expected)[0]
     if requirement.kind == "sentence_count":
         return "untestable"
     if _uncertainty(requirement, output):
@@ -391,6 +457,8 @@ def _uncertainty(requirement: Requirement, output: Any) -> str | None:
 
 
 def _finding_reason(requirement: Requirement, output: Any) -> str:
+    if requirement.kind in {"json_format", "json_schema", "csv_shape"}:
+        return check_format(requirement.kind, output, requirement.expected)[1]
     uncertainty = _uncertainty(requirement, output)
     if uncertainty is not None:
         return uncertainty
@@ -411,22 +479,42 @@ def prompt_findings(
     requirements: Sequence[Requirement], candidate_id: str, candidate: str
 ) -> tuple[dict[str, Any], ...]:
     """Check protected source values independently of downstream answers."""
-    return tuple(
+    findings = tuple(
         {
             "requirement_id": item.id,
             "source": item.source,
             "scope": "candidate_prompt",
             "candidate_id": candidate_id,
-            "status": "tested"
-            if preserves_literal(candidate, item.expected)
-            else "failed",
+            "status": "tested" if preserves_literal(candidate, value) else "failed",
             "check": "protected_value",
-            "expected": item.expected,
+            "expected": value,
             "reason": "The protected source value must remain verbatim in the prompt.",
         }
         for item in requirements
-        if item.protected_values
+        for value in item.protected_values
     )
+    for item in requirements:
+        if item.kind != "json_schema":
+            continue
+        match = JSON_SCHEMA_DIRECTIVE.fullmatch(candidate)
+        actual = schema_from_source(match["schema"]) if match is not None else None
+        findings += (
+            {
+                "requirement_id": item.id,
+                "source": item.source,
+                "scope": "candidate_prompt",
+                "candidate_id": candidate_id,
+                "status": "untestable"
+                if actual is None
+                else "tested"
+                if actual == item.expected
+                else "failed",
+                "check": "json_type_bindings",
+                "expected": item.expected,
+                "reason": "The rewritten JSON declaration must retain each source key's type; an unsupported declaration needs semantic coverage.",
+            },
+        )
+    return findings
 
 
 def check_summaries(
