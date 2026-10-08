@@ -84,6 +84,7 @@ def compile_source_tests(
                     "requirement_id": requirement.id,
                     "test_id": test.id,
                     "status": "unresolved",
+                    "reason": "The source binding has not been judged yet.",
                     "request_id": key,
                     "raw_decision": None,
                 }
@@ -96,6 +97,9 @@ def compile_source_tests(
         for binding, request in requests:
             request_size = len(json.dumps(request, ensure_ascii=False).encode())
             if request_size > 48_000:
+                binding["reason"] = (
+                    "The binding request exceeds the supported 48000-byte limit."
+                )
                 continue
             if pending and (len(pending) == 8 or size + request_size > 48_000):
                 batches.append(pending)
@@ -109,6 +113,7 @@ def compile_source_tests(
                 json.loads(json.dumps({"attempts": attempts, "coverage": coverage}))
             )
         for batch in batches:
+            unavailable = False
             try:
                 answers = compiler.gateway.decide_batch(
                     [request for _, request in batch],
@@ -117,6 +122,7 @@ def compile_source_tests(
                 )
             except ProviderError:
                 answers = []
+                unavailable = True
             for index, (binding, _) in enumerate(batch):
                 raw = answers[index] if index < len(answers) else None
                 binding["raw_decision"] = (
@@ -126,12 +132,24 @@ def compile_source_tests(
                     decision = parse_decision(raw)
                 except (JevResponseError, ValueError, TypeError):
                     decision = None
+                binding["reason"] = (
+                    "The binding judge could not be reached."
+                    if unavailable
+                    else "The binding judge returned no decision."
+                    if raw is None
+                    else "The binding judge returned an invalid decision."
+                    if not isinstance(decision, NoulDecision)
+                    else "The binding decision does not establish source support."
+                )
                 if (
                     isinstance(decision, NoulDecision)
                     and decision.probability >= 0.8
                     and decision.confidence >= 0.8
                 ):
                     binding["status"] = "supported"
+                    binding["reason"] = (
+                        "The proposed check has supported source binding."
+                    )
             if on_evidence:
                 on_evidence(
                     json.loads(json.dumps({"attempts": attempts, "coverage": coverage}))
@@ -173,10 +191,18 @@ def compile_source_tests(
                 if binding["test_id"] == test.get("id")
                 and binding["status"] == "supported"
             ]
-            if ids or test.get("id") in {item.id for item in unbound}:
-                rejected_evidence.append(
-                    {"attempt": attempt, "requirement_ids": ids, **rejected}
-                )
+            rejected_evidence.append(
+                {
+                    "attempt": attempt,
+                    "requirement_ids": ids,
+                    "bindings": [
+                        binding
+                        for binding in bindings
+                        if binding["test_id"] == test.get("id")
+                    ],
+                    **rejected,
+                }
+            )
         covered_ids = {
             binding["requirement_id"]
             for record in attempts

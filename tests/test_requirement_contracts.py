@@ -306,3 +306,52 @@ def test_unsupported_json_schema_still_has_a_known_syntax_requirement(
         for item in findings
     )
     assert result["original_kept"] is (status == "failed")
+
+
+@pytest.mark.parametrize("presentation", ["prefix", "suffix", "newline"])
+def test_legacy_json_schema_preserves_bindings_with_surrounding_guidance(
+    tmp_path, presentation
+):
+    prompt = (
+        'Return a JSON object with exactly these keys and types: {"name":"string"}.'
+    )
+    candidate = {
+        "prefix": "For clarity:\n" + prompt,
+        "suffix": prompt + " Keep the declared keys and types.",
+        "newline": prompt + "\nKeep the declared keys and types.",
+    }[presentation]
+    result, findings = run_contract(
+        tmp_path, prompt, '{"name":"A"}', candidate=candidate
+    )
+    assert not result["original_kept"]
+    assert any(
+        item["check"] == "json_type_bindings" and item["status"] == "tested"
+        for item in findings
+    )
+
+
+@pytest.mark.parametrize("format", ["JSON", "CSV"])
+def test_how_clause_coordinated_output_directive_is_checked(tmp_path, format):
+    declaration, output, check = (
+        ("JSON containing title as a string", '{"title":2}', "json_contract")
+        if format == "JSON"
+        else ("CSV with columns name,status", "wrong,header\nA,ready", "csv_contract")
+    )
+    prompt = "Explain how photosynthesis works and Return " + declaration + "."
+    result, findings = run_contract(tmp_path, prompt, output)
+    assert result["original_kept"]
+    assert any(
+        item["check"] == check and item["status"] == "failed" for item in findings
+    )
+
+
+def test_descriptive_infinitive_coordination_is_not_a_json_output_directive(tmp_path):
+    prompt = "Explain how to retrieve data and return JSON from a Flask endpoint."
+    result, findings = run_contract(
+        tmp_path,
+        prompt,
+        "Retrieve the data and serialize it with jsonify.",
+        candidate=prompt + " Explain clearly.",
+    )
+    assert not result["original_kept"]
+    assert not any(item["check"] == "json_contract" for item in findings)

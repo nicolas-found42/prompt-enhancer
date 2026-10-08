@@ -738,36 +738,28 @@ def prompt_findings(
     for item in requirements:
         if item.kind not in {"json_schema", "json_contract", "csv_contract"}:
             continue
-        match = JSON_SCHEMA_DIRECTIVE.fullmatch(candidate)
-        actual = schema_from_source(match["schema"]) if match is not None else None
-        status = (
-            "failed"
-            if actual is None
-            else "tested"
-            if actual == item.expected
-            else "failed"
+        contract_kind = "json_contract" if item.kind == "json_schema" else item.kind
+        expected_contract = (
+            {"schema": json.loads(item.expected), "exact_keys": True}
+            if item.kind == "json_schema"
+            else json.loads(item.expected)
         )
-        if item.kind in {"json_contract", "csv_contract"}:
-            declarations = [
-                expected
-                for _, _, kind, scope, expected in structured_contracts(candidate)
-                if kind == item.kind and scope == item.scope
-            ]
-            supported = [
-                value
-                for value in declarations
-                if not json.loads(value).get("uncertainty")
-            ]
-            if json.loads(item.expected).get("uncertainty"):
-                # An unsupported source convention supplies no known binding
-                # that a rewrite could deterministically delete or contradict.
-                status = "untestable"
-            elif not declarations or any(value != item.expected for value in supported):
-                status = "failed"
-            elif len(supported) != len(declarations):
-                status = "unresolved"
-            else:
-                status = "tested"
+        declarations = [
+            json.loads(expected)
+            for _, _, kind, scope, expected in structured_contracts(candidate)
+            if kind == contract_kind and scope == item.scope
+        ]
+        supported = [value for value in declarations if not value.get("uncertainty")]
+        if expected_contract.get("uncertainty"):
+            # An unsupported source convention supplies no known binding
+            # that a rewrite could deterministically delete or contradict.
+            status = "untestable"
+        elif not declarations or any(value != expected_contract for value in supported):
+            status = "failed"
+        elif len(supported) != len(declarations):
+            status = "unresolved"
+        else:
+            status = "tested"
         findings += (
             {
                 "requirement_id": item.id,

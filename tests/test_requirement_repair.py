@@ -415,3 +415,191 @@ def test_lossless_draft_does_not_claim_it_consumed_ordinary_repair_evidence():
         event["kind"] in {"repair", "retest"} and event.get("candidate_id") in lossless
         for event in events
     )
+
+
+@pytest.mark.parametrize("missing_binding", [True, False])
+def test_screened_out_unbound_proposal_still_informs_bounded_replacement(
+    tmp_path, missing_binding
+):
+    prompt = "Reply with exactly PING and nothing else."
+    gateway = compound_gateway(
+        prompt,
+        [],
+        output="PING",
+        candidate="Respond with exactly PING and nothing else.",
+    )
+    chat, decide = gateway.chat_handler, gateway.decision_handler
+    states = []
+
+    def generate(model, messages, **params):
+        if params["role"] == "writer" and "Compile the user" in messages[0]["content"]:
+            state = json.loads(messages[1]["content"])
+            states.append(state)
+            return '{"tests":[{"question":"Does the answer contain PING?","kind":"noul","expected":"yes"}]}'
+        return chat(model, messages, **params)
+
+    def screen(request, **params):
+        key = str(request.get("key", ""))
+        if key.startswith("requirement:test-binding:"):
+            return (
+                None
+                if missing_binding
+                else {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
+            )
+        if key.startswith("success-test-screen:"):
+            probability = (
+                0.01
+                if request["dimension"] == "assessability"
+                else 0.99
+                if request["dimension"] in {"faithfulness", "no_invention"}
+                else 0.01
+            )
+            return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+        return decide(request, **params)
+
+    gateway.chat_handler, gateway.decision_handler = generate, screen
+    result = PromptOptimizer(
+        store=RunStore(tmp_path / "unbound-replacement.sqlite"), gateway=gateway
+    ).optimize(prompt, {"time_limit_s": 0})
+    source = result["report"]["history"][0]["evidence"]["test_screening"][
+        "source_checks"
+    ]
+    assert len(states) == len(source["attempts"]) == 2
+    feedback = states[1]["rejected_proposals"][0]
+    assert feedback["test"]["question"] == "Does the answer contain PING?"
+    assert feedback["reason"] and feedback["requirement_ids"] == []
+    assert feedback["bindings"] and all(
+        item["status"] == "unresolved" for item in feedback["bindings"]
+    )
+    assert source["coverage"][0]["status"] == "unresolved"
+
+
+@pytest.mark.parametrize(
+    "mode,reason",
+    [
+        ("missing", "The binding judge returned no decision."),
+        ("invalid", "The binding judge returned an invalid decision."),
+        ("outage", "The binding judge could not be reached."),
+        ("oversize", "The binding request exceeds the supported 48000-byte limit."),
+        ("uncertain", "The binding decision does not establish source support."),
+        ("unsupported", "The binding decision does not establish source support."),
+    ],
+)
+def test_binding_uncertainty_retains_its_reason_and_physical_tests(mode, reason):
+    from prompt_enhancer.gateway import ProviderError
+    from prompt_enhancer.requirement_tests import compile_source_tests
+    from prompt_enhancer.requirements import extract_requirements
+    from prompt_enhancer.success_tests import SuccessTestCompiler
+
+    prompt = "Reply with exactly PING and nothing else."
+    requirements = extract_requirements(prompt)
+    gateway = compound_gateway(prompt, [])
+    batch = gateway.decide_batch
+
+    def generate(_model, _messages, **_params):
+        return '{"tests":[{"id":"t0","question":"Does the complete answer equal PING?","kind":"noul","expected":"yes"}]}'
+
+    def decide(request, **_params):
+        return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
+
+    binding_calls = []
+
+    def bindings(requests, **params):
+        if not all(
+            str(item.get("key", "")).startswith("requirement:test-binding:")
+            for item in requests
+        ):
+            return batch(requests, **params)
+        binding_calls.extend(requests)
+        if mode == "outage":
+            raise ProviderError("scripted", "test", 503, "private diagnostics")
+        answer = {
+            "missing": None,
+            "invalid": {"arbitrary": "private diagnostics"},
+            "uncertain": {"type": "noul", "probability_true": 0.99, "confidence": 0.2},
+            "unsupported": {
+                "type": "noul",
+                "probability_true": 0.01,
+                "confidence": 1.0,
+            },
+        }.get(mode)
+        return [answer] * len(requests)
+
+    gateway.chat_handler, gateway.decision_handler = generate, decide
+    gateway.decide_batch = bindings
+    compiler = SuccessTestCompiler(
+        gateway, writer_model="test", screen_protocol_version=1
+    )
+    compiled, evidence = compile_source_tests(
+        compiler,
+        prompt + ("\nContext: " + "x" * 48_000 if mode == "oversize" else ""),
+        requirements,
+    )
+    assert not compiled.tests
+    assert len(evidence["attempts"]) == 2
+    assert all(attempt["tests"] for attempt in evidence["attempts"])
+    assert all(
+        binding["status"] == "unresolved" and binding.get("reason") == reason
+        for attempt in evidence["attempts"]
+        for binding in attempt["bindings"]
+    )
+    assert all(item["status"] == "unresolved" for item in evidence["coverage"])
+    assert "private diagnostics" not in json.dumps(evidence)
+    assert bool(binding_calls) is (mode != "oversize")
+    assert [attempt["tests"][0]["id"] for attempt in evidence["attempts"]] == [
+        "rNone:a1:t0",
+        "rNone:a2:t0",
+    ]
+
+
+def test_worker_deadline_is_durable_before_the_completion_handoff(
+    tmp_path, monkeypatch
+):
+    import threading
+
+    from prompt_enhancer import publication
+
+    clock = TickingClock()
+    store = RunStore(tmp_path / "worker-deadline.sqlite")
+    entered, release = threading.Event(), threading.Event()
+    transaction = publication.checkpoint_transaction
+
+    class CompletionHandoff:
+        def set(self, value):
+            return transaction.set(value)
+
+        def get(self):
+            return transaction.get()
+
+        def reset(self, token):
+            transaction.reset(token)
+            entered.set()
+            assert release.wait(5), "Completion handoff was not released."
+
+    monkeypatch.setattr(publication, "checkpoint_transaction", CompletionHandoff())
+    screening = {
+        "attempts": [{"attempt": 1, "rejected": [{"reason": "Not assessable"}]}]
+    }
+    jobs = RunJobs(store=store, monotonic=clock)
+
+    def expire(_progress, _cancel, _observe):
+        clock.now = 151
+        return {"status": "completed", "report": {}}
+
+    jobs.submit(
+        "worker-deadline",
+        "optimize",
+        expire,
+        lambda _exc: {},
+        prompt="Reply exactly PING.",
+        evidence=lambda: {"report": {"test_screening": screening}},
+    )
+    try:
+        assert entered.wait(5), "Worker did not reach the completion handoff."
+        done = jobs.get("worker-deadline")
+        assert done["state"] == "done"
+        assert done["result"]["report"]["test_screening"] == screening
+        assert store.get_run("worker-deadline")["result"] == done["result"]
+    finally:
+        release.set()
+        jobs._executor.shutdown(wait=True)

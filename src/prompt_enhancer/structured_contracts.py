@@ -156,8 +156,21 @@ def structured_contracts(
         if any(start <= match.start() < end for start, end in spans):
             continue
         prefix = prompt[: match.start()]
-        if re.search(r"\bhow\b[^.!?\n;:]*$", prefix, re.I) and not re.search(
-            r"(?:\bthen|[,;:])\s*$", prefix, re.I
+        how_clause = re.search(r"\bhow\b[^.!?\n;:]*$", prefix, re.I)
+        coordinated_instruction = bool(
+            how_clause
+            and re.search(r"\band\s*$", prefix, re.I)
+            and not re.match(r"how\s+to\b", how_clause.group(), re.I)
+            and not re.search(
+                r"\b(?:you|we|they|should|can|could|would|must|may|might)\b",
+                how_clause.group(),
+                re.I,
+            )
+        )
+        if (
+            how_clause
+            and not coordinated_instruction
+            and not re.search(r"(?:\bthen|[,;:])\s*$", prefix, re.I)
         ):
             # Descriptions of an operation do not declare this answer's format.
             continue
