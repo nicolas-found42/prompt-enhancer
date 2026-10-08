@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Any
 
 import pytest
+from active_clock import echo_candidates_for_diagnosis
 
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import (
@@ -31,7 +32,10 @@ from prompt_enhancer.store import RunStore
 class BatchScriptedGateway(ScriptedGateway):
     def __init__(self, *, decision):
         super().__init__(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decision
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"tests":[]}'
+            ),
+            decision=decision,
         )
         self.decision_batches: list[list[str]] = []
 
@@ -153,7 +157,10 @@ def test_confident_pointer_with_low_existence_does_not_report_or_hint_problem() 
     result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"tests":[]}'
+            ),
+            decision=decide,
         ),
     ).optimize(prompt, {"clarification_allowed": False, "time_limit_s": 0})
 

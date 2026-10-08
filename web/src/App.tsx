@@ -1,3 +1,4 @@
+import { mergeJobEvents } from "./jobEvents";
 import {
   type FormEvent,
   useCallback,
@@ -527,11 +528,18 @@ export default function App() {
   useEffect(() => {
     if (!job || isTerminalJob(job)) return;
     const runId = job.run_id;
+    let current = job;
+    let pending = false;
+    let active = true;
     const timer = window.setInterval(() => {
-      void getJob(runId)
+      if (pending) return;
+      pending = true;
+      void getJob(runId, current.event_cursor ?? 0)
         .then((latest) => {
-          if (isTerminalJob(latest)) finish(latest);
-          else setJob(latest);
+          if (!active) return;
+          current = mergeJobEvents(current, latest);
+          if (isTerminalJob(current)) finish(current);
+          else setJob(current);
         })
         .catch((caught) => {
           if (caught instanceof ApiError && caught.status === 404) {
@@ -562,9 +570,15 @@ export default function App() {
                 : "Lost track of the run."
             );
           }
+        })
+        .finally(() => {
+          pending = false;
         });
     }, POLL_MS);
-    return () => window.clearInterval(timer);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
   }, [job?.run_id, job?.state, finish]);
 
   async function begin(
@@ -969,8 +983,9 @@ export default function App() {
           </p>
         )}
         <p className="loop-estimate">
-          The loop continues until its quality evidence converges. Time and
-          spend limits pause the run for your approval.
+          Each run has 150 seconds of active time to find a useful improvement.
+          Answering clarification questions pauses that clock. Your optional
+          limits pause the run for approval; the active deadline ends it.
         </p>
         {selection && (
           <ModelPicker

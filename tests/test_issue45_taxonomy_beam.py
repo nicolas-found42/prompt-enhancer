@@ -127,7 +127,8 @@ def test_task_branch_options_describe_leaf_meaning_and_scope() -> None:
     assert "find or synthesize information" in investigation.lower()
     assert "intended scope" in investigation.lower()
     assert result["status"] == "completed"
-    assert result["report"]["outcome"] == "converged"
+    assert result["report"]["outcome"] is None
+    assert result["report"]["control_state"] == "deadline_reached"
     final_round = result["report"]["history"][-1]
     assert final_round["convergence"]["source"] == "original_baseline"
     assert (

@@ -241,21 +241,28 @@ def test_hard_gate_rejects_candidate_dropping_exact_literal() -> None:
     )
 
 
-def test_impossible_style_constraint_pair_ends_impossible() -> None:
+def test_exact_output_style_still_attempts_faithful_presentation(
+    deterministic_active_clock,
+) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     prompt = 'Reply with exactly: "OK"'
-    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_gateway())
+    optimizer = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=_gateway(default_candidate=prompt),
+        writer_instruction_version=15,
+    )
 
     result = optimizer.optimize(prompt, {"improvement_style": "creative"})
 
-    assert result["status"] == "failed"
+    assert result["status"] == "completed"
     assert result["final_prompt"] == prompt
     assert result["original_kept"] is True
     report = result["report"]
-    assert report["status"] == "impossible"
+    assert report["control_state"] == "deadline_reached"
+    assert report["outcome"] is None
     assert report["applied_style"] == "creative"
-    assert "creative" in report["summary"].lower()
-    assert "OK" in report["summary"]
-    assert report["selection_evidence"]["selected_candidate_id"] is None
+    assert report["understand"]["hard_constraints"] == ["OK"]
+    assert report["route"]["impossible_reason"] is None
 
 
 def test_audit_gates_extraction_before_hard_gate_use() -> None:

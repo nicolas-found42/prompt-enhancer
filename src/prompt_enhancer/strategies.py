@@ -132,7 +132,31 @@ LOSSLESS_RESTRUCTURE_STRATEGY = RewriteStrategy(
     priority=84,
     restructures=True,
 )
-CURRENT_STRATEGY_LIBRARY = (*STRATEGY_LIBRARY, LOSSLESS_RESTRUCTURE_STRATEGY)
+FAITHFUL_PRESENTATION_STRATEGY = RewriteStrategy(
+    name="faithful_presentation",
+    kind="safe",
+    description=(
+        "Improve only the presentation of existing instructions: clarify wording, "
+        "make existing dependencies explicit, and separate instructions from data "
+        "when useful. Scale restructuring to task complexity. For Shorter, remove "
+        "redundancy. Preserve every fact, requirement, literal, code fragment, "
+        "placeholder and constraint. Do not resolve contradictions or invent facts. "
+        "An exact-output task permits edits to surrounding instructions only."
+    ),
+    priority=110,
+)
+REMOVE_REDUNDANCY_STRATEGY = RewriteStrategy(
+    name="remove_redundancy",
+    kind="safe",
+    description="Remove repeated wording and redundant scaffolding, preserving every distinct requirement and protected value.",
+    priority=105,
+)
+CURRENT_STRATEGY_LIBRARY = (
+    *STRATEGY_LIBRARY,
+    LOSSLESS_RESTRUCTURE_STRATEGY,
+    FAITHFUL_PRESENTATION_STRATEGY,
+    REMOVE_REDUNDANCY_STRATEGY,
+)
 
 # A short alias is useful to callers and keeps the public API discoverable.
 STRATEGIES = STRATEGY_LIBRARY
@@ -613,6 +637,10 @@ def compatible_bundle(
     """
     names = STYLE_STRATEGY_BUNDLES.get(style, ())
     available = {strategy.name: strategy for strategy in library}
+    if "faithful_presentation" in available:
+        names = ("faithful_presentation", *names)
+    if style == "shorter" and "remove_redundancy" in available:
+        names = ("remove_redundancy", *names)
     return tuple(
         available[name]
         for name in names

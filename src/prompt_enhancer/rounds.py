@@ -670,10 +670,37 @@ def _ranking_candidate(
 
 
 def run_round(
-    gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | None = None
+    gateway: Gateway,
+    plan: RoundPlan,
+    *,
+    on_stage: StageCallback | None = None,
+    on_activity: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> RoundOutcome:
     """Run one round and return what it decided."""
-    stage = on_stage or (lambda _name: None)
+    active_stage: str | None = None
+
+    def finish_stage() -> None:
+        nonlocal active_stage
+        if active_stage is not None and on_activity is not None:
+            on_activity(
+                {
+                    "kind": "completed",
+                    "stage": active_stage,
+                    "summary": active_stage.replace("_", " ").capitalize()
+                    + " completed.",
+                }
+            )
+        active_stage = None
+
+    def stage(name: str) -> None:
+        nonlocal active_stage
+        # This transition is reached only after the previous stage returned.
+        # Exceptions leave its start unmatched; the client never infers success.
+        finish_stage()
+        active_stage = name
+        if on_stage is not None:
+            on_stage(name)
+
     settings = plan.settings
     working_prompt = plan.working_prompt
     round_log_start = len(gateway.decision_log)
@@ -691,6 +718,7 @@ def run_round(
     def ended(
         status: str, summary: str, tests: tuple[dict[str, Any], ...]
     ) -> RoundOutcome:
+        finish_stage()
         return RoundOutcome(
             plan=plan,
             status=status,
@@ -757,6 +785,12 @@ def run_round(
         if plan.writer_instruction_version >= 4
         else STRATEGY_LIBRARY
     )
+    if plan.writer_instruction_version < 15:
+        strategy_library = tuple(
+            item
+            for item in strategy_library
+            if item.name not in {"faithful_presentation", "remove_redundancy"}
+        )
     if plan.route_strategies:
         # The Route stage picked this bundle; candidates come only from it.
         wanted = set(plan.route_strategies)
@@ -811,6 +845,10 @@ def run_round(
     )
 
     def recheck_strategy(strategy: RewriteStrategy) -> dict[str, bool]:
+        if strategy.name == "faithful_presentation":
+            # This lane authorizes a draft attempt, never its qualification.
+            # Fidelity, usefulness, requirements, floors and Accept still gate it.
+            return {"eligible": True}
         answer = gateway.decide(
             {
                 "model": settings.judge_model,
@@ -913,6 +951,17 @@ def run_round(
             rejections=tuple(rejections),
         )
     candidates = list(search.candidates)
+    if on_activity is not None:
+        for draft in candidates:
+            on_activity(
+                {
+                    "kind": "draft",
+                    "summary": "A draft is ready for checks; it has not qualified yet.",
+                    "candidate_id": draft.candidate_id,
+                    "draft": draft.text,
+                    "diff": prompt_diff(plan.prompt, draft.text),
+                }
+            )
     candidate_prompts.update(
         {candidate.candidate_id: candidate.text for candidate in candidates}
     )
@@ -992,6 +1041,14 @@ def run_round(
         if tests
         else None
     )
+    if not tests and on_activity is not None:
+        on_activity(
+            {
+                "kind": "skipped",
+                "stage": "strong_check",
+                "summary": "Answer verification was skipped because no supported success tests were available. Rewrite fidelity is still checked.",
+            }
+        )
     baseline_vector = score_candidate(
         gateway,
         working_prompt,
@@ -1122,13 +1179,30 @@ def run_round(
         allow_unverified_selection=not tests,
         candidate_order=evaluation.order,
     )
-    if ranking.selected is None and final_baseline.eligible:
-        # The baseline is eligible only after its own complete Accept gate.
-        ranking = replace(
-            ranking,
-            selected=final_baseline,
-            original_kept=True,
-        )
+    if on_activity is not None:
+        for candidate_id, reasons in ranking.rejection_reasons.items():
+            if reasons:
+                on_activity(
+                    {
+                        "kind": "blocked",
+                        "candidate_id": candidate_id,
+                        "summary": "This draft did not qualify. Its rejection evidence will guide the next Round.",
+                        "reasons": list(reasons),
+                    }
+                )
+        if ranking.selected is not None:
+            on_activity(
+                {
+                    "kind": "qualified",
+                    "summary": "A changed draft passed this Round's qualification checks.",
+                    "candidate_id": ranking.selected.candidate_id,
+                    "draft": ranking.selected.text,
+                }
+            )
+    # Changed-only success (#187): the original is reference evidence and is
+    # never promoted to the selected result. When no changed candidate
+    # qualifies, the ranking keeps selected=None and the round reports the
+    # original as kept without a successful outcome.
     evaluation_evidence: dict[str, Any] = {
         "candidates": {
             candidate_id: dict(evidence)
@@ -1242,6 +1316,7 @@ def run_round(
         epsilon=settings.convergence_epsilon,
     )
     convergence = decision.to_dict()
+    convergence["selected"] = False
     if vector is not None:
         convergence["selected"] = bool(vector.get("selected"))
         convergence["source"] = vector.get("source", "selected_candidate")
@@ -1257,6 +1332,7 @@ def run_round(
             first_round=plan.writer_instruction_version < 15 or plan.round_number == 1,
         )
         reported_failure = None
+    finish_stage()
     return RoundOutcome(
         plan=plan,
         status=status,

@@ -832,7 +832,15 @@ class Diagnoser:
         self._provider_requests += 1
         try:
             raw_responses = list(self.gateway.decide_batch(requests))
-        except ProviderError:
+        except ProviderError as exc:
+            if exc.kind == "context_length" and len(requests) > 1:
+                self._bounded_fallback = True
+                self._fallback_reason = "diagnosis_size_partition"
+                middle = len(requests) // 2
+                return (
+                    *self._dispatch(requests[:middle]),
+                    *self._dispatch(requests[middle:]),
+                )
             if not (
                 self.speculative_fanout
                 and self.sentence_protocol_version >= 2

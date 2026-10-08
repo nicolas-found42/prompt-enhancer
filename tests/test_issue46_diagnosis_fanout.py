@@ -420,7 +420,9 @@ def test_provider_failure_keeps_original_with_incomplete_diagnosis() -> None:
     result = _run(gateway)
 
     assert len(gateway.batches) == 1
-    assert result["status"] == "completed"
+    assert result["status"] == "failed"
+    assert result["report"]["outcome"] == "failed_operational"
+    assert result["report"]["failure"]["kind"] == "incomplete_diagnosis"
     assert result["original_kept"] is True
     assert (
         result["report"]["diagnosis"]["request_evidence"]["reason"]
@@ -477,7 +479,9 @@ def test_http_transport_counts_physical_diagnosis_requests_including_retry() -> 
 
 def test_fanout_recording_strictly_replays_and_old_sequential_bundle_still_loads(
     tmp_path: Path,
+    deterministic_active_clock,
 ) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     for speculative, observe_sequential in (
         (True, False),
         (False, False),
@@ -514,7 +518,9 @@ def test_fanout_recording_strictly_replays_and_old_sequential_bundle_still_loads
 
 def test_recording_replays_the_provider_limit_and_diagnosis_protocols(
     tmp_path: Path,
+    deterministic_active_clock,
 ) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     path = tmp_path / "bounded.json"
     gateway = BatchGateway()
     gateway.catalog = StaticModelCatalog(

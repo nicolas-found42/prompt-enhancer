@@ -1,5 +1,5 @@
 import type { Job } from "../api";
-import { elapsedText, stageLabels, stageOrder } from "../outcome";
+import { elapsedText, stageLabels } from "../outcome";
 
 type Props = {
   job: Job;
@@ -19,7 +19,6 @@ function spentText(costTotal: number | undefined): string | null {
 }
 
 export default function RunProgress({ job, onCancel }: Props) {
-  const current = job.stage ? stageOrder.indexOf(job.stage) : -1;
   const round = job.round.round ? ` · round ${job.round.round}` : "";
   const spent = spentText(job.cost_total);
   const cancellationPending = job.cancellation_pending ?? job.cancel_requested;
@@ -40,6 +39,12 @@ export default function RunProgress({ job, onCancel }: Props) {
             <span className="elapsed">
               {elapsedText(job.elapsed_ms)} elapsed
             </span>
+            {job.remaining_active_ms !== undefined && (
+              <span>
+                {" "}
+                · {elapsedText(job.remaining_active_ms)} active time remaining
+              </span>
+            )}
             {spent && <span className="spent"> · {spent}</span>}
             {round}
           </p>
@@ -53,26 +58,54 @@ export default function RunProgress({ job, onCancel }: Props) {
           {cancellationPending ? "Cancelling…" : "Cancel"}
         </button>
       </div>
-      <ol className="stages">
-        {stageOrder.map((stage, index) => {
-          const state =
-            job.state === "queued"
-              ? "pending"
-              : index < current
-                ? "done"
-                : index === current
-                  ? "current"
-                  : "pending";
-          return (
-            <li
-              key={stage}
-              className={`stage stage-${state}`}
-              aria-current={state === "current" ? "step" : undefined}
-            >
-              {stageLabels[stage]}
+      <ol className="stages" aria-label="Run activity">
+        {job.events?.length ? (
+          job.events.map((event) => (
+            <li key={event.cursor} className="stage">
+              <span>
+                {event.stage
+                  ? `${stageLabels[event.stage] ?? event.summary} — ${event.kind}`
+                  : event.summary}
+              </span>
+              <small>
+                {" "}
+                · {elapsedText(event.elapsed_ms)}
+                {event.round ? ` · round ${event.round}` : ""}
+              </small>
+              {event.draft && (
+                <details>
+                  <summary>
+                    {event.kind === "qualified"
+                      ? "Qualified rewrite"
+                      : "Draft preview — awaiting checks"}
+                  </summary>
+                  <pre>{event.draft}</pre>
+                </details>
+              )}
+              {event.diff && (
+                <details>
+                  <summary>Changes from your prompt</summary>
+                  <pre>{event.diff}</pre>
+                </details>
+              )}
+              {event.reasons?.length ? (
+                <ul>
+                  {event.reasons.map((reason, index) => (
+                    <li key={index}>{reason}</li>
+                  ))}
+                </ul>
+              ) : null}
             </li>
-          );
-        })}
+          ))
+        ) : (
+          <li className="stage stage-current" aria-current="step">
+            {job.state === "queued"
+              ? "Waiting for processing to begin"
+              : job.stage
+                ? (stageLabels[job.stage] ?? "Processing your prompt")
+                : "Processing your prompt"}
+          </li>
+        )}
       </ol>
       <p className="progress-note">
         You can leave this page open or come back later. The run keeps going and

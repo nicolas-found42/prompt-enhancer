@@ -140,11 +140,12 @@ def test_optimize_job_returns_run_id_at_once_and_finishes_with_the_result() -> N
     job = client.get(f"/api/jobs/{run_id}").json()
     assert job["state"] == "done"
     assert job["prompt"] == "Explain recursion."
-    # The stub keeps the original prompt and supplies no tests, so the run
-    # converges on its measured baseline with an unverified result.
+    # The writer echoes the original and supplies no tests. The job finishes
+    # at its deadline without presenting that baseline as an improvement.
     assert job["result"]["status"] == "completed"
-    assert job["result"]["report"]["status"] == "converged"
-    assert job["result"]["report"]["convergence"]["verification"] == "unverified"
+    assert job["result"]["report"]["status"] == "deadline_reached"
+    assert job["result"]["report"]["outcome"] is None
+    assert job["result"]["final_prompt"] == "Explain recursion."
     assert "diagnosing" in job["stages_seen"]
     assert client.get(f"/api/runs/{run_id}").status_code == 200
 
@@ -177,7 +178,9 @@ def test_invalid_resume_answer_is_rejected_before_a_job_and_can_be_corrected() -
         "question_id": "goal",
         "message": "Answer for 'goal' requires other text",
     }
-    assert client.get(f"/api/jobs/{run_id}").status_code == 404
+    preserved = client.get(f"/api/jobs/{run_id}")
+    assert preserved.status_code == 200
+    assert preserved.json()["result"]["status"] == "needs_input"
 
     corrected = client.post(
         f"/api/jobs/{run_id}/resume",

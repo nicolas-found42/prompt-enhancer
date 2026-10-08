@@ -16,7 +16,9 @@ OUTCOME_VALUES = frozenset(
         "failed_operational",
     }
 )
-CONTROL_STATES = frozenset({"awaiting_approval", "stopped", "cancelled"})
+CONTROL_STATES = frozenset(
+    {"awaiting_approval", "stopped", "cancelled", "deadline_reached"}
+)
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -177,7 +179,12 @@ def apply_outcome_fields(
             or failure.get("hint")
             or "Route proved this style incompatible with a hard requirement."
         )
-    elif status == "converged" and _convergence_is_proven(result):
+    elif (
+        status == "converged"
+        and final_prompt != original_prompt
+        and _accepted_candidate(result, final_prompt, original_prompt) is not None
+        and _convergence_is_proven(result)
+    ):
         evidence = _mapping(result.get("convergence"))
         if not evidence:
             for round_record in reversed(_rounds(result)):

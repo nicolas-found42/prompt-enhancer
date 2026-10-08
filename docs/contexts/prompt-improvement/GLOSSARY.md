@@ -26,18 +26,18 @@ The minimum accepted score for one Quality dimension. Floors are recorded with e
 _Avoid_: average threshold
 
 **Convergence**:
-The successful stop when the selected prompt's score vector meets every dimension floor and the mean score gain over the previous Round is at or below the configured epsilon (0.01 by default). The first Round has no previous vector, so its gain is `null`, not zero or a measured plateau; if that first vector meets every floor, the current policy still permits immediate convergence on the floor evidence.
+The successful stop when an accepted, useful changed prompt's own score vector meets every dimension floor and the mean score gain over the previous Round is at or below the configured epsilon (0.01 by default). The first Round has no previous vector, so its gain is `null`, not zero or a measured plateau; if that first vector meets every floor, the current policy still permits immediate convergence on the floor evidence.
 _Avoid_: stalled, exhausted attempts
 
 **Perfect Prompt Loop**:
-The uncapped sequence of bounded Rounds. It carries losing-candidate evidence into the next Round and continues while a floor is unmet or measured gain remains above epsilon. It may finish at Convergence, an impossible style/required-constraint incompatibility that Route can prove (currently including an exact-output conflict), or an operational failure. A configured time or spend limit pauses at a Round boundary for approval; pause, cancellation, and user stop are control states, not quality outcomes. Finalizing a user stop preserves a previously accepted changed prompt only when that prompt's own evidence supports an improved outcome.
+The sequence of bounded Rounds within one 150-second active processing allowance. It carries losing-candidate evidence into the next Round and continues while a floor is unmet or measured gain remains above epsilon. It may finish at Convergence, a proven task conflict that needs the user's choice, or an operational failure. An exact-output instruction permits faithful edits to its surrounding presentation; rejecting a strategy bundle does not prove the task impossible. A configured time or spend limit pauses at a Round boundary for approval. The active deadline is a terminal control stop, separate from quality outcomes; without a qualified changed prompt it establishes no improvement. Clarification replies resume the same identity with accumulated active time, excluding the human reply delay. Finalizing a user stop preserves a previously accepted changed prompt only when that prompt's own evidence supports an improved outcome.
 
 **Rejection cause label**:
 A Jev suggestion for why a user rejected a completed prompt result, inferred from the user's optional note and retained for evaluation.
 _Avoid_: ground-truth label, Round signal
 
 **Improvement not verified**:
-An internal or historical description that the run has not established a tested improvement; it is not one of the five canonical outcomes. **Improved (unverified)** requires an actually accepted changed prompt that passed meaning and safety checks when usable success-test evidence was unavailable. A proven style/required-constraint incompatibility is **impossible**; the currently implemented Route example is an exact-output/style conflict. A technical or provider failure is **failed (operational)**. A Round that rejects every current candidate may still continue, so it does not by itself determine the final outcome.
+An internal or historical description that the run has not established a tested improvement; it is not one of the five canonical outcomes. **Improved (unverified)** requires an actually accepted changed prompt that passed meaning and safety checks when usable success-test evidence was unavailable. A proven task incompatibility may be **impossible**; exact-output instructions alone do not establish impossibility. A technical or provider failure is **failed (operational)**. A Round that rejects every current candidate may still continue, so it does not by itself determine the final outcome.
 _Avoid_: silent success
 
 ## Policy
@@ -47,12 +47,11 @@ A run reports one of five outcomes: **converged**, **improved (tested)**,
 result names the applied style when known and gives a brief explanation tied
 to the run evidence. An unverified result is an improved outcome only when a
 changed candidate was actually accepted after meaning and safety checks; the
-explanation must say that answer quality was not tested. The currently
-implemented impossible case is an exact-output/style conflict. A failed
+explanation must say that answer quality was not tested. Exact-output instructions permit faithful surrounding instruction edits and do not by themselves establish impossibility. A failed
 operational result explains why the run could not produce a final accepted
 outcome.
 
-Pause, cancellation, and user stop are control states, not extra outcome
+Pause, cancellation, active deadline, and user stop are control states, not extra outcome
 categories. If the user stops after a changed candidate was accepted, the run
 may retain it as **improved (tested)** or **improved (unverified)** only when
 its own evidence supports that outcome; a stop alone never creates an

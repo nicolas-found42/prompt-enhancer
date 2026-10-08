@@ -554,6 +554,9 @@ class HttpGateway:
             observer(dict(event))
 
     def _check_cancelled(self, run_id: str | None) -> None:
+        from .active_budget import check_active_budget
+
+        check_active_budget()
         check = (self._operation_context.get() or {}).get("cancel_check")
         if callable(check) and check():
             from .failures import RunCancelled
@@ -679,6 +682,16 @@ class HttpGateway:
     ) -> Any:
         started = self._monotonic()
         deadline = started + max(0.001, float(self.config.operation_timeout_s))
+        from .active_budget import ActiveDeadlineExceeded, current_budget
+
+        budget = current_budget.get()
+        run_limited = (
+            budget is not None
+            and budget.remaining_s() <= self.config.operation_timeout_s
+        )
+        if budget is not None:
+            budget.check()
+            deadline = min(deadline, started + budget.remaining_s())
         self._emit_operation(
             {
                 "event": "start",
@@ -735,8 +748,12 @@ class HttpGateway:
                     "error_kind": error_kind,
                 }
             )
-            if isinstance(exc, RunCancelled):
+            if isinstance(exc, (RunCancelled, ActiveDeadlineExceeded)):
                 raise
+            if isinstance(exc, _GatewayDeadlineExceeded) and run_limited:
+                raise ActiveDeadlineExceeded(
+                    "The active run deadline ended during model routing."
+                ) from exc
             if isinstance(exc, ProviderError):
                 raise
             raise ProviderError(
@@ -821,8 +838,27 @@ class HttpGateway:
                         self._note_provider(
                             decision.provider, "unavailable", status, decision.model
                         )
+                    body = _response_json(response)
+                    error = body.get("error") if isinstance(body, Mapping) else None
+                    code = error.get("code") if isinstance(error, Mapping) else None
+                    size_error = status == 413 or (
+                        status == 400
+                        and code
+                        in {
+                            "max_tokens_exceeded",
+                            "context_length_exceeded",
+                            "context_window_exceeded",
+                        }
+                    )
                     raise ProviderError(
-                        decision.provider, decision.model, status, role=role
+                        decision.provider,
+                        decision.model,
+                        status,
+                        role=role,
+                        kind="context_length" if size_error else None,
+                        response_details={"provider_error_code": code}
+                        if size_error and isinstance(code, str)
+                        else {},
                     )
                 self._note_provider(decision.provider, "ok", status, decision.model)
                 decoded = _response_json(response)
@@ -886,6 +922,12 @@ class HttpGateway:
             except Exception as exc:
                 from .failures import RunCancelled
 
+                if isinstance(exc, ActiveDeadlineExceeded):
+                    raise
+                if isinstance(exc, _GatewayDeadlineExceeded) and run_limited:
+                    raise ActiveDeadlineExceeded(
+                        "The active run deadline ended during a provider request."
+                    ) from exc
                 if isinstance(exc, RunCancelled):
                     self._emit_operation(
                         {
@@ -1684,6 +1726,9 @@ class ScriptedGateway:
     def _next(
         self, handler: Callable[..., Any] | None, *args: Any, **kwargs: Any
     ) -> Any:
+        from .active_budget import check_active_budget
+
+        check_active_budget()
         if handler is not None:
             return handler(*args, **kwargs)
         if not self.responses:

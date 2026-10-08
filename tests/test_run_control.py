@@ -246,7 +246,8 @@ def test_approval_continue_resumes_from_pause_boundary(limits) -> None:
 
     assert finished["run_id"] == run_id
     assert finished["status"] == "completed"
-    assert finished["report"]["status"] == "converged"
+    assert finished["report"]["status"] == "deadline_reached"
+    assert finished["report"]["outcome"] is None
     assert len(finished["report"]["history"]) >= 2
     assert finished["report"]["history"][0] == paused["report"]["history"][0]
     assert float(finished["cost"]["total"]) >= paused_spent
@@ -301,8 +302,10 @@ def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
             )
         )
     )
-    # The restarted backend never saw the job, but the paused run is resumable.
-    assert restarted.get(f"/api/jobs/{run_id}").status_code == 404
+    # Recovery retains the terminal job and its timeline as well as its resume context.
+    recovered = restarted.get(f"/api/jobs/{run_id}")
+    assert recovered.status_code == 200
+    assert recovered.json()["result"]["report"]["status"] == "awaiting_approval"
     assert restarted.post(f"/api/jobs/{run_id}/continue", json={}).status_code == 202
 
     deadline = _time.time() + 30
@@ -312,7 +315,8 @@ def test_paused_run_survives_backend_restart(tmp_path: Any) -> None:
             break
         _time.sleep(0.01)
     finished = restarted.get(f"/api/runs/{run_id}").json()["result"]
-    assert finished["report"]["status"] == "converged"
+    assert finished["report"]["status"] == "deadline_reached"
+    assert finished["report"]["outcome"] is None
     assert len(finished["report"]["history"]) >= 2
     record = restarted_store.get_run(run_id)
     assert record["initial_configuration"] == initial
@@ -490,11 +494,7 @@ def test_continuation_save_preserves_concurrent_configuration_history(monkeypatc
     def get_run(key):
         nonlocal triggered
         record = original_get(key)
-        if (
-            saving.is_set()
-            and not triggered
-            and threading.current_thread() is threading.main_thread()
-        ):
+        if saving.is_set() and not triggered:
             triggered = True
             read.set()
             assert attempted.wait(5)

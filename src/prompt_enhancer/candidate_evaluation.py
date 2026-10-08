@@ -20,6 +20,7 @@ from .styles import validated_style_authorization
 EVALUATION_ASPECTS = (
     "task_preserved",
     "no_invented_detail",
+    "useful_change",
     "structure_added",
     "verbosity_direction",
 )
@@ -392,6 +393,8 @@ def evaluate_candidate_packages(
             ),
         }
         for aspect in EVALUATION_ASPECTS:
+            if legacy_evidence and aspect == "useful_change":
+                continue
             if aspect == "task_preserved":
                 query = (
                     "Does the candidate prompt preserve the task that the user "
@@ -405,6 +408,15 @@ def evaluate_candidate_packages(
                     "state.style_authorization permits only its expressly bounded "
                     "presentation changes. It never supports new task facts, scope, "
                     "deliverables, or success criteria."
+                )
+            elif aspect == "useful_change":
+                query = (
+                    "Does the candidate usefully improve the original instructions "
+                    "for the applied style while preserving meaning? Reject writer "
+                    "echoes, whitespace/case/punctuation churn and unsupported synonym "
+                    "swaps. A clear faithful presentation edit can be useful even when "
+                    "the original already produces correct answers. This judgment "
+                    "does not establish measured downstream answer-quality gain."
                 )
             elif aspect == "structure_added":
                 query = (
@@ -546,6 +558,7 @@ def evaluate_candidate_packages(
             "comparison": {
                 aspect: pre_answers.get((candidate_id, "compare", aspect), {})
                 for aspect in EVALUATION_ASPECTS
+                if not (legacy_evidence and aspect == "useful_change")
             },
             "verification": {
                 str(index): pre_answers.get((candidate_id, "verify", str(index)), {})
@@ -601,9 +614,10 @@ def evaluate_candidate_packages(
                         "and weak outputs when tests exist. Use comparison and review "
                         "judgments, and verification/audit judgments only when those "
                         "checks are applicable. Empty verification/audit mappings mean "
-                        "no applicable checks, not failures. An unchanged original may "
-                        "be accepted without a rewrite, strategy application, added "
-                        "structure, or measured improvement. Strategy names are "
+                        "no applicable checks, not failures. Require a useful changed "
+                        "prompt; the unchanged original is reference evidence. A useful "
+                        "faithful clarity edit can qualify without a measured downstream "
+                        "gain when baseline answers already work. Strategy names are "
                         "suggestions, not acceptance criteria. No-tests downstream "
                         "verification must stay unverified and is neutral. Reject "
                         "substantive failures or insufficient applicable evidence."
@@ -657,7 +671,9 @@ def evaluate_candidate_packages(
                 "accepted": accepted,
             }
             failures: list[str] = []
-            for aspect in ("task_preserved", "no_invented_detail"):
+            for aspect in ("task_preserved", "no_invented_detail", "useful_change"):
+                if legacy_evidence and aspect == "useful_change":
+                    continue
                 answer = candidate_evidence["comparison"][aspect]
                 if (
                     not answer.get("usable")

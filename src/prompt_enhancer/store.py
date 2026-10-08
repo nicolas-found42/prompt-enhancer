@@ -189,6 +189,11 @@ class RunStore:
         }
         evidence = {key: value for key, value in record.items() if key not in known}
         with self._lock:
+            from .publication import publication_allowed
+
+            owner = publication_allowed.get()
+            if owner is not None and not owner():
+                return run_id
             self._connection.execute(
                 """
                 INSERT OR REPLACE INTO runs

@@ -177,9 +177,7 @@ def test_zero_pass_rates_with_tests_still_keep_the_original() -> None:
     assert round_report["evidence"]["tests"] != []
 
 
-def test_clarified_baseline_without_changed_candidates_converges_after_acceptance() -> (
-    None
-):
+def test_clarified_baseline_without_changed_candidates_is_reference_evidence() -> None:
     from prompt_enhancer.config import Settings
     from prompt_enhancer.rounds import RoundPlan, run_round
 
@@ -197,13 +195,14 @@ def test_clarified_baseline_without_changed_candidates_converges_after_acceptanc
     )
     outcome = run_round(_gateway(recheck_probability=0.01), plan)
 
-    assert outcome.status == "converged"
+    assert outcome.status == "clarified"
+    assert outcome.continue_rounds is True
     assert outcome.original_kept is False
     assert outcome.final_prompt == working
-    assert outcome.reported_failure is None
-    assert outcome.convergence["passed"] is True
-    assert outcome.convergence["selected"] is True
-    assert outcome.ranking.selected.candidate_id == "original"
+    assert outcome.reported_failure["kind"] == "improvement_not_verified"
+    assert outcome.convergence["passed"] is False
+    assert outcome.convergence["selected"] is False
+    assert outcome.ranking.selected is None
     assert (
         outcome.evaluation_evidence["candidates"]["original"]["accept"]["accepted"]
         is True
