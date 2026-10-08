@@ -122,7 +122,7 @@ def test_draft_repair_carries_own_failure_evidence_and_retests_after_reload(tmp_
         lambda _exc: {},
         prompt=prompt,
     )
-    done = jobs.wait("repair")
+    done = jobs.wait("repair", timeout=60)
     assert done["result"]["final_prompt"] == good
     repair_state = next(item for item in requests if item.get("repair_evidence"))
     failure = repair_state["repair_evidence"][0]
@@ -200,7 +200,9 @@ def test_repeated_failed_repairs_reach_deadline_and_keep_every_completed_round(
         lambda _exc: {},
         prompt=prompt,
     )
-    done = jobs.wait("failed-repair")
+    # This wall guard detects a hung worker; the injected clock still proves
+    # the product's 150-second active deadline, even under coverage overhead.
+    done = jobs.wait("failed-repair", timeout=60)
     result = done["result"]
     assert result["report"]["control_state"] == "deadline_reached"
     assert result["final_prompt"] == prompt and result["report"]["outcome"] is None
@@ -212,4 +214,204 @@ def test_repeated_failed_repairs_reach_deadline_and_keep_every_completed_round(
             "events"
         ]
         == done["events"]
+    )
+
+
+@pytest.mark.parametrize("binding", [0.01, None])
+def test_unbound_accepted_proposal_is_retained_but_excluded_from_grading(
+    tmp_path, binding
+):
+    prompt = "Reply with exactly PING and nothing else."
+    gateway = compound_gateway(
+        prompt,
+        [],
+        output="PING",
+        candidate="Respond with exactly PING and nothing else.",
+    )
+    chat, decide = gateway.chat_handler, gateway.decision_handler
+
+    def generate(model, messages, **params):
+        if params["role"] == "writer" and "Compile the user" in messages[0]["content"]:
+            return '{"tests":[{"question":"Does the answer equal PING and mention bananas?","kind":"noul","expected":"yes"}]}'
+        return chat(model, messages, **params)
+
+    def screen(request, **params):
+        key = str(request.get("key", ""))
+        if key.startswith("requirement:test-binding:"):
+            return (
+                None
+                if binding is None
+                else {"type": "noul", "probability_true": binding, "confidence": 1.0}
+            )
+        if key.startswith("success-test-screen:"):
+            probability = (
+                0.99
+                if request["dimension"]
+                in {"faithfulness", "no_invention", "assessability"}
+                else 0.01
+            )
+            return {"type": "noul", "probability_true": probability, "confidence": 1.0}
+        return decide(request, **params)
+
+    gateway.chat_handler, gateway.decision_handler = generate, screen
+    result = PromptOptimizer(
+        store=RunStore(tmp_path / "unbound.sqlite"), gateway=gateway
+    ).optimize(prompt, {"time_limit_s": 0})
+    evidence = result["report"]["history"][0]["evidence"]["test_screening"]
+    assert evidence["tests"] == []
+    source_checks = evidence["source_checks"]
+    assert len(source_checks["attempts"]) == 2
+    assert all(attempt["tests"] for attempt in source_checks["attempts"])
+    assert all(attempt["binding_rejected"] for attempt in source_checks["attempts"])
+    assert source_checks["coverage"][0]["status"] == "unresolved"
+    assert evidence["rejected"]
+    assert not any(
+        str(entry["question"].get("key", "")).startswith("grade_")
+        for entry in gateway.decision_log
+    )
+
+
+def test_source_bindings_are_size_bounded_batches_and_checkpoint_partial_answers():
+    from prompt_enhancer.requirement_tests import compile_source_tests
+    from prompt_enhancer.requirements import extract_requirements
+    from prompt_enhancer.success_tests import SuccessTestCompiler
+
+    prompt = "Write using {one}, {two}, {three}, {four}, {five}, {six}."
+    requirements = extract_requirements(prompt)
+    gateway = compound_gateway(prompt, [])
+    chat, decide_batch = gateway.chat_handler, gateway.decide_batch
+    decide = gateway.decision_handler
+
+    def faithful(request, **params):
+        if str(request.get("key", "")).startswith("faithful:"):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
+        return decide(request, **params)
+
+    gateway.decision_handler = faithful
+    batches, checkpoints = [], []
+
+    def generate(model, messages, **params):
+        if "Compile the user" in messages[0]["content"]:
+            return json.dumps(
+                {
+                    "tests": [
+                        {
+                            "question": f"Does the answer use {{{word}}}?",
+                            "kind": "noul",
+                            "expected": "yes",
+                        }
+                        for word in ("one", "two", "three", "four", "five", "six")
+                    ]
+                }
+            )
+        return chat(model, messages, **params)
+
+    def batched(requests, **params):
+        if all(
+            str(item.get("key", "")).startswith("requirement:test-binding:")
+            for item in requests
+        ):
+            batches.append(requests)
+            return [{"type": "noul", "probability_true": 0.99, "confidence": 1.0}] * (
+                len(requests) - 1
+            )
+        return decide_batch(requests, **params)
+
+    gateway.chat_handler, gateway.decide_batch = generate, batched
+    compiler = SuccessTestCompiler(
+        gateway, writer_model="test", screen_protocol_version=1
+    )
+    compiled, evidence = compile_source_tests(
+        compiler, prompt, requirements, on_evidence=checkpoints.append
+    )
+    assert compiled.tests
+    assert len(batches) > 1 and all(len(batch) <= 8 for batch in batches)
+    assert all(
+        len(json.dumps(batch, ensure_ascii=False).encode()) < 48_000
+        for batch in batches
+    )
+    bindings = evidence["attempts"][0]["bindings"]
+    assert len(bindings) == 6 * len(requirements)
+    assert len({item["request_id"] for item in bindings}) == len(bindings)
+    assert any(
+        item["status"] == "unresolved" and item["raw_decision"] is None
+        for item in bindings
+    )
+    assert any(
+        any(
+            item["status"] == "unresolved" for item in record["attempts"][0]["bindings"]
+        )
+        for record in checkpoints
+    )
+
+
+def test_lossless_draft_does_not_claim_it_consumed_ordinary_repair_evidence():
+    from dataclasses import replace
+
+    from test_rounds import _gateway, _plan
+
+    from prompt_enhancer.requirements import extract_requirements
+    from prompt_enhancer.rounds import run_round
+
+    prompt = "Read the background notes. Write an invitation using {date}."
+    gateway = _gateway(tests='{"tests":[]}')
+    decide = gateway.decision_handler
+
+    def role(request, **params):
+        if str(request.get("key", "")).startswith("restructure_lossless:role:"):
+            choice = (
+                "context"
+                if "background"
+                in next(
+                    unit["text"]
+                    for unit in request["state"]["source_units"]
+                    if unit["id"] == request["key"].rsplit(":", 1)[-1]
+                )
+                else "task"
+            )
+            return {
+                "type": "choice",
+                "choice": choice,
+                "probabilities": {choice: 1.0},
+                "confidence": 1.0,
+            }
+        return decide(request, **params)
+
+    gateway.decision_handler = role
+    events = []
+    outcome = run_round(
+        gateway,
+        replace(
+            _plan(diagnosis={"confirmed_gaps": [], "problem_sentences": []}),
+            prompt=prompt,
+            working_prompt=prompt,
+            applied_style="faithful_transform",
+            writer_instruction_version=15,
+            route_strategies=("restructure_lossless",),
+            requirements=extract_requirements(prompt),
+            repair_evidence=(
+                {
+                    "candidate_id": "old",
+                    "candidate_prompt": "Use tomorrow.",
+                    "requirement_findings": [
+                        {"reason": "The date placeholder was dropped."}
+                    ],
+                },
+            ),
+        ),
+        on_activity=events.append,
+    )
+    lossless = [
+        item["candidate_id"]
+        for item in outcome.candidates
+        if item["strategy"] == "restructure_lossless"
+    ]
+    assert lossless
+    assert any(
+        event["kind"] == "checks" and event.get("candidate_id") in lossless
+        for event in events
+    )
+    assert not any(
+        event["kind"] in {"repair", "retest"} and event.get("candidate_id") in lossless
+        for event in events
     )

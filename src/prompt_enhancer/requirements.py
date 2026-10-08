@@ -740,30 +740,41 @@ def prompt_findings(
             continue
         match = JSON_SCHEMA_DIRECTIVE.fullmatch(candidate)
         actual = schema_from_source(match["schema"]) if match is not None else None
+        status = (
+            "failed"
+            if actual is None
+            else "tested"
+            if actual == item.expected
+            else "failed"
+        )
         if item.kind in {"json_contract", "csv_contract"}:
             declarations = [
                 expected
                 for _, _, kind, scope, expected in structured_contracts(candidate)
                 if kind == item.kind and scope == item.scope
             ]
-            actual = (
-                item.expected
-                if item.expected in declarations
-                else declarations[0]
-                if len(declarations) == 1
-                else None
-            )
+            supported = [
+                value
+                for value in declarations
+                if not json.loads(value).get("uncertainty")
+            ]
+            if json.loads(item.expected).get("uncertainty"):
+                # An unsupported source convention supplies no known binding
+                # that a rewrite could deterministically delete or contradict.
+                status = "untestable"
+            elif not declarations or any(value != item.expected for value in supported):
+                status = "failed"
+            elif len(supported) != len(declarations):
+                status = "unresolved"
+            else:
+                status = "tested"
         findings += (
             {
                 "requirement_id": item.id,
                 "source": item.source,
                 "scope": "candidate_prompt",
                 "candidate_id": candidate_id,
-                "status": "untestable"
-                if actual is None
-                else "tested"
-                if actual == item.expected
-                else "failed",
+                "status": status,
                 "check": "csv_declaration_bindings"
                 if item.kind == "csv_contract"
                 else "json_type_bindings",

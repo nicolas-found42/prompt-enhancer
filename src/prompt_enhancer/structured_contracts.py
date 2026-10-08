@@ -53,7 +53,12 @@ def _json_contract(tail: str) -> dict[str, Any]:
     )
     if match:
         status, schema, _ = read_json(match["schema"], unique_names=True)
-        if status == "tested" and _valid_schema(schema) and isinstance(schema, dict):
+        if (
+            status == "tested"
+            and not _duplicates(schema)
+            and _valid_schema(schema)
+            and isinstance(schema, dict)
+        ):
             contract.update(schema=schema, exact_keys=bool(match["exact"]))
             return contract
     declaration = re.fullmatch(
@@ -149,6 +154,12 @@ def structured_contracts(
     spans = source_data_spans(prompt)
     for match in _START.finditer(prompt):
         if any(start <= match.start() < end for start, end in spans):
+            continue
+        prefix = prompt[: match.start()]
+        if re.search(r"\bhow\b[^.!?\n;:]*$", prefix, re.I) and not re.search(
+            r"(?:\bthen|[,;:])\s*$", prefix, re.I
+        ):
+            # Descriptions of an operation do not declare this answer's format.
             continue
         # A sentence/line is the supported declaration boundary. Semicolons
         # remain in CSV declarations because they can introduce row constraints.

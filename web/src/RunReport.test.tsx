@@ -1062,3 +1062,64 @@ it("retains protected values, unresolved checks and prior-round draft evidence w
   expect(within(coverage).getByText(/Round 1/)).toBeVisible();
   expect(within(coverage).getByText(/TOKEN was removed/)).toBeInTheDocument();
 });
+
+it("shows completed coverage once and orders unfinished checkpoints without rejecting them", () => {
+  const finding = {
+    requirement_id: "r1",
+    status: "tested",
+    source: "Keep facts.",
+    reason: "Own evidence.",
+  };
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          requirements: { requirements: [{ id: "r1", source: "Keep facts." }] },
+          history: [
+            {
+              round_number: 1,
+              evidence: {
+                selection_evidence: {
+                  ranking: [
+                    {
+                      candidate_id: "c1",
+                      selected: true,
+                      metadata: { requirement_findings: [finding] },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+          requirement_checks: {
+            "3:c3": { round: 3, candidate_id: "c3", findings: [finding] },
+            "1:c1": { round: 1, candidate_id: "c1", findings: [finding] },
+            "2:c2": { round: 2, candidate_id: "c2", findings: [finding] },
+          },
+        },
+      }}
+    />
+  );
+  const coverage = screen.getByRole("region", { name: "Requirement coverage" });
+  expect(
+    within(coverage).getAllByText(/Round 1: source requirement findings/)
+  ).toHaveLength(1);
+  const rounds = [...coverage.querySelectorAll("details > summary")].filter(
+    (el) => el.textContent?.startsWith("Round")
+  );
+  expect(rounds.map((el) => el.textContent)).toEqual([
+    "Round 1: source requirement findings",
+    "Round 2: source requirement findings",
+    "Round 3: source requirement findings",
+  ]);
+  expect(
+    within(coverage).getByText("Draft c1 — qualified")
+  ).toBeInTheDocument();
+  expect(
+    within(coverage).getByText("Draft c2 — checks unfinished")
+  ).toBeInTheDocument();
+  expect(
+    within(coverage).queryByText(/did not qualify/)
+  ).not.toBeInTheDocument();
+});

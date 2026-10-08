@@ -1,4 +1,4 @@
-import RequirementCoverage from "./RequirementCoverage";
+import RequirementCoverage, { coverageHistory } from "./RequirementCoverage";
 import type { OptimizeResult } from "./api";
 import {
   humanize,
@@ -289,26 +289,10 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
     <div className="report-content">
       <p>{text(report.summary)}</p>
       <RequirementCoverage
-        history={[
-          ...items(report.history),
-          ...Object.values(record(report.requirement_checks)).map((value) => {
-            const check = record(value);
-            return {
-              round_number: check.round,
-              evidence: {
-                selection_evidence: {
-                  ranking: [
-                    {
-                      candidate_id: check.candidate_id,
-                      text: check.draft,
-                      metadata: { requirement_findings: check.findings },
-                    },
-                  ],
-                },
-              },
-            };
-          }),
-        ]}
+        history={coverageHistory(
+          items(report.history),
+          record(report.requirement_checks)
+        )}
         ledger={record(report.requirements)}
         selection={selection}
       />

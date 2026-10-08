@@ -26,18 +26,53 @@ export default function RunProgress({ job, onCancel }: Props) {
   const coverageEvent = [...(job.events ?? [])]
     .reverse()
     .find((event) => event.requirements);
+  const candidates = new Map<string, Record<string, unknown>>();
+  let selected: Record<string, unknown> | undefined;
+  for (const event of job.events ?? []) {
+    if (!event.candidate_id) continue;
+    const key = `${event.round}:${event.candidate_id}`;
+    const candidate = candidates.get(key) ?? {
+      candidate_id: event.candidate_id,
+      round: event.round,
+      status: "checks pending",
+    };
+    if (event.draft) candidate.text = event.draft;
+    if (event.checks?.length) {
+      candidate.metadata = {
+        requirement_findings: event.checks.flatMap(
+          (check) => check.evidence ?? []
+        ),
+      };
+    }
+    if (event.kind === "qualified") {
+      candidate.selected = true;
+      candidate.status = "qualified";
+      selected = candidate;
+    } else if (event.kind === "blocked") {
+      candidate.selected = false;
+      candidate.status = "did not qualify";
+    }
+    candidates.set(key, candidate);
+  }
   const selection = {
-    ranking: (job.events ?? [])
-      .filter((event) => event.checks?.length)
-      .map((event) => ({
-        candidate_id: `${event.round}:${event.candidate_id}:${event.cursor}`,
-        metadata: {
-          requirement_findings: event.checks?.flatMap(
-            (check) => check.evidence ?? []
-          ),
-        },
-      })),
+    selected_candidate: selected,
+    ranking: [...candidates.values()].filter(
+      (candidate) => candidate !== selected
+    ),
   };
+  const rounds = new Map<number, Record<string, unknown>[]>();
+  for (const candidate of candidates.values()) {
+    const number = Number(candidate.round);
+    const ranking = rounds.get(number) ?? [];
+    ranking.push(candidate);
+    rounds.set(number, ranking);
+  }
+  const history = [...rounds.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([number, ranking]) => ({
+      round_number: number,
+      evidence: { selection_evidence: { ranking } },
+    }));
   const cancellationPending = job.cancellation_pending ?? job.cancel_requested;
 
   return (
@@ -149,6 +184,7 @@ export default function RunProgress({ job, onCancel }: Props) {
           live
           ledger={record(coverageEvent.requirements)}
           selection={selection}
+          history={history}
         />
       )}
       <p className="progress-note">

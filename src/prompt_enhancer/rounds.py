@@ -1052,7 +1052,7 @@ def run_round(
     candidates = list(search.candidates)
     if on_activity is not None:
         for draft in candidates:
-            if plan.repair_evidence:
+            if plan.repair_evidence and draft.strategy.name != "restructure_lossless":
                 on_activity(
                     {
                         "kind": "repair",
@@ -1212,7 +1212,10 @@ def run_round(
             if checks:
                 on_activity(
                     {
-                        "kind": "retest" if plan.repair_evidence else "checks",
+                        "kind": "retest"
+                        if plan.repair_evidence
+                        and candidate.strategy != "restructure_lossless"
+                        else "checks",
                         "candidate_id": candidate.candidate_id,
                         "summary": "This draft's source requirement checks returned; uncertain checks remain unverified.",
                         "checks": list(checks),

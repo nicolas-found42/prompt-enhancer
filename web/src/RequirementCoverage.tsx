@@ -21,6 +21,41 @@ function requirementCheckSummary(findings: Record<string, unknown>[]): string {
   ].join(", ");
 }
 
+export function coverageHistory(
+  history: Record<string, unknown>[],
+  checkpoints: Record<string, unknown>
+): Record<string, unknown>[] {
+  const rounds = new Map<number, Record<string, unknown>>();
+  for (const round of history) {
+    rounds.set(Number(round.round_number), round);
+  }
+  for (const value of Object.values(checkpoints)) {
+    const check = record(value);
+    const number = Number(check.round);
+    if (!Number.isFinite(number)) continue;
+    const existing = rounds.get(number);
+    // A completed round already owns its final findings and selection outcome.
+    if (existing && existing.unfinished !== true) continue;
+    const ranking = items(
+      record(record(existing?.evidence).selection_evidence).ranking
+    );
+    ranking.push({
+      candidate_id: check.candidate_id,
+      text: check.draft,
+      status: "checks unfinished",
+      metadata: { requirement_findings: check.findings },
+    });
+    rounds.set(number, {
+      round_number: number,
+      unfinished: true,
+      evidence: { selection_evidence: { ranking } },
+    });
+  }
+  return [...rounds.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, round]) => round);
+}
+
 export default function RequirementCoverage({
   ledger,
   selection,
@@ -37,7 +72,9 @@ export default function RequirementCoverage({
   const selected = record(selection.selected_candidate);
   const findings = items(record(selected.metadata).requirement_findings);
   const rejected = items(selection.ranking).filter(
-    (item) => item.candidate_id !== selected.candidate_id
+    (item) =>
+      item.candidate_id !== selected.candidate_id ||
+      item.round !== selected.round
   );
   return (
     <section aria-label="Requirement coverage">
@@ -155,7 +192,9 @@ export default function RequirementCoverage({
               <details key={text(candidate.candidate_id)}>
                 <summary>
                   Draft {text(candidate.candidate_id)} —{" "}
-                  {candidate.selected ? "qualified" : "did not qualify"}
+                  {candidate.selected
+                    ? "qualified"
+                    : text(candidate.status) || "did not qualify"}
                 </summary>
                 <p className="preserve-lines">{text(candidate.text)}</p>
                 <ul>

@@ -11,7 +11,11 @@ from .gateway import ProviderError
 from .jev import JevResponseError, NoulDecision, parse_decision
 from .requirement_decisions import typed_evidence
 from .requirements import Requirement
-from .success_tests import CompiledSuccessTests, SuccessTestCompiler
+from .success_tests import (
+    CompiledSuccessTests,
+    RejectedSuccessTest,
+    SuccessTestCompiler,
+)
 
 
 def compile_source_tests(
@@ -61,6 +65,7 @@ def compile_source_tests(
             *(item.test for item in compiled.rejected if item.test is not None),
         ]
         bindings = []
+        requests = []
         for test in proposed:
             for requirement in requirements:
                 key = f"requirement:test-binding:{compiler.round_number}:{attempt}:{test.id}:{requirement.id}"
@@ -75,30 +80,87 @@ def compile_source_tests(
                         "test": test.to_dict(),
                     },
                 }
-                raw = None
+                binding: dict[str, Any] = {
+                    "requirement_id": requirement.id,
+                    "test_id": test.id,
+                    "status": "unresolved",
+                    "request_id": key,
+                    "raw_decision": None,
+                }
+                bindings.append(binding)
+                requests.append((binding, request))
+        attempt_record["bindings"] = bindings
+        batches = []
+        pending = []
+        size = 0
+        for binding, request in requests:
+            request_size = len(json.dumps(request, ensure_ascii=False).encode())
+            if request_size > 48_000:
+                continue
+            if pending and (len(pending) == 8 or size + request_size > 48_000):
+                batches.append(pending)
+                pending, size = [], 0
+            pending.append((binding, request))
+            size += request_size
+        if pending:
+            batches.append(pending)
+        if on_evidence:
+            on_evidence(
+                json.loads(json.dumps({"attempts": attempts, "coverage": coverage}))
+            )
+        for batch in batches:
+            try:
+                answers = compiler.gateway.decide_batch(
+                    [request for _, request in batch],
+                    role="judge",
+                    run_id=compiler.run_id,
+                )
+            except ProviderError:
+                answers = []
+            for index, (binding, _) in enumerate(batch):
+                raw = answers[index] if index < len(answers) else None
+                binding["raw_decision"] = (
+                    typed_evidence(raw) if raw is not None else None
+                )
                 try:
-                    raw = compiler.gateway.decide(
-                        request, role="judge", run_id=compiler.run_id
-                    )
                     decision = parse_decision(raw)
-                except (ProviderError, JevResponseError, ValueError, TypeError):
+                except (JevResponseError, ValueError, TypeError):
                     decision = None
-                supported = (
+                if (
                     isinstance(decision, NoulDecision)
                     and decision.probability >= 0.8
                     and decision.confidence >= 0.8
+                ):
+                    binding["status"] = "supported"
+            if on_evidence:
+                on_evidence(
+                    json.loads(json.dumps({"attempts": attempts, "coverage": coverage}))
                 )
-                bindings.append(
-                    {
-                        "requirement_id": requirement.id,
-                        "test_id": test.id,
-                        "status": "supported" if supported else "unresolved",
-                        "request_id": key,
-                        "raw_decision": typed_evidence(raw),
-                    }
-                )
-        attempt_record["bindings"] = bindings
-        accepted.update({test.id: test for test in compiled.tests})
+        supported_ids = {
+            item["test_id"] for item in bindings if item["status"] == "supported"
+        }
+        unbound = [
+            test
+            for test in compiled.tests
+            if requirements and test.id not in supported_ids
+        ]
+        accepted.update(
+            {test.id: test for test in compiled.tests if test not in unbound}
+        )
+        binding_rejections = tuple(
+            RejectedSuccessTest(
+                test,
+                "No supported binding to an original source obligation was established.",
+                0.0,
+                0.0,
+            )
+            for test in unbound
+        )
+        compiled = replace(compiled, rejected=(*compiled.rejected, *binding_rejections))
+        report = compiled.as_dict()
+        # Retain the physical compiler acceptance separately from the binding
+        # gate; rejected proposals remain inspectable and can be replaced once.
+        attempt_record["binding_rejected"] = [test.to_dict() for test in unbound]
         retained_rejections.extend(compiled.rejected)
         retained_checks.extend(compiled.faithfulness_checks)
         retained_screening.extend(compiled.screening_checks)
@@ -111,7 +173,7 @@ def compile_source_tests(
                 if binding["test_id"] == test.get("id")
                 and binding["status"] == "supported"
             ]
-            if ids:
+            if ids or test.get("id") in {item.id for item in unbound}:
                 rejected_evidence.append(
                     {"attempt": attempt, "requirement_ids": ids, **rejected}
                 )

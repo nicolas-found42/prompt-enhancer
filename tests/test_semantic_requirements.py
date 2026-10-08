@@ -143,3 +143,37 @@ def test_typed_requirement_decision_omits_private_explanations():
             "diagnostics": "private",
         }
     ) == {"data": {"noul": {"probability": 0.99, "certainty": 0.95}}}
+
+
+def test_missing_named_semantic_section_fails_without_a_judge_request(tmp_path):
+    prompt = "Explain the risks in a Risks section."
+    gateway = compound_gateway(
+        prompt,
+        [obligation(prompt, prompt, scope="section:Risks")],
+        output="## Benefits\nEverything is fine.",
+    )
+    decide = gateway.decision_handler
+    requests = []
+
+    def record_request(request, **params):
+        if str(request.get("key", "")).startswith("requirement:semantic:"):
+            requests.append(request)
+        return decide(request, **params)
+
+    gateway.decision_handler = record_request
+    result = PromptOptimizer(
+        store=RunStore(tmp_path / "missing-section.sqlite"), gateway=gateway
+    ).optimize(prompt, {"time_limit_s": 0})
+    assert result["original_kept"]
+    findings = result["report"]["history"][0]["evidence"]["selection_evidence"][
+        "ranking"
+    ][0]["metadata"]["requirement_findings"]
+    assert any(
+        item["check"] == "semantic_obligation"
+        and item["scope"] == "section:Risks"
+        and item["status"] == "failed"
+        for item in findings
+    )
+    assert requests and all(
+        request["state"].get("sample") is None for request in requests
+    )

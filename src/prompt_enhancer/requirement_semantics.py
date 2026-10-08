@@ -67,6 +67,12 @@ def semantic_findings(
             if uncertainty:
                 record["status"] = "untestable"
                 continue
+            if index and item.scope.startswith("section:") and output is None:
+                record.update(
+                    status="failed",
+                    reason="The explicitly required named section is missing from this answer.",
+                )
+                continue
             requests.append(
                 (
                     record,

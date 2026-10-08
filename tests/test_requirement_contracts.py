@@ -22,7 +22,7 @@ def run_contract(tmp_path, prompt, output, *, candidate=None):
     )
     assert store.get_run(result["run_id"])["result"]["report"] == result["report"]
     evidence = result["report"]["history"][0]["evidence"]["selection_evidence"]
-    return result, evidence["ranking"][0]["metadata"]["requirement_findings"]
+    return result, evidence["ranking"][0]["metadata"].get("requirement_findings", [])
 
 
 @pytest.mark.parametrize(
@@ -220,3 +220,89 @@ def test_unsupported_json_schema_is_disclosed_without_requiring_unstated_values(
         item["check"] == "json_contract" and item["status"] == "untestable"
         for item in findings
     )
+
+
+@pytest.mark.parametrize("change", ["delete", "contradict"])
+def test_candidate_cannot_delete_or_countermand_a_source_contract(tmp_path, change):
+    prompt = "Summarize the article, then Return JSON containing title as a string."
+    candidate = "Summarize the article using the title."
+    if change == "contradict":
+        candidate = prompt + " Return JSON containing title as an integer."
+    result, findings = run_contract(
+        tmp_path, prompt, '{"title":"A"}', candidate=candidate
+    )
+    assert result["original_kept"]
+    assert any(
+        item["check"] == "json_type_bindings" and item["status"] == "failed"
+        for item in findings
+    )
+
+
+def test_nested_duplicate_source_schema_is_ambiguous(tmp_path):
+    prompt = 'Summarize, then Return JSON with keys and types: {"user":{"name":"string","name":"integer"}}.'
+    _, findings = run_contract(tmp_path, prompt, '{"user":{"name":1}}')
+    assert any(
+        item["check"] == "json_contract" and item["status"] == "untestable"
+        for item in findings
+    )
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "Explain how to return JSON from a Flask endpoint.",
+        "Describe how a Flask endpoint should return JSON.",
+        "Explain how you return JSON from Flask.",
+    ],
+)
+def test_describing_json_in_a_tutorial_does_not_require_json_output(tmp_path, prompt):
+    result, findings = run_contract(
+        tmp_path,
+        prompt,
+        "Use jsonify to serialize a response.",
+        candidate=prompt + " Include a clear explanation.",
+    )
+    assert not result["original_kept"]
+    assert not any(item["check"] == "json_contract" for item in findings)
+
+
+def test_json_directive_after_a_tutorial_clause_remains_binding(tmp_path):
+    prompt = (
+        "Explain how the endpoint works, then Return JSON containing title as a string."
+    )
+    result, findings = run_contract(tmp_path, prompt, '{"title":2}')
+    assert result["original_kept"]
+    assert any(
+        item["check"] == "json_contract" and item["status"] == "failed"
+        for item in findings
+    )
+
+
+def test_uncertain_rewrite_cannot_silently_drop_known_type_bindings(tmp_path):
+    prompt = "Summarize, then Return JSON containing title as a string."
+    result, findings = run_contract(
+        tmp_path,
+        prompt,
+        '{"title":"A"}',
+        candidate="Summarize, then Return JSON with title typed as text.",
+    )
+    assert result["original_kept"]
+    assert any(
+        item["check"] == "json_type_bindings" and item["status"] == "unresolved"
+        for item in findings
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "status"), [("not json", "failed"), ("{}", "untestable")]
+)
+def test_unsupported_json_schema_still_has_a_known_syntax_requirement(
+    tmp_path, output, status
+):
+    prompt = "Read the article, then Return JSON matching a union of string or number."
+    result, findings = run_contract(tmp_path, prompt, output)
+    assert any(
+        item["check"] == "json_contract" and item["status"] == status
+        for item in findings
+    )
+    assert result["original_kept"] is (status == "failed")
