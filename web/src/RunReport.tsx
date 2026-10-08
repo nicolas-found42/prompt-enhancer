@@ -21,6 +21,118 @@ function score(value: unknown): string {
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
 }
 
+function requirementCheckSummary(findings: Record<string, unknown>[]): string {
+  const count = (status: string) =>
+    findings.filter((item) => item.status === status).length;
+  const label = (amount: number, type: string) =>
+    `${amount} ${type} check${amount === 1 ? "" : "s"}`;
+  return [
+    label(count("tested"), "passed"),
+    label(count("failed"), "failed"),
+    label(count("untestable"), "untestable"),
+  ].join(", ");
+}
+
+function RequirementCoverage({
+  ledger,
+  selection,
+}: {
+  ledger: Record<string, unknown>;
+  selection: Record<string, unknown>;
+}) {
+  const requirements = items(ledger.requirements);
+  if (requirements.length === 0) return null;
+  const selected = record(selection.selected_candidate);
+  const findings = items(record(selected.metadata).requirement_findings);
+  const rejected = items(selection.ranking).filter(
+    (item) => item.candidate_id !== selected.candidate_id
+  );
+  return (
+    <section aria-label="Requirement coverage">
+      <h3>Requirement coverage</h3>
+      <p>
+        {ledger.coverage === "partial" ? "Coverage is partial. " : ""}
+        {text(ledger.reason)}
+      </p>
+      {items(ledger.contradictions).map((conflict, index) => (
+        <p key={index}>
+          {conflict.status === "resolved_by_user"
+            ? `Your answer resolved the conflicting counts: use exactly ${text(conflict.selected_count)}.`
+            : "Conflicting counts still need your answer."}{" "}
+          {text(conflict.reason)}
+        </p>
+      ))}
+      <ul>
+        {requirements.map((requirement, index) => {
+          const own = findings.filter(
+            (item) => item.requirement_id === requirement.id
+          );
+          const reasons = [
+            ...new Set(own.map((item) => text(item.reason)).filter(Boolean)),
+          ];
+          return (
+            <li key={text(requirement.id) || index}>
+              <p>{text(requirement.source)}</p>
+              <p>
+                {requirement.source_kind === "user_answer"
+                  ? "From your answer. "
+                  : "From your original prompt. "}
+                {requirement.scope === "candidate_prompt"
+                  ? "Applies to the rewritten prompt."
+                  : "Applies to the complete answer."}
+              </p>
+              {own.length > 0 ? (
+                <>
+                  <p>Selected draft: {requirementCheckSummary(own)}.</p>
+                  {reasons.map((reason) => (
+                    <p key={reason}>{reason}</p>
+                  ))}
+                </>
+              ) : (
+                <p>
+                  No check result for the selected draft was retained for this
+                  source requirement.
+                </p>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {rejected.some(
+        (candidate) =>
+          items(record(candidate.metadata).requirement_findings).length > 0
+      ) && (
+        <details>
+          <summary>Checks for drafts that did not qualify</summary>
+          {rejected.map((candidate, index) => {
+            const checks = items(
+              record(candidate.metadata).requirement_findings
+            );
+            if (checks.length === 0) return null;
+            return (
+              <div key={text(candidate.candidate_id) || index}>
+                <p>
+                  Draft {index + 1}: {requirementCheckSummary(checks)}.
+                </p>
+                <p className="preserve-lines">{text(candidate.text)}</p>
+                {[
+                  ...new Set(
+                    checks
+                      .filter((item) => item.status !== "tested")
+                      .map((item) => text(item.reason))
+                  ),
+                ].map((reason) => (
+                  <p key={reason}>{reason}</p>
+                ))}
+              </div>
+            );
+          })}
+        </details>
+      )}
+    </section>
+  );
+}
+
 const calibrationDispositions: Record<string, string> = {
   legacy: "Existing policy remains in use",
   gate: "Calibration permits this question to gate decisions",
@@ -287,6 +399,10 @@ export default function RunReport({ result }: { result: OptimizeResult }) {
   return (
     <div className="report-content">
       <p>{text(report.summary)}</p>
+      <RequirementCoverage
+        ledger={record(report.requirements)}
+        selection={selection}
+      />
       {canonicalOutcome && (
         <section aria-label="Run outcome">
           <p>

@@ -9,6 +9,49 @@ from prompt_enhancer.jobs import RunJobs
 from prompt_enhancer.store import RunStore
 
 
+def test_requirement_check_events_keep_candidate_evidence_across_reload(tmp_path):
+    from test_always_attempt import _gateway
+
+    from prompt_enhancer.optimizer import PromptOptimizer
+
+    clock = TickingClock()
+    store = RunStore(tmp_path / "checks.sqlite")
+    jobs = RunJobs(store=store, monotonic=clock)
+    optimizer = PromptOptimizer(
+        store=store,
+        clock=clock,
+        gateway=_gateway(
+            candidate_text="Respond with exactly PING and nothing else.",
+            weak_output="PING",
+        ),
+    )
+    prompt = "Reply with exactly PING and nothing else."
+    jobs.submit(
+        "checks",
+        "optimize",
+        lambda progress, _cancel, _observe: optimizer.optimize(
+            prompt,
+            run_id="checks",
+            progress=progress,
+        ),
+        lambda _exc: {},
+        prompt=prompt,
+    )
+    done = jobs.wait("checks")
+    selected = done["result"]["report"]["selection_evidence"]["selected_candidate"]
+    events = [item for item in done["events"] if item["kind"] == "checks"]
+    own = next(
+        item for item in events if item["candidate_id"] == selected["candidate_id"]
+    )
+    assert own["checks"][0]["source"] == prompt
+    assert own["checks"][0]["tested"] == 16
+    assert own["checks"][0]["failed"] == own["checks"][0]["untestable"] == 0
+    restored = RunJobs(store=RunStore(tmp_path / "checks.sqlite"), monotonic=clock).get(
+        "checks"
+    )
+    assert restored["events"] == done["events"]
+
+
 def test_queue_time_counts_and_late_work_cannot_replace_terminal_state():
     clock = TickingClock()
     store = RunStore(":memory:")

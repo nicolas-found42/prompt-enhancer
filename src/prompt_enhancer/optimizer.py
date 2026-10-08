@@ -74,6 +74,7 @@ from .repeat import (
     RoundRunner,
     _history_from_run,
 )
+from .requirements import conflict_plan, requirement_ledger, resolved_prompt
 from .rewrite import (
     CURRENT_WRITER_INSTRUCTION_VERSION,
     WRITER_INSTRUCTION_VERSIONS,
@@ -690,6 +691,7 @@ class PromptOptimizer:
                     "applied_style",
                     "understand",
                     "route",
+                    "requirements",
                 )
                 if key in previous_report
             },
@@ -1001,6 +1003,24 @@ class PromptOptimizer:
         started_at: str,
         started_perf: float,
     ) -> OptimizeResult:
+        conflict = (
+            conflict_plan(prompt) if self.writer_instruction_version >= 15 else None
+        )
+        if conflict is not None:
+            self._stage("clarifying")
+            self._activity(
+                {
+                    "kind": "waiting",
+                    "summary": "Conflicting requirements need your choice; the active processing clock is paused.",
+                }
+            )
+            state = self._clarification.start(
+                run_id, prompt, conflict, metadata={"options": dict(options)}
+            )
+            result = self._needs_input_result(run_id, state, started_at, started_perf)
+            result["report"]["requirements"] = requirement_ledger(prompt)
+            result["report"]["models"] = run_settings.model_roles()
+            return result
         self._stage("diagnosing")
         diagnosis_log_start = len(self.gateway.decision_log)
         diagnosis = self._diagnose(prompt)
@@ -1170,6 +1190,8 @@ class PromptOptimizer:
             diagnosis=context.diagnosis,
             judge_model=context.settings.judge_model,
             run_id=context.run_id,
+            protect_requirements=self.writer_instruction_version >= 15,
+            assumptions=context.assumptions,
         )
         route = run_route(
             self.gateway,
@@ -1211,6 +1233,9 @@ class PromptOptimizer:
         report["improvement_style"] = understand.requested_style
         report["applied_style"] = understand.applied_style
         report["understand"] = understand.to_dict()
+        requirements = understand.provenance.get("requirements")
+        if isinstance(requirements, Mapping):
+            report["requirements"] = dict(requirements)
         report["route"] = route.to_dict()
         understand_judgments = understand.provenance.get("judgment_provenance", ())
         diagnosis_report = report.get("diagnosis", {})
@@ -1270,6 +1295,15 @@ class PromptOptimizer:
             assumptions=list(context.assumptions),
             models=context.settings.model_roles(),
             improvement_style=context.improvement_style,
+            **(
+                {
+                    "requirements": requirement_ledger(
+                        context.prompt, context.assumptions
+                    )
+                }
+                if self.writer_instruction_version >= 15
+                else {}
+            ),
         )
         state = RunControlState(
             control=control or RunControl(),
@@ -1291,6 +1325,10 @@ class PromptOptimizer:
         )
 
         def with_writer_attempts(result: OptimizeResult) -> OptimizeResult:
+            if self.writer_instruction_version >= 15:
+                result["report"]["requirements"] = requirement_ledger(
+                    context.prompt, context.assumptions
+                )
             if self.writer_instruction_version >= WRITER_REPLY_RECOVERY_MIN_VERSION:
                 result["report"]["writer_attempts"] = [
                     dict(item) for item in writer_attempts
@@ -1321,6 +1359,15 @@ class PromptOptimizer:
                 "assumptions": list(context.assumptions),
                 "models": context.settings.model_roles(),
                 "report_context": {
+                    **(
+                        {
+                            "requirements": requirement_ledger(
+                                context.prompt, context.assumptions
+                            )
+                        }
+                        if self.writer_instruction_version >= 15
+                        else {}
+                    ),
                     "improvement_style": context.improvement_style,
                     "applied_style": context.understand.applied_style
                     if context.understand is not None
@@ -2182,6 +2229,7 @@ class PromptOptimizer:
         from .active_budget import current_budget
 
         if current_budget.get() is None:
+            self.validate_skip(run_id)
             stored = self.store.get_run(run_id)
             return self._supervise(
                 run_id,
@@ -2210,6 +2258,14 @@ class PromptOptimizer:
         return self._save_clarification_result(
             run_id, state, usage_before, started_perf
         )
+
+    def validate_skip(self, run_id: str) -> None:
+        try:
+            self._clarification.validate_skip(run_id)
+        except UnknownRunError as exc:
+            if self.store.get_run(run_id) is not None:
+                raise RunNotPausedError(f"Run {run_id!r} is not paused") from exc
+            raise RunNotFoundError(run_id) from exc
 
     def _save_clarification_result(
         self,
@@ -2479,6 +2535,10 @@ def _apply_assumption(
 
 
 def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
+    source_prompt = prompt
+    prompt = resolved_prompt(
+        prompt, [item for item in assumptions if isinstance(item, Mapping)]
+    )
     lines = []
     for item in assumptions:
         if not isinstance(item, Mapping) or item.get("source") not in {
@@ -2488,6 +2548,8 @@ def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
             continue
         key = str(item.get("key", "")).strip()
         value = str(item.get("value", "")).strip()
+        if prompt != source_prompt and key.startswith("conflict:"):
+            continue
         if key and value:
             lines.append(f"{_clarification_label(key, item.get('source'))}: {value}")
     if not lines:

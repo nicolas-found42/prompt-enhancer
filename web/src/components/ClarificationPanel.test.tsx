@@ -3,6 +3,48 @@ import userEvent from "@testing-library/user-event";
 import { expect, it, vi } from "vitest";
 import { ClarificationPanel } from "./ClarificationPanel";
 
+it("requires a choice for conflicting requirements before submitting or skipping", async () => {
+  const user = userEvent.setup();
+  const onSubmit = vi.fn();
+  render(
+    <ClarificationPanel
+      questions={[
+        {
+          id: "conflict:sentence_count",
+          prompt: "Which sentence count should the answer use?",
+          required_answer: true,
+          default_answer: "",
+          options: [
+            { value: "2", label: "Use exactly 2 sentences." },
+            { value: "3", label: "Use exactly 3 sentences." },
+          ],
+        },
+      ]}
+      onSubmit={onSubmit}
+      onSkip={vi.fn()}
+    />
+  );
+
+  expect(screen.getByRole("button", { name: "Skip" })).toBeDisabled();
+  expect(
+    screen.getByRole("radio", { name: "Use exactly 2 sentences." })
+  ).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Use my answers" }));
+  expect(onSubmit).not.toHaveBeenCalled();
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "Choose an answer to resolve this conflict."
+  );
+  expect(
+    screen.getByRole("radio", { name: "Use exactly 2 sentences." })
+  ).toHaveFocus();
+
+  await user.click(
+    screen.getByRole("radio", { name: "Use exactly 3 sentences." })
+  );
+  await user.click(screen.getByRole("button", { name: "Use my answers" }));
+  expect(onSubmit).toHaveBeenCalledWith({ "conflict:sentence_count": "3" });
+});
+
 it("submits the user's custom answer for a missing goal", async () => {
   const onSubmit = vi.fn();
   const user = userEvent.setup();

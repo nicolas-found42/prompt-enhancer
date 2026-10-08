@@ -254,6 +254,19 @@ def create_app(
     @app.post("/api/jobs/{run_id}/skip", status_code=202)
     def start_skip(run_id: str) -> dict[str, Any]:
         require_run(run_id)
+        try:
+            app_optimizer.validate_skip(run_id)
+        except InvalidAnswerError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_answer",
+                    "question_id": exc.question_id,
+                    "message": str(exc),
+                },
+            ) from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return submit(
             run_id,
             "skip",

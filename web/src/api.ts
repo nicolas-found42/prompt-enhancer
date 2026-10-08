@@ -9,6 +9,7 @@ export type ClarificationQuestion = {
   }[];
   default?: string;
   default_answer?: string;
+  required_answer?: boolean;
   allow_other?: boolean;
   other_value?: string;
 };
@@ -145,6 +146,14 @@ export type RunEvent = {
   draft?: string;
   diff?: string;
   reasons?: string[];
+  checks?: {
+    requirement_id: string;
+    source: string;
+    tested: number;
+    failed: number;
+    untestable: number;
+    reasons: string[];
+  }[];
 };
 export type Job = {
   run_id: string;

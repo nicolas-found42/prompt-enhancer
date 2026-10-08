@@ -49,6 +49,14 @@ from .improve import (
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import utc_now
+from .requirements import (
+    check_summaries,
+    effective_requirements,
+    extract_requirements,
+    output_findings,
+    preserves_literal,
+    prompt_findings,
+)
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
 from .score_vector import score_candidate
@@ -561,8 +569,9 @@ def _ranking_candidate(
     candidate: CandidateDraft,
     panel_grades: Mapping[str, Any],
     original_grade: Any,
+    requirement_findings: Sequence[Mapping[str, Any]] = (),
 ) -> RankingCandidate:
-    """Eligibility with the fidelity hard gate and the score-vector max-gate."""
+    """Candidate eligibility, including source-backed checks and quality floors."""
     fidelity = check_candidate_fidelity(
         gateway,
         working_prompt,
@@ -599,7 +608,26 @@ def _ranking_candidate(
     hard_violated = tuple(
         literal
         for literal in plan.hard_constraints
-        if plan.exact_output and literal not in candidate.text
+        if (
+            plan.exact_output
+            or (
+                plan.writer_instruction_version >= 15
+                and literal
+                in {
+                    value
+                    for item in extract_requirements(plan.prompt)
+                    for value in item.protected_values
+                }
+            )
+        )
+        and (
+            not preserves_literal(candidate.text, literal)
+            if plan.writer_instruction_version >= 15
+            else literal not in candidate.text
+        )
+    )
+    known_failures = tuple(
+        item for item in requirement_findings if item.get("status") == "failed"
     )
     eligible = (
         fidelity.passed
@@ -612,6 +640,7 @@ def _ranking_candidate(
         and original_grade.unresolved_grade_outputs == 0
         and grade.detected_outputs == 0
         and not hard_violated
+        and not known_failures
     )
     return RankingCandidate(
         candidate_id=candidate.candidate_id,
@@ -633,6 +662,12 @@ def _ranking_candidate(
             + tuple(
                 f"hard requirement violated: {literal!r} must be preserved verbatim"
                 for literal in hard_violated
+            )
+            + tuple(
+                dict.fromkeys(
+                    f"Known requirement failed: {item['source']!r}; {item['reason']}"
+                    for item in known_failures
+                )
             )
             + (
                 ("weak-panel grading was incomplete or oversized",)
@@ -660,6 +695,11 @@ def _ranking_candidate(
         metadata={
             "fidelity": fidelity.to_dict(),
             "score_vector": vector.to_dict(),
+            **(
+                {"requirement_findings": [dict(item) for item in requirement_findings]}
+                if requirement_findings
+                else {}
+            ),
             **(
                 {"lossless_restructuring": candidate.metadata["lossless_restructuring"]}
                 if "lossless_restructuring" in candidate.metadata
@@ -1013,6 +1053,11 @@ def run_round(
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
+    requirements = (
+        effective_requirements(plan.prompt, plan.assumptions)
+        if plan.writer_instruction_version >= 15
+        else ()
+    )
     ranking_candidates = [
         _ranking_candidate(
             gateway,
@@ -1022,9 +1067,26 @@ def run_round(
             candidate,
             panel_grades,
             original_grade,
+            output_findings(
+                requirements,
+                [item.to_dict() for item in panel.by_candidate(candidate.candidate_id)],
+            )
+            + prompt_findings(requirements, candidate.candidate_id, candidate.text),
         )
         for candidate in candidates
     ]
+    if on_activity is not None:
+        for candidate in ranking_candidates:
+            checks = check_summaries(candidate.metadata.get("requirement_findings", ()))
+            if checks:
+                on_activity(
+                    {
+                        "kind": "checks",
+                        "candidate_id": candidate.candidate_id,
+                        "summary": "This draft's source requirement checks returned; uncertain checks remain unverified.",
+                        "checks": list(checks),
+                    }
+                )
     stage("strong_check")
     # Without success tests there is nothing to check answers against, so
     # the strong check cannot run; fidelity gates already passed above, and

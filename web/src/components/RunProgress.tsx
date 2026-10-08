@@ -95,6 +95,24 @@ export default function RunProgress({ job, onCancel }: Props) {
                   ))}
                 </ul>
               ) : null}
+              {event.checks?.length ? (
+                <ul aria-label="Requirement checks">
+                  {event.checks.map((check) => (
+                    <li key={check.requirement_id}>
+                      <p>{check.source}</p>
+                      <p>
+                        {check.tested} passed check
+                        {check.tested === 1 ? "" : "s"}, {check.failed} failed
+                        check{check.failed === 1 ? "" : "s"}, {check.untestable}{" "}
+                        untestable check{check.untestable === 1 ? "" : "s"}.
+                      </p>
+                      {check.reasons.map((reason) => (
+                        <p key={reason}>{reason}</p>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </li>
           ))
         ) : (

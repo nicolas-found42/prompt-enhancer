@@ -516,7 +516,14 @@ class RunJobs:
                 if stage == "activity":
                     facts = {
                         key: round_info[key]
-                        for key in ("candidate_id", "draft", "diff", "reasons", "stage")
+                        for key in (
+                            "candidate_id",
+                            "draft",
+                            "diff",
+                            "reasons",
+                            "stage",
+                            "checks",
+                        )
                         if key in round_info
                     }
                     self._append_event(

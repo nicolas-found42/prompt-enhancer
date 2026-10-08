@@ -11,6 +11,60 @@ const baseResult: OptimizeResult = {
   timing: { total_ms: 0 },
 };
 
+it("explains requirement sources, partial coverage and the selected draft's own checks", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          requirements: {
+            coverage: "partial",
+            reason: "Other obligations still need coverage.",
+            requirements: [
+              {
+                id: "r1",
+                source: "Write exactly two words.",
+                scope: "whole_output",
+              },
+            ],
+            contradictions: [],
+          },
+          selection_evidence: {
+            selected_candidate: {
+              metadata: {
+                requirement_findings: [
+                  {
+                    requirement_id: "r1",
+                    status: "tested",
+                    reason: "Exactly two words are required.",
+                  },
+                  {
+                    requirement_id: "r1",
+                    status: "untestable",
+                    reason: "Word boundaries are ambiguous.",
+                  },
+                ],
+              },
+            },
+          },
+        },
+      }}
+    />
+  );
+
+  const section = screen.getByRole("region", { name: "Requirement coverage" });
+  expect(within(section).getByText("Write exactly two words.")).toBeVisible();
+  expect(within(section).getByText(/Coverage is partial/)).toBeVisible();
+  expect(
+    within(section).getByText(
+      /1 passed check, 0 failed checks, 1 untestable check/
+    )
+  ).toBeVisible();
+  expect(
+    within(section).getByText("Word boundaries are ambiguous.")
+  ).toBeVisible();
+});
+
 it("shows per-round source-backed failure hypotheses and uncertain pairs", () => {
   render(
     <RunReport

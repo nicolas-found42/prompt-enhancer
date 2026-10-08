@@ -59,6 +59,24 @@ test("event cursors, draft diffs, repeated rounds and cancellation survive reloa
       elapsed_ms: 45000,
       round: 2,
     },
+    {
+      cursor: 6,
+      kind: "checks",
+      summary: "This draft's source requirement checks returned.",
+      elapsed_ms: 45000,
+      round: 2,
+      candidate_id: "draft-2",
+      checks: [
+        {
+          requirement_id: "requirement:0:10",
+          source: "<script>window.unsafeCheck = true</script>",
+          tested: 2,
+          failed: 0,
+          untestable: 1,
+          reasons: ["Word boundaries are ambiguous."],
+        },
+      ],
+    },
   ];
   const requested: number[] = [];
   let cancelled = false;
@@ -78,7 +96,7 @@ test("event cursors, draft diffs, repeated rounds and cancellation survive reloa
           cancel_requested: true,
           cancellation_pending: true,
           events,
-          event_cursor: 5,
+          event_cursor: events.length,
         },
       });
     }
@@ -90,7 +108,7 @@ test("event cursors, draft diffs, repeated rounds and cancellation survive reloa
       json: {
         ...base,
         events: events.filter((event) => event.cursor > cursor),
-        event_cursor: 5,
+        event_cursor: events.length,
       },
     });
   });
@@ -105,7 +123,14 @@ test("event cursors, draft diffs, repeated rounds and cancellation survive reloa
     activity.getByText(/Writing improved versions — completed/)
   ).toBeVisible();
   await expect.poll(() => requested).toContain(1);
-  await expect.poll(() => requested).toContain(5);
+  await expect.poll(() => requested).toContain(6);
+  await expect(
+    activity.getByText(/2 passed checks, 0 failed checks, 1 untestable check/)
+  ).toBeVisible();
+  await expect(
+    activity.getByText("Word boundaries are ambiguous.")
+  ).toBeVisible();
+  expect(await page.evaluate(() => "unsafeCheck" in window)).toBe(false);
   await activity.getByText("Draft preview — awaiting checks").click();
   await activity.getByText("Changes from your prompt").click();
   await expect(activity.locator("pre").first()).toHaveText(
@@ -121,7 +146,7 @@ test("event cursors, draft diffs, repeated rounds and cancellation survive reloa
   await expect(
     activity.getByText(/Writing improved versions — started/)
   ).toHaveCount(2);
-  await expect(activity.locator("li.stage")).toHaveCount(5);
+  await expect(activity.locator("li.stage")).toHaveCount(6);
   expect(requested).toContain(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(cancelled).toBe(true);
