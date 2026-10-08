@@ -4,13 +4,13 @@ import re
 from dataclasses import dataclass
 
 from .criterion_reading import number_candidates
-from .protected_blocks import fenced_sources, quoted_data_spans
+from .protected_blocks import source_data_spans
 
 _NUMBER = r"\d{1,9}|one|two|three|four|five|six|seven|eight|nine|ten"
 _COUNT = rf"(?:exactly\s+)?(?P<count>{_NUMBER})\s+(?P<unit>words?|sentences?|lines?|bullets?)"
 _AFTER = re.compile(
     _COUNT
-    + r"\s+(?:under|in)\s+(?:the\s+)?(?:section\s+)?(?P<name>[A-Za-z][A-Za-z0-9 _-]{0,80}?)(?=\s+and\s+|[.;\n]|$)",
+    + r"\s+(?:under\s+(?:the\s+)?(?:section\s+)?|in\s+(?:the\s+)?section\s+)(?P<name>[A-Za-z][A-Za-z0-9 _-]{0,80}?)(?=\s+and\s+|[.;\n]|$)",
     re.I,
 )
 _BEFORE = re.compile(
@@ -33,7 +33,7 @@ class ScopedCount:
 
 
 def scoped_counts(prompt: str) -> tuple[ScopedCount, ...]:
-    blocks = fenced_sources(prompt)
+    data_spans = source_data_spans(prompt)
     found = []
     for pattern in (_AFTER, _BEFORE):
         prior_end = None
@@ -48,11 +48,21 @@ def scoped_counts(prompt: str) -> tuple[ScopedCount, ...]:
                 ):
                     continue
             prior_end = match.end()
-            if any(block.start <= match.start() < block.end for block in blocks) or any(
-                a <= match.start() < b for a, b in quoted_data_spans(prompt)
-            ):
+            if any(a < match.end() and match.start() < b for a, b in data_spans):
                 continue
             name = match["name"].strip()
+            if (
+                pattern is _AFTER
+                and re.search(
+                    r"\bunder\s+(?:the\s+)?$",
+                    prompt[match.start() : match.start("name")],
+                    re.I,
+                )
+                and not name[0].isupper()
+            ):
+                # Bare lower-case phrases such as "under pressure" do not name
+                # a section. Semantic extraction retains any actual instruction.
+                continue
             for prefix in ("", "next_"):
                 if prefix and "next_count" not in match.groupdict():
                     continue
@@ -91,9 +101,13 @@ def section_text(output: str, scope: str) -> tuple[str | None, str | None]:
             headings.append((index, len(markdown[1]), markdown[2]))
         elif plain:
             headings.append((index, 1, plain[1]))
-    targets = [item for item in headings if item[2] == name]
+    targets = [
+        item
+        for item in headings
+        if item[2].strip().casefold() == name.strip().casefold()
+    ]
     if not targets:
-        if name in output:
+        if name.casefold() in output.casefold():
             return None, "The named section has no supported explicit heading boundary."
         return None, None  # Explicit section is missing: a known failure.
     if len(targets) != 1 or "```" in output or "~~~" in output:
@@ -105,4 +119,4 @@ def section_text(output: str, scope: str) -> tuple[str | None, str | None]:
     )
     if any(start < index < end for index, _, _ in headings):
         return None, "Nested section boundaries need a scope decision."
-    return "\n".join(lines[start + 1 : end]).strip("\n"), None
+    return "".join(line + "\n" for line in lines[start + 1 : end]), None

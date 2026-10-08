@@ -26,10 +26,17 @@ Markdown headings or explicit `Name:` headings; counts bind to that section.
 Punctuation, case and word-order edits support explicit source permissions, with
 uncertainty for unsupported tokenization. Protected fenced regions bind to their
 original region position, so a later duplicate cannot repair a changed region.
+Extracted literal protections retain that position; explicit unchanged-block
+protections compare the full block body. Ambiguous region bindings remain untestable.
+Section identity ignores heading case, while its body retains blank lines for line
+counts. Bare language, tone and lower-case idioms do not declare named sections.
 
 Required clarification has no preselected answer and cannot be skipped. Essential
 missing meaning requires text; reusable `{date}`/`{venue}` variables stay literal.
-Hard conflicts are checked in the same scope, pair by pair within a bounded audit.
+Hard conflicts are checked in the same scope using bounded pair audits batched to
+fit Gateway context. Saved pair evidence is reused across sequential choices.
+Pure whole-output count conflicts pause before model work, then audit the unchanged
+source after the explicit answer and before rewriting.
 An explicit choice supersedes only the competing obligation in the working copy;
 the original source and answer provenance remain in the ledger. Further conflicting
 requirements require another choice. Resume retains run identity and active time,

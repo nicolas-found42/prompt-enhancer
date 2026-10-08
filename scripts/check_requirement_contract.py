@@ -15,6 +15,7 @@ from validation.receipts import Receipt, commit, worktree_digest
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_TESTS = (
     "tests/test_compound_requirements.py",
+    "tests/test_compound_review_regressions.py",
     "tests/test_issue187_requirements.py",
     "tests/test_issue187_protected_blocks.py",
     "tests/test_issue187_jobs.py",

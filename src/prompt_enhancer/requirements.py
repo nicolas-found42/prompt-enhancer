@@ -99,6 +99,7 @@ class Requirement:
     oracle_uncertainty: str | None = None
     region_index: int | None = None
     declared_values: tuple[str, ...] = ()
+    protected_regions: tuple[tuple[str, int, str | None], ...] = ()
 
     @property
     def protected_values(self) -> tuple[str, ...]:
@@ -139,6 +140,20 @@ class Requirement:
             "oracle": {
                 "kind": self.kind,
                 "expected": self.expected,
+                **(
+                    {
+                        "protected_regions": [
+                            {
+                                "value": value,
+                                "region_index": index,
+                                **({"body": body} if body is not None else {}),
+                            }
+                            for value, index, body in self.protected_regions
+                        ]
+                    }
+                    if self.protected_regions
+                    else {}
+                ),
                 **(
                     {"region_index": self.region_index}
                     if self.region_index is not None
@@ -594,6 +609,39 @@ def preserves_literal(candidate: str, literal: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", candidate) is not None
 
 
+def _protected_value_status(item: Requirement, candidate: str, value: str) -> str:
+    from .protected_blocks import fenced_sources
+
+    binding = next(
+        (
+            (index, body)
+            for literal, index, body in item.protected_regions
+            if literal == value
+        ),
+        None,
+    )
+    region = binding[0] if binding is not None else None
+    if region is None:
+        return (
+            "untestable"
+            if item.oracle_uncertainty == "protected_region"
+            else ("tested" if preserves_literal(candidate, value) else "failed")
+        )
+    if binding is not None and binding[1] is not None:
+        return protected_block_status(candidate, binding[1], region_index=region)
+    blocks = fenced_sources(candidate)
+    if region >= len(blocks):
+        return "untestable" if preserves_literal(candidate, value) else "failed"
+    block = blocks[region]
+    if not preserves_literal(block.body, value):
+        return "failed"
+    return (
+        "untestable"
+        if block.boundary_uncertain or block.indentation_uncertain
+        else "tested"
+    )
+
+
 def prompt_findings(
     requirements: Sequence[Requirement], candidate_id: str, candidate: str
 ) -> tuple[dict[str, Any], ...]:
@@ -608,7 +656,14 @@ def prompt_findings(
                 "end": item.end,
                 "unit": "unicode_codepoints",
             },
-            "region_index": item.region_index,
+            "region_index": next(
+                (
+                    index
+                    for literal, index, _ in item.protected_regions
+                    if literal == value
+                ),
+                item.region_index,
+            ),
             "candidate_id": candidate_id,
             "status": protected_block_status(
                 candidate,
@@ -618,6 +673,8 @@ def prompt_findings(
                 region_index=item.region_index,
             )
             if item.kind == "protected_block"
+            else _protected_value_status(item, candidate, value)
+            if item.protected_regions or item.oracle_uncertainty == "protected_region"
             else "tested"
             if preserves_literal(candidate, value)
             else "failed",

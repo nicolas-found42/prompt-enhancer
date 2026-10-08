@@ -2061,6 +2061,19 @@ class PromptOptimizer:
             if isinstance(stored_options, Mapping)
             else "auto"
         )
+        source_ledger = (metadata or {}).get("requirements")
+        if source_ledger is not None and "extractor_model" not in source_ledger:
+            # Pure count conflicts pause without model work. Audit the original
+            # contract after the explicit choice, before any rewrite resumes.
+            source_ledger = audit_ledger(
+                self.gateway,
+                prompt,
+                judge_model=run_settings.judge_model,
+                run_id=run_id,
+                on_ledger=lambda value: self._retain_deadline_report(
+                    run_id, requirements=value
+                ),
+            )
         context = _RunContext(
             prompt,
             run_id,
@@ -2071,10 +2084,8 @@ class PromptOptimizer:
             run_settings,
             _run_seed(prompt, (metadata or {}).get("options", {}).get("seed")),
             style,
-            requirements=apply_ledger_answers(
-                metadata["requirements"], assumptions, prompt
-            )
-            if metadata and metadata.get("requirements")
+            requirements=apply_ledger_answers(source_ledger, assumptions, prompt)
+            if source_ledger is not None
             else None,
         )
         if context.requirements is not None:

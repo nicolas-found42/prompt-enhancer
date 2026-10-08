@@ -496,14 +496,7 @@ class ClarificationService:
             "metadata": dict(metadata or {}),
         }
         if not plan.questions and self.continuation is not None:
-            state["result"] = dict(self.continuation(state))
-            result = state["result"]
-            if result.get("status") == "needs_input" and result.get("questions"):
-                state["status"] = "needs_input"
-                state["questions"] = result["questions"]
-                ledger = result.get("report", {}).get("requirements")
-                if ledger is not None:
-                    state.setdefault("metadata", {})["requirements"] = ledger
+            self._continue(state)
         self.repository.save(run_id, state)
         return json.loads(json.dumps(state))
 
@@ -515,9 +508,20 @@ class ClarificationService:
             raise RunNotPausedError(f"Run {run_id!r} is not paused")
         return json.loads(json.dumps(dict(state)))
 
+    def _continue(self, state: dict[str, Any]) -> None:
+        if self.continuation is None:
+            return
+        result = dict(self.continuation(state))
+        state["result"] = result
+        if result.get("status") == "needs_input" and result.get("questions"):
+            state["status"] = "needs_input"
+            state["questions"] = result["questions"]
+            ledger = result.get("report", {}).get("requirements")
+            if ledger is not None:
+                state.setdefault("metadata", {})["requirements"] = ledger
+
     def _finish(self, run_id: str, state: dict[str, Any]) -> dict[str, Any]:
-        if self.continuation is not None:
-            state["result"] = dict(self.continuation(state))
+        self._continue(state)
         self.repository.save(run_id, state)
         return json.loads(json.dumps(state))
 

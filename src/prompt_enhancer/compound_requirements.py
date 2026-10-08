@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from itertools import combinations
 from typing import Any
@@ -12,7 +13,7 @@ from .clarification import ClarificationOption, ClarificationPlan, Clarification
 from .diagnosis import MAX_DIAGNOSIS_INPUT_CHARACTERS, MAX_DIAGNOSIS_REQUEST_BYTES
 from .gateway import ProviderError, completion_text
 from .jev import JevResponseError, NoulDecision, batch_decision_payload, parse_decision
-from .protected_blocks import source_data_spans
+from .protected_blocks import fenced_sources, source_data_spans
 from .reply_json import parse_reply_json
 from .requirements import Requirement, requirement_ledger
 
@@ -220,6 +221,44 @@ def audit_ledger(
                 scope,
                 expected,
                 declared_values=tuple(protected),
+                protected_regions=tuple(
+                    (
+                        literal,
+                        indices[0],
+                        fenced_sources(prompt)[indices[0]].body
+                        if re.search(
+                            r"(?is)\b(?:block|code|data)\b.*?\b(?:unchanged|verbatim)\b|\b(?:unchanged|verbatim)\b.*?\b(?:block|code|data)\b",
+                            source,
+                        )
+                        else None,
+                    )
+                    for literal in protected
+                    if len(
+                        indices := [
+                            index
+                            for index, block in enumerate(fenced_sources(prompt))
+                            if start <= block.start
+                            and block.end <= end
+                            and literal in block.body
+                        ]
+                    )
+                    == 1
+                ),
+                oracle_uncertainty="protected_region"
+                if any(
+                    len(
+                        [
+                            block
+                            for block in fenced_sources(prompt)
+                            if start <= block.start
+                            and block.end <= end
+                            and literal in block.body
+                        ]
+                    )
+                    > 1
+                    for literal in protected
+                )
+                else None,
             ).to_dict()
         )
     ledger.update(gaps=gaps, release_eligible=False)
@@ -363,8 +402,74 @@ def ledger_requirements(
                 item["scope"],
                 item["oracle"]["expected"],
                 declared_values=tuple(item["protected_values"]),
+                protected_regions=tuple(
+                    (binding["value"], binding["region_index"], binding.get("body"))
+                    for binding in item["oracle"].get("protected_regions", [])
+                ),
+                oracle_uncertainty=item["oracle"].get("uncertainty"),
             )
     return tuple(items.values())
+
+
+def _conflict_key(pair: tuple[dict[str, Any], dict[str, Any]]) -> str:
+    return f"requirements:audit:conflict:{pair[0]['id']}:{pair[1]['id']}"
+
+
+def _conflict_audits(
+    gateway: Any,
+    prompt: str,
+    ledger: dict[str, Any],
+    grouped: dict[str, list[dict[str, Any]]],
+    judge_model: str,
+    run_id: str,
+) -> dict[str, dict[str, Any]]:
+    cached = {audit["key"]: audit for audit in ledger.get("conflict_audits", [])}
+    requests = []
+    count = 0
+    for scope, items in grouped.items():
+        for pair in combinations(items, 2):
+            if pair[0]["oracle"]["expected"] == pair[1]["oracle"]["expected"]:
+                continue
+            kind = pair[0]["kind"]
+            if kind == pair[1]["kind"] and kind.endswith("_count"):
+                continue
+            if not any(
+                item["kind"] in {"semantic", "exact_output"}
+                or item["kind"].endswith("_count")
+                for item in pair
+            ):
+                continue
+            count += 1
+            if count > MAX_OBLIGATIONS:
+                ledger.update(
+                    coverage="partial",
+                    release_eligible=False,
+                    reason="Coverage is partial: the bounded conflict audit did not cover every applicable pair.",
+                )
+                gap = {"reason": "Conflict audit pair limit reached."}
+                if gap not in ledger.setdefault("gaps", []):
+                    ledger["gaps"].append(gap)
+                continue
+            key = _conflict_key(pair)
+            if key not in cached:
+                requests.append(
+                    {
+                        "model": judge_model,
+                        "key": key,
+                        "type": "noul",
+                        "query": "Are these two source-backed HARD requirements mutually impossible in this exact same scope? Different topics or distinct outputs are not contradictions. Answer yes only for a genuine hard conflict requiring a user's choice.",
+                        "state": {
+                            "source": prompt,
+                            "scope": scope,
+                            "requirements": list(pair),
+                        },
+                    }
+                )
+    if requests:
+        for audit in _audit(gateway, requests, run_id):
+            cached[audit["key"]] = audit
+    ledger["conflict_audits"] = list(cached.values())
+    return cached
 
 
 def ledger_plan(
@@ -396,23 +501,12 @@ def ledger_plan(
                 )
             )
         else:
-            grouped.setdefault(item["scope"], []).append(item)
+            grouped.setdefault(item["scope"].casefold(), []).append(item)
     # Audit pairs, not a collection whose unrelated requirements might otherwise
     # be discarded by one choice. Keep overlapping conflicts for later resolution.
-    pair_count = 0
+    audits = _conflict_audits(gateway, prompt, ledger, grouped, judge_model, run_id)
     for scope, items in grouped.items():
         for pair in combinations(items, 2):
-            pair_count += 1
-            if pair_count > MAX_OBLIGATIONS:
-                ledger["coverage"] = "partial"
-                ledger["release_eligible"] = False
-                ledger["reason"] = (
-                    "Coverage is partial: the bounded conflict audit did not cover every applicable pair."
-                )
-                ledger.setdefault("gaps", []).append(
-                    {"reason": "Conflict audit pair limit reached."}
-                )
-                return ClarificationPlan(tuple(questions), ()) if questions else None
             if pair[0]["oracle"]["expected"] == pair[1]["oracle"]["expected"]:
                 continue
             kind = pair[0]["kind"]
@@ -426,25 +520,10 @@ def ledger_plan(
                 or item["kind"] == "exact_output"
                 for item in pair
             ):
-                audit = _audit(
-                    gateway,
-                    [
-                        {
-                            "model": judge_model,
-                            "key": f"requirements:audit:conflict:{pair[0]['id']}:{pair[1]['id']}",
-                            "type": "noul",
-                            "query": "Are these two source-backed HARD requirements mutually impossible in this exact same scope? Different topics or distinct outputs are not contradictions. Answer yes only for a genuine hard conflict requiring a user's choice.",
-                            "state": {
-                                "source": prompt,
-                                "scope": scope,
-                                "requirements": list(pair),
-                            },
-                        }
-                    ],
-                    run_id,
-                )[0]
+                audit = audits.get(_conflict_key(pair))
+                if audit is None:
+                    continue  # Omitted pairs already leave coverage partial.
                 conflicting = audit["status"] == "accepted"
-                ledger.setdefault("conflict_audits", []).append(audit)
                 if not conflicting and not (
                     audit["probability"] is not None
                     and audit["probability"] <= 0.2
@@ -501,6 +580,10 @@ def resolved_ledger_prompt(prompt: str, ledger: Mapping[str, Any]) -> str:
         prefix = re.search(r"(?:[ \t]+and)?[ \t]+(?:exactly[ \t]+)?$", prompt[:start])
         if prefix is not None and item["kind"].endswith("_count"):
             start = prefix.start()
+            following = re.match(r"[ \t]+and[ \t]+", prompt[end:])
+            if following is not None and not re.search(r"\band\b", prefix[0]):
+                start += 1  # retain the section's separator before the chosen count
+                end += following.end()
         spans.append((start, end))
     for start, end in sorted(spans, reverse=True):
         prompt = prompt[:start] + prompt[end:]

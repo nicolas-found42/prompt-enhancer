@@ -164,5 +164,16 @@ def source_data_spans(prompt: str) -> tuple[tuple[int, int], ...]:
         prompt,
     )
     if delegation is not None:
-        spans.append((delegation.end(), len(prompt)))
+        # A new explicit instruction on its own unquoted line ends delegated data.
+        # Ignore markers inside a fenced region or blockquote.
+        end = len(prompt)
+        for continuation in re.finditer(
+            r"(?im)^[ \t]*Then[ \t]+(?:give|write|return|provide|include|add|make|ensure|use|explain)\b",
+            prompt[delegation.end() :],
+        ):
+            position = delegation.end() + continuation.start()
+            if not any(a <= position < b for a, b in spans):
+                end = position
+                break
+        spans.append((delegation.end(), end))
     return tuple(spans)
