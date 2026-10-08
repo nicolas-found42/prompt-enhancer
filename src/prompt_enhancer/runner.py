@@ -13,6 +13,7 @@ from typing import Any, cast
 from .config import DEFAULT_FIXED_WEAK_PANEL, Settings
 from .gateway import MAX_CONCURRENT_TRANSPORT_REQUESTS, Gateway, ProviderError
 from .strategies import CandidateDraft
+from .streaming import is_raw_stream, stream_completion_text, stream_metadata
 from .tuning_profile import ALLOWED_PROVIDERS, PROFILE_ID, WEAK_MODEL, provider_policy
 
 DEFAULT_WEAK_PANEL: tuple[str, ...] = DEFAULT_FIXED_WEAK_PANEL
@@ -114,6 +115,10 @@ def _stable_seed(run_seed: int, candidate_id: str, model: str, sample: int) -> i
 
 
 def _output_text(value: Any, *, strict: bool = False) -> str:
+    if is_raw_stream(value):
+        # Retain visible partial text for the failure evidence below. Native
+        # validation still rejects every known incomplete terminal reason.
+        return stream_completion_text(value, allow_incomplete_terminal=True)
     if isinstance(value, str):
         return value
     if value is None:
@@ -172,7 +177,13 @@ def _execute_one(
     if validate_response:
         details = _response_details(response, output)
         if comparison_provider:
-            raw = response if isinstance(response, Mapping) else {}
+            raw = (
+                stream_metadata(response)
+                if is_raw_stream(response)
+                else response
+                if isinstance(response, Mapping)
+                else {}
+            )
             served = raw.get("provider")
             served_name = served.casefold() if isinstance(served, str) else None
             served_model = raw.get("model")
@@ -197,8 +208,14 @@ def _execute_one(
                     },
                 }
             )
-            if (served_name and served_name != comparison_provider) or (
-                isinstance(served_model, str) and served_model and served_model != model
+            if (
+                raw.get("identity_conflicts")
+                or (served_name and served_name != comparison_provider)
+                or (
+                    isinstance(served_model, str)
+                    and served_model
+                    and served_model != model
+                )
             ):
                 raise ProviderError(
                     "openrouter",
@@ -249,6 +266,8 @@ def _execute_one(
 
 
 def _response_details(response: Any, output: str) -> dict[str, Any]:
+    if is_raw_stream(response):
+        response = stream_metadata(response)
     details: dict[str, Any] = {"visible_chars": len(output)}
     if not isinstance(response, Mapping):
         return details
@@ -267,7 +286,15 @@ def _response_details(response: Any, output: str) -> dict[str, Any]:
     choices = response.get("choices")
     if isinstance(choices, list) and choices and isinstance(choices[0], Mapping):
         finish = choices[0].get("finish_reason")
-        if finish in {"stop", "length", "max_tokens", "content_filter", "tool_calls"}:
+        if finish in {
+            "stop",
+            "length",
+            "max_tokens",
+            "content_filter",
+            "tool_calls",
+            "tool_use",
+            "error",
+        }:
             details["finish_reason"] = finish
     usage = response.get("usage")
     if isinstance(usage, Mapping):

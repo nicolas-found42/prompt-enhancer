@@ -236,6 +236,31 @@ from the sidecars. This nonstreaming path cannot measure headers, first byte,
 first visible token or a visible generation interval: TTFT and output TPS remain
 unknown. Requested controls do not establish their supported or effective values.
 
+For opt-in streaming measurements, construct
+`HttpGateway(profile_requests=True, stream_chat_for_profiling=True)`. An injected
+HTTP transport must also enable `HttpTransport(profile_streams=True)`. This path
+requests streamed chat answers and retains the received SSE bytes (including a
+base64 copy), parsed frames, framing errors and completion marker in a raw answer
+with protocol `raw-chat-sse-1`. Answer interpretation remains with callers;
+incomplete, malformed or error streams cannot supply a usable completion.
+Visible truncated weak-model text is retained only as failure evidence.
+The sidecars distinguish headers, first bytes and the first nonempty visible
+content frame; metadata, empty content and reasoning frames do not start TTFT.
+Observed frame-arrival timing is separate from client rendering time. Output TPS
+uses reported completion tokens minus reported reasoning tokens over the
+first-to-last visible-content frame interval. It remains unknown without both
+counts and a positive interval, or when the stream is incomplete or malformed.
+Frames in one transport read share the receipt timestamp; parsing work cannot
+create a generation interval between them.
+Conflicting reported identities stay unknown and invalidate a matched comparison.
+Raw stream answers and accounting frames stay available for private capture;
+sidecars omit their contents. The stream reader stops at the completion marker
+and rejects responses exceeding its 16 MiB retention limit. These controls do not
+establish a measured provider pilot or normal completion targets. The framing and
+accounting behavior follows the
+[OpenRouter streaming documentation](https://openrouter.ai/docs/api_reference/streaming)
+and [SSE parsing rules](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream).
+
 Native requirement evidence includes conservative whole-answer JSON validity,
 explicit top-level JSON key/type declarations, and explicit comma-delimited CSV
 headers with matching record width. Values and row counts remain unconstrained when

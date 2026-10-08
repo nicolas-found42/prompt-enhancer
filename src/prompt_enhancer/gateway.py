@@ -39,6 +39,12 @@ from .catalog import (
 )
 from .jev import batch_decision_payload, decision_payload
 from .request_profiling import RequestProfile, RequestProfiles
+from .streaming import (
+    RawChatStream,
+    is_raw_stream,
+    stream_completion_text,
+    stream_metadata,
+)
 from .usage import UsageLedger
 
 MAX_CONCURRENT_TRANSPORT_REQUESTS = 8
@@ -114,6 +120,8 @@ def writer_messages(instructions: str, state: Any = None) -> list[dict[str, str]
 
 def completion_text(value: Any) -> str:
     """The text of a raw chat answer, in any provider's reply shape."""
+    if is_raw_stream(value):
+        return stream_completion_text(value)
     if isinstance(value, str):
         return value
     if isinstance(value, Mapping):
@@ -264,8 +272,13 @@ class HttpTransport:
 
     supports_request_id = True
 
-    def __init__(self, opener: Callable[..., Any] | None = None) -> None:
+    supports_stream_observer = True
+
+    def __init__(
+        self, opener: Callable[..., Any] | None = None, *, profile_streams: bool = False
+    ) -> None:
         self._opener = opener or urllib.request.urlopen
+        self.profile_streams = profile_streams
         self._active_responses: dict[str, Any] = {}
         self._active_lock = threading.Lock()
 
@@ -302,6 +315,7 @@ class HttpTransport:
         json: Any | None = None,
         timeout: float | None = None,
         request_id: str | None = None,
+        on_stream_observation: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         # Preserve insertion order in Choice criteria: their declared option
         # order is an experimental input. Replay keys use the canonical,
@@ -324,7 +338,24 @@ class HttpTransport:
                     with self._active_lock:
                         self._active_responses[request_id] = response
                 try:
-                    body = self._read_body(response, timeout)
+                    content_type = response.headers.get(
+                        "Content-Type", response.headers.get("content-type", "")
+                    )
+                    stream = (
+                        self.profile_streams
+                        and isinstance(json, Mapping)
+                        and json.get("stream") is True
+                        and str(content_type).split(";", 1)[0].strip().lower()
+                        == "text/event-stream"
+                    )
+                    if stream:
+                        if on_stream_observation is not None:
+                            on_stream_observation("headers")
+                        parsed = self._read_stream(
+                            response, timeout, on_stream_observation
+                        )
+                    else:
+                        parsed = _decode_body(self._read_body(response, timeout))
                 finally:
                     if request_id is not None:
                         with self._active_lock:
@@ -332,7 +363,6 @@ class HttpTransport:
                 status = getattr(
                     response, "status", getattr(response, "status_code", 200)
                 )
-                parsed = _decode_body(body)
                 return {
                     "status_code": status,
                     "json": parsed,
@@ -355,6 +385,44 @@ class HttpTransport:
             }
         # URLError, timeout, and connection errors intentionally propagate to
         # HttpGateway, which retries and wraps them as ProviderError.
+
+    @staticmethod
+    def _read_stream(
+        response: Any,
+        timeout: float | None,
+        observe: Callable[[str], None] | None,
+    ) -> dict[str, Any]:
+        read_chunk = getattr(response, "read1", None)
+        chunked = callable(read_chunk)
+        parser = RawChatStream(observe if chunked else None)
+        deadline = (
+            time.monotonic() + max(0.001, timeout) if timeout is not None else None
+        )
+        first_byte = False
+        while True:
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("HTTP stream exceeded its total deadline")
+                raw = getattr(getattr(response, "fp", None), "raw", None)
+                settimeout = getattr(getattr(raw, "_sock", None), "settimeout", None)
+                if callable(settimeout):
+                    settimeout(remaining)
+            chunk = read_chunk(64 * 1024) if chunked else response.read()
+            if not chunk:
+                break
+            if chunked and observe is not None:
+                observe("chunk_received")
+            if chunked and not first_byte and observe is not None:
+                observe("first_byte")
+            first_byte = True
+            parser.feed(chunk)
+            if parser.received_bytes > 16 * 1024 * 1024:
+                parser.errors.append({"kind": "response_size_limit"})
+                break
+            if parser.complete or not chunked:
+                break
+        return parser.finish()
 
     @staticmethod
     def _read_body(response: Any, timeout: float | None) -> bytes:
@@ -454,9 +522,21 @@ class HttpGateway:
         sleep: Callable[[float], None] | None = None,
         monotonic: Callable[[], float] | None = None,
         profile_requests: bool = False,
+        stream_chat_for_profiling: bool = False,
     ) -> None:
         self.config = config or GatewayConfig()
-        self.transport = transport or HttpTransport()
+        if stream_chat_for_profiling and not profile_requests:
+            raise ValueError("streamed chat profiling requires request profiling")
+        self.transport = transport or HttpTransport(
+            profile_streams=stream_chat_for_profiling
+        )
+        if stream_chat_for_profiling and not getattr(
+            self.transport, "profile_streams", False
+        ):
+            raise ValueError(
+                "streamed chat profiling requires an opted-in HTTP stream transport"
+            )
+        self._stream_chat_for_profiling = stream_chat_for_profiling
         self.catalog = catalog
         self.usage = usage or UsageLedger()
         self._sleep = sleep or time.sleep
@@ -829,6 +909,9 @@ class HttpGateway:
                     on_dispatched=attempt_profile.dispatched
                     if attempt_profile is not None
                     else None,
+                    on_stream_observation=attempt_profile.observe_stream
+                    if attempt_profile is not None
+                    else None,
                 )
                 received_at = self._monotonic()
                 status = _response_status(response)
@@ -916,7 +999,13 @@ class HttpGateway:
                         http_status=status,
                         response=decoded,
                     )
-                usage = decoded if isinstance(decoded, Mapping) else {}
+                usage = (
+                    stream_metadata(decoded)
+                    if is_raw_stream(decoded)
+                    else decoded
+                    if isinstance(decoded, Mapping)
+                    else {}
+                )
                 self.usage.record(
                     role=role,
                     provider=decision.provider,
@@ -1311,6 +1400,7 @@ class HttpGateway:
         run_id: str | None,
         role: str,
         on_dispatched: Callable[[], None] | None = None,
+        on_stream_observation: Callable[[str], None] | None = None,
     ) -> Any:
         """Return by the logical deadline even if a transport ignores timeout.
 
@@ -1348,6 +1438,13 @@ class HttpGateway:
                         **(
                             {"request_id": request_id}
                             if getattr(self.transport, "supports_request_id", False)
+                            else {}
+                        ),
+                        **(
+                            {"on_stream_observation": on_stream_observation}
+                            if getattr(
+                                self.transport, "supports_stream_observer", False
+                            )
                             else {}
                         ),
                     )
@@ -1518,6 +1615,8 @@ class HttpGateway:
             messages = [{"role": "user", "content": messages}]
         # Adapter routing belongs to the Gateway, never to the provider payload.
         route_provider = params.pop("route_provider", None)
+        if self._stream_chat_for_profiling:
+            params.setdefault("stream", True)
         routed_decisions: list[RouteDecision] = []
 
         def build_payload(decision: RouteDecision) -> Mapping[str, Any]:

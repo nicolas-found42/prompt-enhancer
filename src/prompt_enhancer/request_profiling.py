@@ -11,6 +11,13 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any
 
+from .streaming import (
+    INCOMPLETE_FINISH_REASONS,
+    is_raw_stream,
+    stream_metadata,
+    visible_content,
+)
+
 
 def _number(value: Any) -> int | float | None:
     if isinstance(value, int) and not isinstance(value, bool):
@@ -53,11 +60,37 @@ class RequestProfile:
         self.dispatched_at: float | None = None
         self.closed = False
         self.lock = threading.Lock()
+        self.phases: dict[str, float] = {}
+        self.visible_frames = 0
+        self.chunk_received_at: float | None = None
 
     def dispatched(self) -> None:
         with self.lock:
             if not self.closed:
                 self.dispatched_at = self.clock()
+
+    def observe_stream(self, kind: str) -> None:
+        with self.lock:
+            if self.closed or kind not in {
+                "headers",
+                "first_byte",
+                "visible_content",
+                "chunk_received",
+            }:
+                return
+            if kind == "chunk_received":
+                self.chunk_received_at = self.clock()
+                return
+            now = (
+                self.chunk_received_at
+                if kind in {"first_byte", "visible_content"}
+                and self.chunk_received_at is not None
+                else self.clock()
+            )
+            self.phases.setdefault(kind, now)
+            if kind == "visible_content":
+                self.phases["last_visible_content"] = now
+                self.visible_frames += 1
 
     def finish(
         self,
@@ -73,14 +106,88 @@ class RequestProfile:
                 return
             self.closed = True
             raw = response if isinstance(response, Mapping) else {}
+            stream_complete = (
+                bool(raw.get("complete") and not raw.get("errors"))
+                if is_raw_stream(raw)
+                else None
+            )
+            stream_errors = raw.get("errors") if is_raw_stream(raw) else None
+            response_bytes = (
+                _number(raw.get("received_bytes")) if is_raw_stream(raw) else None
+            )
+            events = raw.get("events")
+            visible_chars = (
+                sum(len(visible_content(event) or "") for event in events)
+                if is_raw_stream(raw) and isinstance(events, list)
+                else None
+            )
+            if is_raw_stream(raw):
+                raw = stream_metadata(raw)
+                terminal = raw.get("choices", [])
+                if (
+                    terminal
+                    and terminal[0].get("finish_reason") in INCOMPLETE_FINISH_REASONS
+                ):
+                    stream_complete = False
+            terminal_choices = raw.get("choices", []) if is_raw_stream(response) else []
+            finish_reason = (
+                terminal_choices[0].get("finish_reason") if terminal_choices else None
+            )
             usage = raw.get("usage")
             usage = usage if isinstance(usage, Mapping) else {}
             details = usage.get("completion_tokens_details")
             details = details if isinstance(details, Mapping) else {}
             generation = raw.get("id")
+
+            def phase_ms(kind: str) -> float | None:
+                at = self.phases.get(kind)
+                return (
+                    max(0.0, (at - self.dispatched_at) * 1000)
+                    if at is not None and self.dispatched_at is not None
+                    else None
+                )
+
+            first_visible = self.phases.get("visible_content")
+            last_visible = self.phases.get("last_visible_content")
+            interval_ms = (
+                max(0.0, (last_visible - first_visible) * 1000)
+                if first_visible is not None and last_visible is not None
+                else None
+            )
+            output_tokens = _number(
+                usage.get("completion_tokens", usage.get("output_tokens"))
+            )
+            reasoning_tokens = _number(details.get("reasoning_tokens"))
+            output_rate = None
+            if (
+                interval_ms
+                and output_tokens is not None
+                and reasoning_tokens is not None
+                and 0 <= reasoning_tokens <= output_tokens
+                and stream_complete is True
+                and not stream_errors
+            ):
+                try:
+                    output_rate = _number(
+                        (output_tokens - reasoning_tokens) / (interval_ms / 1000)
+                    )
+                except OverflowError:
+                    pass
             record = {
                 **self.record,
                 "status": status,
+                "stream_complete": stream_complete,
+                "stream_terminal_reason": finish_reason
+                if finish_reason in INCOMPLETE_FINISH_REASONS | {"stop"}
+                else None,
+                "stream_error_count": len(stream_errors)
+                if isinstance(stream_errors, list)
+                else None,
+                "response_bytes": response_bytes,
+                "response_size_source": "received_sse_bytes"
+                if response_bytes is not None
+                else None,
+                "visible_output_chars": visible_chars,
                 "http_status": http_status,
                 "error_kind": error_kind,
                 "started_monotonic_s": self.started_at,
@@ -96,6 +203,9 @@ class RequestProfile:
                 else None,
                 "served_model": _identity(raw.get("model")),
                 "served_provider": _provider(raw.get("provider")),
+                "identity_conflicts": raw.get("identity_conflicts")
+                if is_raw_stream(response)
+                else [],
                 "generation_id": generation
                 if isinstance(generation, str)
                 and re.fullmatch(r"gen-[A-Za-z0-9-]{1,100}", generation)
@@ -103,17 +213,25 @@ class RequestProfile:
                 "input_tokens": _number(
                     usage.get("prompt_tokens", usage.get("input_tokens"))
                 ),
-                "output_tokens": _number(
-                    usage.get("completion_tokens", usage.get("output_tokens"))
-                ),
-                "reasoning_tokens": _number(details.get("reasoning_tokens")),
+                "output_tokens": output_tokens,
+                "reasoning_tokens": reasoning_tokens,
                 "reported_cost": _number(usage.get("cost")),
-                "headers_ms": None,
-                "first_byte_ms": None,
-                "ttft_ms": None,
-                "visible_generation_interval_ms": None,
-                "output_tokens_per_second": None,
-                "visible_token_timing_source": "unavailable_nonstreaming_transport",
+                "headers_ms": phase_ms("headers"),
+                "first_byte_ms": phase_ms("first_byte"),
+                "ttft_ms": phase_ms("visible_content"),
+                "visible_generation_interval_ms": interval_ms,
+                "output_tokens_per_second": output_rate,
+                "output_tokens_per_second_definition": "Reported completion tokens minus reported reasoning tokens, divided by the first-to-last visible-content frame interval; unavailable without both counts and a positive interval.",
+                "visible_content_frames": self.visible_frames,
+                "first_visible_monotonic_s": self.phases.get("visible_content"),
+                "last_visible_monotonic_s": self.phases.get("last_visible_content"),
+                "stream_timing_resolution": "socket_read_return",
+                "visible_token_timing_source": "sse_visible_content_frame_arrival"
+                if self.visible_frames
+                else "unavailable_no_visible_content_frame"
+                if self.phases
+                else "unavailable_nonstreaming_transport",
+                "stream_phase_clock": "adapter_monotonic_since_dispatch",
             }
         self.publish(record)
 
@@ -178,6 +296,7 @@ class RequestProfiles:
                 "attempt": attempt,
                 "gateway_provider": gateway_provider,
                 "requested_model": model,
+                "streaming_requested": payload.get("stream") is True,
                 "requested_provider": requested_provider,
                 "request_bytes": len(
                     json.dumps(
