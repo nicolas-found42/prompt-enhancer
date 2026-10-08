@@ -19,6 +19,9 @@ CONTRACT_TESTS = (
     "tests/test_issue187_requirements.py",
     "tests/test_issue187_protected_blocks.py",
     "tests/test_issue187_jobs.py",
+    "tests/test_requirement_contracts.py",
+    "tests/test_semantic_requirements.py",
+    "tests/test_requirement_repair.py",
 )
 
 
@@ -75,8 +78,8 @@ def main() -> int:
             receipt.value.update(
                 source_digest=worktree_digest(ROOT),
                 profile="controlled-gateway-clock-v1",
-                oracle="public-contract-controls-v1",
-                contract_issues=list(range(189, 196)),
+                oracle="public-contract-controls-v2",
+                contract_issues=list(range(189, 202)),
                 contract_sources={
                     name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
                     for name in CONTRACT_TESTS

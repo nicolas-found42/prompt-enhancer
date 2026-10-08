@@ -760,6 +760,26 @@ class PromptOptimizer:
                 "report": {**state["report"], **facts},
             }
 
+    def _publish_requirements(
+        self,
+        run_id: str,
+        ledger: Mapping[str, Any],
+        *,
+        assumptions: Sequence[Any] | None = None,
+    ) -> None:
+        self._retain_deadline_report(
+            run_id,
+            requirements=dict(ledger),
+            **({"assumptions": list(assumptions)} if assumptions is not None else {}),
+        )
+        self._activity(
+            {
+                "kind": "coverage",
+                "summary": "Source obligations and coverage audits were updated.",
+                "requirements": dict(ledger),
+            }
+        )
+
     def release_deadline_evidence(self, run_id: str) -> None:
         """Release live buffers after durable termination or a clarification pause."""
         self._deadline_states.pop(run_id, None)
@@ -1055,18 +1075,16 @@ class PromptOptimizer:
             else None
         )
         if ledger is not None:
-            self._retain_deadline_report(run_id, requirements=ledger)
+            self._publish_requirements(run_id, ledger)
         if self.writer_instruction_version >= 15 and known_conflict is None:
             ledger = audit_ledger(
                 self.gateway,
                 prompt,
                 judge_model=run_settings.judge_model,
                 run_id=run_id,
-                on_ledger=lambda partial: self._retain_deadline_report(
-                    run_id, requirements=partial
-                ),
+                on_ledger=lambda partial: self._publish_requirements(run_id, partial),
             )
-            self._retain_deadline_report(run_id, requirements=ledger)
+            self._publish_requirements(run_id, ledger)
         compound_plan = (
             ledger_plan(
                 self.gateway,
@@ -1244,6 +1262,11 @@ class PromptOptimizer:
                 writer_instruction_version=self.writer_instruction_version,
                 writer_attempts=writer_attempts,
                 prior_failures=tuple(request.prior_failures),
+                repair_evidence=tuple(
+                    failure.to_dict()
+                    for failure in request.prior_round_failures
+                    if failure.requirement_findings
+                ),
                 prior_vector=request.prior_vector,
                 round_number=request.round_number,
                 grading_policy=self.grading_policy,
@@ -1261,6 +1284,24 @@ class PromptOptimizer:
             )
 
             def activity(facts: Mapping[str, Any]) -> None:
+                if isinstance(facts.get("requirement_evidence"), Mapping) and facts[
+                    "requirement_evidence"
+                ].get("findings"):
+                    checkpoint = facts["requirement_evidence"]
+                    key = f"{request.round_number}:{checkpoint['candidate_id']}"
+                    prior = (
+                        self._deadline_states.get(context.run_id, {})
+                        .get("report", {})
+                        .get("requirement_checks", {})
+                    )
+                    self._retain_deadline_report(
+                        context.run_id,
+                        requirement_checks={**prior, key: deepcopy(checkpoint)},
+                    )
+                if isinstance(facts.get("test_screening"), Mapping):
+                    self._retain_deadline_report(
+                        context.run_id, test_screening=dict(facts["test_screening"])
+                    )
                 if isinstance(facts.get("comparison"), Mapping):
                     comparison = {"round": request.round_number, **facts["comparison"]}
                     if (
@@ -2070,9 +2111,7 @@ class PromptOptimizer:
                 prompt,
                 judge_model=run_settings.judge_model,
                 run_id=run_id,
-                on_ledger=lambda value: self._retain_deadline_report(
-                    run_id, requirements=value
-                ),
+                on_ledger=lambda value: self._publish_requirements(run_id, value),
             )
         context = _RunContext(
             prompt,
@@ -2096,8 +2135,8 @@ class PromptOptimizer:
                 ledger,
                 judge_model=run_settings.judge_model,
                 run_id=run_id,
-                on_ledger=lambda value: self._retain_deadline_report(
-                    run_id, requirements=value, assumptions=assumptions
+                on_ledger=lambda value: self._publish_requirements(
+                    run_id, value, assumptions=assumptions
                 ),
             )
             context = replace(context, requirements=ledger)

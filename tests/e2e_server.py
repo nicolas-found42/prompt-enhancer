@@ -19,6 +19,8 @@ from prompt_enhancer.store import RunStore
 
 def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
     if role != "writer":
+        if "JSON containing title" in str(messages):
+            return '{"title":"A","items":["one"],"extra":true}'
         return (
             "## Section A\n- One\n- Two"
             if "Section A" in str(messages)
@@ -39,6 +41,7 @@ def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
             state["prompt"]
             .replace("Help me with this.", "Help me with the supplied material.")
             .replace("Give Section A", "Provide Section A")
+            .replace("Return JSON", "Output JSON")
         )
         return json.dumps({item["name"]: candidate for item in state["strategies"]})
     return '{"tests":[]}'
@@ -53,6 +56,13 @@ def decide(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
             "type": "choice",
             "choice": "general",
             "probabilities": {"general": 1.0},
+            "confidence": 1.0,
+        }
+    if key == "infer:goal" and "JSON containing title" in str(request.get("state", {})):
+        return {
+            "type": "choice",
+            "choice": "summarize",
+            "probabilities": {"summarize": 1.0},
             "confidence": 1.0,
         }
     if key == "infer:goal":
@@ -98,7 +108,9 @@ def decide(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
             "confidence": 1.0,
         }
     if key == "gap:goal":
-        probability = 0.99
+        probability = (
+            0.01 if "JSON containing title" in str(request.get("state", {})) else 0.99
+        )
     elif str(key).startswith(("score:", "evaluate:", "fidelity:", "strategy_recheck:")):
         probability = 1.0
     elif "preserve" in str(request.get("question", "")):

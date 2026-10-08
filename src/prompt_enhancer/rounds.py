@@ -49,6 +49,8 @@ from .improve import (
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import utc_now
+from .requirement_semantics import semantic_findings
+from .requirement_tests import compile_source_tests
 from .requirements import (
     Requirement,
     check_summaries,
@@ -99,6 +101,7 @@ class CandidateFailure:
     sample_spread: float | None = None
     candidate_prompt: str | None = None
     attributions: tuple[Mapping[str, Any], ...] = ()
+    requirement_findings: tuple[Mapping[str, Any], ...] = ()
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> CandidateFailure:
@@ -126,6 +129,11 @@ class CandidateFailure:
             worst_pass_rate=number("worst_pass_rate"),
             sample_spread=number("sample_spread"),
             candidate_prompt=str(prompt) if prompt is not None else None,
+            requirement_findings=tuple(
+                dict(item)
+                for item in value.get("requirement_findings", ())
+                if isinstance(item, Mapping)
+            ),
             attributions=tuple(
                 dict(item)
                 for item in value.get("attributions") or ()
@@ -200,6 +208,10 @@ class CandidateFailure:
             "candidate_prompt": self.candidate_prompt,
             "summary": self.summary,
         }
+        if self.requirement_findings:
+            result["requirement_findings"] = [
+                dict(item) for item in self.requirement_findings
+            ]
         if self.attributions:
             result["attributions"] = [dict(item) for item in self.attributions]
         return result
@@ -236,6 +248,7 @@ class RoundPlan:
     writer_instruction_version: int
     writer_attempts: list[dict[str, Any]] = field(default_factory=list)
     prior_failures: tuple[str, ...] = ()
+    repair_evidence: tuple[Mapping[str, Any], ...] = ()
     """Summaries of the previous round's losing candidates."""
     grading_policy: OrderBiasPolicy | None = None
     screen_cache: SuccessTestScreenCache | None = None
@@ -635,7 +648,9 @@ def _ranking_candidate(
         )
     )
     known_failures = tuple(
-        item for item in requirement_findings if item.get("status") == "failed"
+        item
+        for item in requirement_findings
+        if item.get("status") in {"failed", "unresolved"}
     )
     eligible = (
         fidelity.passed
@@ -787,7 +802,7 @@ def run_round(
 
     stage("writing_tests")
     try:
-        compiled = SuccessTestCompiler(
+        compiler = SuccessTestCompiler(
             gateway,
             writer_model=settings.writer_model,
             faithfulness_threshold=plan.faithfulness_threshold,
@@ -800,7 +815,32 @@ def run_round(
             instruction_version=plan.writer_instruction_version,
             writer_attempts=plan.writer_attempts,
             round_number=plan.round_number,
-        ).compile(working_prompt)
+        )
+        requirements = (
+            plan.requirements
+            if plan.requirements is not None
+            else effective_requirements(plan.prompt, plan.assumptions)
+            if plan.writer_instruction_version >= 15
+            else ()
+        )
+        source_test_evidence = None
+
+        def retain_tests(evidence: Mapping[str, Any]) -> None:
+            if on_activity:
+                on_activity(
+                    {
+                        "kind": "test_proposals",
+                        "summary": "Success-test proposals and rejection evidence were retained; source obligations remain active.",
+                        "test_screening": dict(evidence),
+                    }
+                )
+
+        if requirements:
+            compiled, source_test_evidence = compile_source_tests(
+                compiler, working_prompt, requirements, on_evidence=retain_tests
+            )
+        else:
+            compiled = compiler.compile(working_prompt)
     except (ValueError, TypeError) as exc:
         raise ProviderError(
             "writer",
@@ -812,7 +852,14 @@ def run_round(
         ) from exc
     tests = tuple(test.to_dict() for test in compiled.tests)
     if plan.writer_instruction_version >= 5:
-        screening_evidence = compiled.as_dict()
+        screening_evidence = {
+            **compiled.as_dict(),
+            **(
+                {"source_checks": source_test_evidence}
+                if source_test_evidence is not None
+                else {}
+            ),
+        }
 
     no_gaps = not plan.diagnosis.get("confirmed_gaps", [])
     # Always-attempt policy (#165): missing or uncertain success tests never
@@ -941,7 +988,11 @@ def run_round(
         if ordinary:
             generated.update(
                 candidate_writer.generate_candidates(
-                    replace(request, strategies=ordinary)
+                    replace(
+                        request,
+                        strategies=ordinary,
+                        repair_evidence=plan.repair_evidence,
+                    )
                 )
             )
         if any(item.name == "restructure_lossless" for item in request.strategies):
@@ -1001,6 +1052,23 @@ def run_round(
     candidates = list(search.candidates)
     if on_activity is not None:
         for draft in candidates:
+            if plan.repair_evidence and draft.strategy.name != "restructure_lossless":
+                on_activity(
+                    {
+                        "kind": "repair",
+                        "candidate_id": draft.candidate_id,
+                        "summary": "A repair draft was written from the prior draft's source-backed failure evidence; it still needs fresh checks.",
+                        "draft": draft.text,
+                        "repair_of": list(plan.repair_evidence),
+                        "reasons": list(
+                            dict.fromkeys(
+                                str(finding["reason"])
+                                for failure in plan.repair_evidence
+                                for finding in failure.get("requirement_findings", [])
+                            )
+                        ),
+                    }
+                )
             on_activity(
                 {
                     "kind": "draft",
@@ -1083,6 +1151,48 @@ def run_round(
         if plan.writer_instruction_version >= 15
         else ()
     )
+
+    def findings_for(candidate: CandidateDraft) -> tuple[dict[str, Any], ...]:
+        samples = [
+            item.to_dict() for item in panel.by_candidate(candidate.candidate_id)
+        ]
+        mechanical = output_findings(requirements, samples) + prompt_findings(
+            requirements, candidate.candidate_id, candidate.text
+        )
+
+        def retain_semantic(findings: tuple[dict[str, Any], ...]) -> None:
+            if on_activity:
+                on_activity(
+                    {
+                        "kind": "check_update",
+                        "candidate_id": candidate.candidate_id,
+                        "summary": "This draft's own requirement evidence was updated; pending judgments remain unresolved.",
+                        "checks": list(check_summaries((*mechanical, *findings))),
+                        "requirement_evidence": {
+                            "round": plan.round_number,
+                            "candidate_id": candidate.candidate_id,
+                            "draft": candidate.text,
+                            "findings": [
+                                dict(item) for item in (*mechanical, *findings)
+                            ],
+                        },
+                    }
+                )
+
+        semantic = semantic_findings(
+            gateway,
+            requirements,
+            source=working_prompt,
+            candidate_id=candidate.candidate_id,
+            candidate=candidate.text,
+            outputs=samples,
+            judge_model=settings.judge_model,
+            run_id=plan.run_id,
+            round_number=plan.round_number,
+            on_findings=retain_semantic,
+        )
+        return (*mechanical, *semantic)
+
     ranking_candidates = [
         _ranking_candidate(
             gateway,
@@ -1092,11 +1202,7 @@ def run_round(
             candidate,
             panel_grades,
             original_grade,
-            output_findings(
-                requirements,
-                [item.to_dict() for item in panel.by_candidate(candidate.candidate_id)],
-            )
-            + prompt_findings(requirements, candidate.candidate_id, candidate.text),
+            findings_for(candidate),
         )
         for candidate in candidates
     ]
@@ -1106,7 +1212,10 @@ def run_round(
             if checks:
                 on_activity(
                     {
-                        "kind": "checks",
+                        "kind": "retest"
+                        if plan.repair_evidence
+                        and candidate.strategy != "restructure_lossless"
+                        else "checks",
                         "candidate_id": candidate.candidate_id,
                         "summary": "This draft's source requirement checks returned; uncertain checks remain unverified.",
                         "checks": list(checks),
@@ -1471,6 +1580,13 @@ def run_round(
                 if item.candidate.grade is not None
                 else {},
                 candidate_prompt=item.candidate.text,
+                requirement_findings=tuple(
+                    dict(finding)
+                    for finding in item.candidate.metadata.get(
+                        "requirement_findings", ()
+                    )
+                    if finding.get("status") in {"failed", "unresolved"}
+                ),
                 attributions=attribution_by_candidate.get(
                     item.candidate.candidate_id, ()
                 ),

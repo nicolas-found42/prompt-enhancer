@@ -169,6 +169,7 @@ class CandidateBatchRequest:
     prompt: str
     strategies: tuple[RewriteStrategy, ...]
     previous_failures: tuple[str, ...] = ()
+    repair_evidence: tuple[Mapping[str, Any], ...] = ()
     diagnosis: Mapping[str, Any] = field(default_factory=dict)
     applied_style: str | None = None
     style_authorization: Mapping[str, str] = field(default_factory=dict)
@@ -178,6 +179,11 @@ class CandidateBatchRequest:
             "prompt": self.prompt,
             "strategies": [strategy.to_dict() for strategy in self.strategies],
             "previous_failures": list(self.previous_failures),
+            **(
+                {"repair_evidence": [dict(item) for item in self.repair_evidence]}
+                if self.repair_evidence
+                else {}
+            ),
             "diagnosis": dict(self.diagnosis),
             **({"applied_style": self.applied_style} if self.applied_style else {}),
             **(

@@ -26,6 +26,7 @@ from .requirement_formats import (
     schema_from_source,
 )
 from .requirement_scopes import scoped_counts, section_text
+from .structured_contracts import check_contract, contract_values, structured_contracts
 
 _EXACT_REPLY = re.compile(
     r"(?im)^(?>[ \t]*)(?:reply|respond|output|return|print)(?:[ \t]+with)?[ \t]+"
@@ -64,6 +65,8 @@ RequirementKind = Literal[
     "json_format",
     "json_schema",
     "csv_shape",
+    "json_contract",
+    "csv_contract",
 ]
 _COUNT_KINDS: dict[str, RequirementKind] = {
     "word": "word_count",
@@ -108,6 +111,8 @@ class Requirement:
             return self.declared_values
         if self.kind == "edit_restriction":
             return (json.loads(self.expected)["text"],)
+        if self.kind in {"json_contract", "csv_contract"}:
+            return contract_values(self.kind, self.expected)
         if self.kind == "json_schema":
             schema = json.loads(self.expected)
             return tuple(dict.fromkeys((*schema, *schema.values())))
@@ -246,6 +251,25 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
                 expected=json.dumps(
                     [column.strip() for column in csv_format["columns"].split(",")]
                 ),
+            )
+        )
+    legacy_format_spans = {
+        (item.start, item.end)
+        for item in found
+        if item.kind in {"json_format", "json_schema", "csv_shape"}
+    }
+    for start, end, kind, scope, expected in structured_contracts(prompt):
+        if any(a <= start and end <= b for a, b in legacy_format_spans):
+            continue
+        found.append(
+            Requirement(
+                f"requirement:{start}:{end}:{kind}",
+                prompt[start:end],
+                start,
+                end,
+                kind,
+                scope,
+                expected,
             )
         )
     counts = _COUNT_DIRECTIVE.fullmatch(prompt)
@@ -533,6 +557,8 @@ def _finding_status(requirement: Requirement, output: Any) -> str:
             return "untestable"
         if output is None:
             return "failed"
+    if requirement.kind in {"json_contract", "csv_contract"}:
+        return check_contract(requirement.kind, output, requirement.expected)[0]
     if requirement.kind in {"json_format", "json_schema", "csv_shape"}:
         return check_format(requirement.kind, output, requirement.expected)[0]
     if requirement.kind == "sentence_count":
@@ -598,6 +624,8 @@ def _finding_reason(requirement: Requirement, output: Any) -> str:
             return uncertainty
         if output is None:
             return "The explicitly requested section is missing."
+    if requirement.kind in {"json_contract", "csv_contract"}:
+        return check_contract(requirement.kind, output, requirement.expected)[1]
     if requirement.kind in {"json_format", "json_schema", "csv_shape"}:
         return check_format(requirement.kind, output, requirement.expected)[1]
     uncertainty = _uncertainty(requirement, output)
@@ -708,24 +736,44 @@ def prompt_findings(
         for value in item.protected_values
     )
     for item in requirements:
-        if item.kind != "json_schema":
+        if item.kind not in {"json_schema", "json_contract", "csv_contract"}:
             continue
-        match = JSON_SCHEMA_DIRECTIVE.fullmatch(candidate)
-        actual = schema_from_source(match["schema"]) if match is not None else None
+        contract_kind = "json_contract" if item.kind == "json_schema" else item.kind
+        expected_contract = (
+            {"schema": json.loads(item.expected), "exact_keys": True}
+            if item.kind == "json_schema"
+            else json.loads(item.expected)
+        )
+        declarations = [
+            json.loads(expected)
+            for _, _, kind, scope, expected in structured_contracts(candidate)
+            if kind == contract_kind and scope == item.scope
+        ]
+        supported = [value for value in declarations if not value.get("uncertainty")]
+        if expected_contract.get("uncertainty"):
+            # An unsupported source convention supplies no known binding
+            # that a rewrite could deterministically delete or contradict.
+            status = "untestable"
+        elif not declarations or any(value != expected_contract for value in supported):
+            status = "failed"
+        elif len(supported) != len(declarations):
+            status = "unresolved"
+        else:
+            status = "tested"
         findings += (
             {
                 "requirement_id": item.id,
                 "source": item.source,
                 "scope": "candidate_prompt",
                 "candidate_id": candidate_id,
-                "status": "untestable"
-                if actual is None
-                else "tested"
-                if actual == item.expected
-                else "failed",
-                "check": "json_type_bindings",
+                "status": status,
+                "check": "csv_declaration_bindings"
+                if item.kind == "csv_contract"
+                else "json_type_bindings",
                 "expected": item.expected,
-                "reason": "The rewritten JSON declaration must retain each source key's type; an unsupported declaration needs semantic coverage.",
+                "reason": "The rewritten CSV declaration must retain the source header, dialect and declared data-row count."
+                if item.kind == "csv_contract"
+                else "The rewritten JSON declaration must retain each source key's type; an unsupported declaration needs semantic coverage.",
             },
         )
     return findings
@@ -748,9 +796,12 @@ def check_summaries(
                 "tested": 0,
                 "failed": 0,
                 "untestable": 0,
+                "unresolved": 0,
                 "reasons": [],
+                "evidence": [],
             },
         )
+        summary["evidence"].append(dict(finding))
         status = str(finding["status"])
         summary[status] += 1
         if status != "tested" and finding["reason"] not in summary["reasons"]:

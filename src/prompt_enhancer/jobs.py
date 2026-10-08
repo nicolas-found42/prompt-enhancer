@@ -218,7 +218,15 @@ class RunJobs:
             with self._lock:
                 owns_record = self._jobs.get(job.run_id) is job
             if owns_record:
-                self._store.update_run(job.run_id, update)
+                # This manager owns the durable transition under its lock,
+                # including terminal writes made in a cancelled worker context.
+                from .publication import publication_allowed
+
+                token = publication_allowed.set(None)
+                try:
+                    self._store.update_run(job.run_id, update)
+                finally:
+                    publication_allowed.reset(token)
 
     def _recover(self) -> None:
         store = self._store
@@ -523,6 +531,10 @@ class RunJobs:
                             "reasons",
                             "stage",
                             "checks",
+                            "test_screening",
+                            "requirements",
+                            "repair_of",
+                            "requirement_evidence",
                             "comparison",
                         )
                         if key in round_info

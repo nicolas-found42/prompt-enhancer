@@ -42,6 +42,12 @@ class _JSONObject(dict[str, Any]):
     def __init__(self, pairs: list[tuple[str, Any]]) -> None:
         super().__init__(pairs)
         self.duplicate_names = len(pairs) != len(self)
+        seen: set[str] = set()
+        self.duplicate_keys: set[str] = set()
+        for key, _value in pairs:
+            if key in seen:
+                self.duplicate_keys.add(key)
+            seen.add(key)
 
 
 def _reject_constant(_value: str) -> Any:
@@ -80,7 +86,7 @@ def read_json(output: Any, *, unique_names: bool = False) -> tuple[str, Any, str
     if isinstance(value, _JSONObject) and value.duplicate_names:
         return (
             "untestable",
-            None,
+            value,
             "Duplicate JSON keys make the applicable top-level key/type value ambiguous.",
         )
     return (
