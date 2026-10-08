@@ -38,6 +38,7 @@ from .catalog import (
     StaticModelCatalog,
 )
 from .jev import batch_decision_payload, decision_payload
+from .request_profiling import RequestProfile, RequestProfiles
 from .usage import UsageLedger
 
 MAX_CONCURRENT_TRANSPORT_REQUESTS = 8
@@ -452,6 +453,7 @@ class HttpGateway:
         go_models: Iterable[str | ModelInfo] | None = None,
         sleep: Callable[[float], None] | None = None,
         monotonic: Callable[[], float] | None = None,
+        profile_requests: bool = False,
     ) -> None:
         self.config = config or GatewayConfig()
         self.transport = transport or HttpTransport()
@@ -459,6 +461,9 @@ class HttpGateway:
         self.usage = usage or UsageLedger()
         self._sleep = sleep or time.sleep
         self._monotonic = monotonic or time.monotonic
+        self._request_profiles = (
+            RequestProfiles(self._monotonic) if profile_requests else None
+        )
         self._session = uuid.uuid4().hex
         self._sessions: dict[str, str] = {}
         self._go_model_ids: set[str] = {
@@ -582,11 +587,24 @@ class HttpGateway:
     def jev_model(self) -> str:
         return self.config.jev_model
 
+    def profiling_report(self) -> dict[str, Any]:
+        """Copy private timing sidecars without request or answer contents."""
+        return {
+            "protocol": "gateway-request-profiling-v1",
+            "enabled": self._request_profiles is not None,
+            "clock": "adapter_monotonic_seconds",
+            "requests": self._request_profiles.snapshot()
+            if self._request_profiles is not None
+            else [],
+        }
+
     def new_run(self, run_id: str | None = None) -> str:
         """Set a stable Go session value and return it."""
         self.usage = UsageLedger()
         self.decision_log = []
         self.transport_attempts_by_role = {}
+        if self._request_profiles is not None:
+            self._request_profiles.clear()
         if run_id:
             session = str(run_id)
         else:
@@ -780,6 +798,7 @@ class HttpGateway:
         attempts = max(0, self.config.max_retries) + 1
         last_status: int | None = None
         for attempt in range(attempts):
+            attempt_profile: RequestProfile | None = None
             try:
                 self._check_cancelled(run_id)
                 remaining = deadline - self._monotonic()
@@ -790,6 +809,16 @@ class HttpGateway:
                 self.transport_attempts_by_role[role] = (
                     self.transport_attempts_by_role.get(role, 0) + 1
                 )
+                if self._request_profiles is not None:
+                    attempt_profile = self._request_profiles.begin(
+                        request_payload,
+                        model=decision.model,
+                        gateway_provider=decision.provider,
+                        role=role,
+                        run_id=run_id,
+                        operation=self._named_operation(operation),
+                        attempt=attempt + 1,
+                    )
                 response = self._bounded_transport_request(
                     decision,
                     request_payload,
@@ -797,10 +826,20 @@ class HttpGateway:
                     deadline=deadline,
                     run_id=run_id,
                     role=role,
+                    on_dispatched=attempt_profile.dispatched
+                    if attempt_profile is not None
+                    else None,
                 )
+                received_at = self._monotonic()
                 status = _response_status(response)
                 last_status = status
                 if status is not None and status >= 400:
+                    if attempt_profile is not None:
+                        attempt_profile.finish(
+                            ended_at=received_at,
+                            status="http_error",
+                            http_status=status,
+                        )
                     self._check_cancelled(run_id)
                     if deadline - self._monotonic() <= 0:
                         raise _GatewayDeadlineExceeded(
@@ -870,6 +909,13 @@ class HttpGateway:
                     )
                 self._note_provider(decision.provider, "ok", status, decision.model)
                 decoded = _response_json(response)
+                if attempt_profile is not None:
+                    attempt_profile.finish(
+                        ended_at=received_at,
+                        status="completed",
+                        http_status=status,
+                        response=decoded,
+                    )
                 usage = decoded if isinstance(decoded, Mapping) else {}
                 self.usage.record(
                     role=role,
@@ -912,6 +958,13 @@ class HttpGateway:
                 )
                 return decoded
             except ProviderError as exc:
+                if attempt_profile is not None:
+                    attempt_profile.finish(
+                        ended_at=self._monotonic(),
+                        status="failed",
+                        http_status=exc.status,
+                        error_kind=exc.kind,
+                    )
                 self._emit_operation(
                     {
                         "event": "error",
@@ -928,6 +981,12 @@ class HttpGateway:
                 )
                 raise
             except Exception as exc:
+                if attempt_profile is not None:
+                    attempt_profile.finish(
+                        ended_at=self._monotonic(),
+                        status="failed",
+                        error_kind=type(exc).__name__,
+                    )
                 from .failures import RunCancelled
 
                 if isinstance(exc, ActiveDeadlineExceeded):
@@ -1251,6 +1310,7 @@ class HttpGateway:
         deadline: float,
         run_id: str | None,
         role: str,
+        on_dispatched: Callable[[], None] | None = None,
     ) -> Any:
         """Return by the logical deadline even if a transport ignores timeout.
 
@@ -1276,6 +1336,8 @@ class HttpGateway:
 
         def request() -> None:
             try:
+                if on_dispatched is not None:
+                    on_dispatched()
                 result.append(
                     self.transport.request(
                         decision.url,

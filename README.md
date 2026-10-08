@@ -221,6 +221,20 @@ Reported provider/model identities remain unknown when the response omits them,
 and matching requests do not establish effective sampling settings. The
 4,096-token weak output cap is a pilot starting point. Neither service has been
 chosen by a measured pilot, and this profile does not establish the release bar.
+An injected Gateway whose actual judge differs from the pinned Jev model is
+rejected before profile calls, so configuration evidence cannot misidentify it.
+
+For request profiling, construct `HttpGateway(profile_requests=True)` and read
+`profiling_report()` after a run. Its private sidecars retain each adapter attempt,
+whether it dispatched, role, requested and reported identities, canonical JSON size,
+output cap, requested sampling/reasoning controls, available usage, and monotonic
+start/dispatch/finish times. Queue and transport durations are distinct. A new
+logical run resets these sidecars; retain the report before starting another run.
+Raw answers and adapter usage accounting keep their existing contracts. Request
+and answer content, credentials and arbitrary provider diagnostics are omitted
+from the sidecars. This nonstreaming path cannot measure headers, first byte,
+first visible token or a visible generation interval: TTFT and output TPS remain
+unknown. Requested controls do not establish their supported or effective values.
 
 Native requirement evidence includes conservative whole-answer JSON validity,
 explicit top-level JSON key/type declarations, and explicit comma-delimited CSV

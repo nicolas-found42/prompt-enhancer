@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from . import jev_questions
 from .candidate_evaluation import round_judgment_provenance, summarize_capabilities
-from .catalog import LiveModelCatalog
+from .catalog import JEV_MODEL, LiveModelCatalog
 from .clarification import (
     ClarificationService,
     InMemoryClarificationRepository,
@@ -479,6 +479,10 @@ class PromptOptimizer:
                 raise ValueError("evaluation profile models cannot be overridden")
             if not isinstance(profile, str):
                 raise ValueError("evaluation profile must be a profile ID")
+            if self.gateway.jev_model != JEV_MODEL:
+                raise ValueError(
+                    "Gateway judge must match the tuning profile's Jev model"
+                )
             return apply_tuning_profile(
                 self.config, profile, options.get("evaluation_provider")
             )

@@ -341,3 +341,16 @@ def test_served_identity_is_retained_and_mismatched_routing_cannot_qualify(
             item["response_details"]["generation_id"] == "gen-controlled-identity"
             for item in outputs
         )
+
+
+def test_profile_rejects_a_different_actual_gateway_judge_before_calls():
+    from prompt_enhancer.config import Settings
+
+    gateway = _gateway()
+    gateway.jev_model = "other-judge"
+    optimizer = PromptOptimizer(
+        gateway=gateway, store=RunStore(":memory:"), config=Settings()
+    )
+    with pytest.raises(ValueError, match="Gateway.*Jev"):
+        optimizer.run_configuration({"evaluation_profile": "llama-tuning-v1"})
+    assert gateway.calls == []
