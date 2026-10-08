@@ -605,10 +605,16 @@ def _ranking_candidate(
         round_number=plan.round_number,
     )
     grade = panel_grades[candidate.candidate_id]
+    block_values = {
+        item.expected
+        for item in extract_requirements(plan.prompt)
+        if plan.writer_instruction_version >= 15 and item.kind == "protected_block"
+    }
     hard_violated = tuple(
         literal
         for literal in plan.hard_constraints
-        if (
+        if literal not in block_values
+        and (
             plan.exact_output
             or (
                 plan.writer_instruction_version >= 15

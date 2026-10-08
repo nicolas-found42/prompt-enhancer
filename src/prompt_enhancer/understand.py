@@ -18,6 +18,7 @@ from typing import Any
 
 from . import jev_questions
 from .jev import ChoiceDecision, NoulDecision, parse_decision
+from .protected_blocks import fenced_sources
 from .requirements import extract_requirements, requirement_ledger
 from .styles import DEFAULT_STYLE, IMPROVEMENT_STYLES
 
@@ -227,7 +228,15 @@ def run_understand(
             "selected": style,
         }
 
-    candidates = extract_literal_candidates(prompt)
+    instruction_prompt = prompt
+    if protect_requirements:
+        for block in reversed(fenced_sources(prompt)):
+            instruction_prompt = (
+                instruction_prompt[: block.start]
+                + "\n"
+                + instruction_prompt[block.end :]
+            )
+    candidates = extract_literal_candidates(instruction_prompt)
     recognized = extract_requirements(prompt) if protect_requirements else ()
     hard_constraints: list[str] = [
         value for item in recognized for value in item.protected_values
@@ -359,7 +368,19 @@ def run_understand(
                 item.kind in {"json_format", "json_schema", "csv_shape"}
                 for item in recognized
             )
-            and is_exact_output(prompt, hard_constraints)
+            and is_exact_output(
+                instruction_prompt,
+                [
+                    value
+                    for value in hard_constraints
+                    if value
+                    not in {
+                        item.expected
+                        for item in recognized
+                        if item.kind == "protected_block"
+                    }
+                ],
+            )
         ),
         screen_embedded=screen_embedded,
         probes=tuple(probes),

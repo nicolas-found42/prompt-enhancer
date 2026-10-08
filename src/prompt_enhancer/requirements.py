@@ -16,6 +16,7 @@ from .clarification import (
 )
 from .criterion_checks import count_words
 from .criterion_reading import number_candidates
+from .protected_blocks import fenced_sources, protected_block_status, protected_sources
 from .requirement_formats import (
     CSV_DIRECTIVE,
     JSON_DIRECTIVE,
@@ -50,6 +51,7 @@ RequirementKind = Literal[
     "exact_output",
     "punctuation_only",
     "protected_value",
+    "protected_block",
     "word_count",
     "sentence_count",
     "line_count",
@@ -89,6 +91,7 @@ class Requirement:
     scope: str
     expected: str
     source_kind: str = "original_prompt"
+    oracle_uncertainty: str | None = None
 
     @property
     def protected_values(self) -> tuple[str, ...]:
@@ -99,7 +102,13 @@ class Requirement:
             return tuple(json.loads(self.expected))
         return (
             (self.expected,)
-            if self.kind in {"exact_output", "punctuation_only", "protected_value"}
+            if self.kind
+            in {
+                "exact_output",
+                "punctuation_only",
+                "protected_value",
+                "protected_block",
+            }
             else ()
         )
 
@@ -116,7 +125,15 @@ class Requirement:
             "kind": self.kind,
             "scope": self.scope,
             "protected_values": list(self.protected_values),
-            "oracle": {"kind": self.kind, "expected": self.expected},
+            "oracle": {
+                "kind": self.kind,
+                "expected": self.expected,
+                **(
+                    {"uncertainty": self.oracle_uncertainty}
+                    if self.oracle_uncertainty
+                    else {}
+                ),
+            },
         }
 
 
@@ -128,6 +145,19 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
     Those source spans still need semantic extraction and uncertainty coverage.
     """
     found: list[Requirement] = []
+    for start, end, body, uncertain in protected_sources(prompt):
+        found.append(
+            Requirement(
+                id=f"requirement:{start}:{end}",
+                source=prompt[start:end],
+                start=start,
+                end=end,
+                kind="protected_block",
+                scope="candidate_prompt",
+                expected=body,
+                oracle_uncertainty="source_indentation" if uncertain else None,
+            )
+        )
     json_format = JSON_DIRECTIVE.fullmatch(prompt)
     if json_format is not None:
         found.append(
@@ -217,6 +247,10 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
             )
         )
     for match in _EXACT_REPLY.finditer(prompt):
+        if any(
+            block.start <= match.start() < block.end for block in fenced_sources(prompt)
+        ):
+            continue
         # A directive introduced as source material needs a semantic scope
         # decision; this conservative recognizer handles leading instructions.
         if prompt[: match.start()].strip():
@@ -485,10 +519,23 @@ def prompt_findings(
             "source": item.source,
             "scope": "candidate_prompt",
             "candidate_id": candidate_id,
-            "status": "tested" if preserves_literal(candidate, value) else "failed",
-            "check": "protected_value",
+            "status": protected_block_status(
+                candidate,
+                value,
+                source_indentation_uncertain=item.oracle_uncertainty
+                == "source_indentation",
+            )
+            if item.kind == "protected_block"
+            else "tested"
+            if preserves_literal(candidate, value)
+            else "failed",
+            "check": "protected_block"
+            if item.kind == "protected_block"
+            else "protected_value",
             "expected": value,
-            "reason": "The protected source value must remain verbatim in the prompt.",
+            "reason": "Protected code/data contents must remain verbatim; unsupported block scope or indentation needs further coverage."
+            if item.kind == "protected_block"
+            else "The protected source value must remain verbatim in the prompt.",
         }
         for item in requirements
         for value in item.protected_values

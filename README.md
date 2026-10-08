@@ -240,8 +240,19 @@ Native requirement evidence includes conservative whole-answer JSON validity,
 explicit top-level JSON key/type declarations, and explicit comma-delimited CSV
 headers with matching record width. Values and row counts remain unconstrained when
 the source leaves them open. Duplicate applicable JSON keys and unsupported
-parser conventions retain uncertainty. Recognized constraints keep their exact
-source spans; the ledger still reports partial coverage pending broader audited
+parser conventions retain uncertainty. An explicit
+`Do not change any character in the supplied code:` line (using `data` for data)
+followed by a top-level fenced block protects its literal
+contents in a rewrite. The checker permits fence presentation changes that
+preserve those contents; changes or appended content in the protected block
+remain known failures. Tabs with ambiguous indentation and content moved outside
+the supported block scope retain uncertainty. The conservative lexer reads
+fenced content as source data, including exact-reply text quoted inside it;
+delegated instructions and other source scopes still need semantic coverage.
+It follows the literal-content and closing-fence rules of
+[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#fenced-code-blocks).
+Recognized constraints keep their exact source spans; the ledger still reports
+partial coverage pending broader audited
 extraction.
 
 Native diagnosis retains the original questions, raw partial answers and errors.
