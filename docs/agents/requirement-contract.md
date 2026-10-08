@@ -26,7 +26,9 @@ Markdown headings or explicit `Name:` headings; counts bind to that section.
 Punctuation, case and word-order edits support explicit source permissions, with
 uncertainty for unsupported tokenization. Protected fenced regions bind to their
 original region position, so a later duplicate cannot repair a changed region.
-Extracted literal protections retain that position; explicit unchanged-block
+Changing the number of fences makes an otherwise equal ordinal binding uncertain;
+known changed contents still fail. Extracted literal protections retain that
+position; explicit unchanged-block
 protections compare the full block body. Ambiguous region bindings remain untestable.
 Section identity ignores heading case, while its body retains blank lines for line
 counts. Bare language, tone and lower-case idioms do not declare named sections.
@@ -34,11 +36,16 @@ counts. Bare language, tone and lower-case idioms do not declare named sections.
 Required clarification has no preselected answer and cannot be skipped. Essential
 missing meaning requires text; reusable `{date}`/`{venue}` variables stay literal.
 Hard conflicts are checked in the same scope using bounded pair audits batched to
-fit Gateway context. Saved pair evidence is reused across sequential choices.
+fit Gateway context. Usable pair evidence is reused across sequential choices;
+transport/context failures and malformed answers can retry on an explicit resume,
+retaining every audit attempt.
 Pure whole-output count conflicts pause before model work, then audit the unchanged
 source after the explicit answer and before rewriting.
 An explicit choice supersedes only the competing obligation in the working copy;
-the original source and answer provenance remain in the ledger. Further conflicting
+the original source and answer provenance remain in the ledger. Contained duplicate
+interpretations are superseded with the rejected clause. Broader spans retain their
+original source and an independently audited residual interpretation with exact
+surviving source fragments; unresolved residual meaning keeps coverage partial. Further conflicting
 requirements require another choice. Resume retains run identity and active time,
 excluding human delay. API/job responses, check events and saved history retain
 this evidence; the browser explains it under **View report → Requirement coverage**.

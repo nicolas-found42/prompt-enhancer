@@ -2096,6 +2096,9 @@ class PromptOptimizer:
                 ledger,
                 judge_model=run_settings.judge_model,
                 run_id=run_id,
+                on_ledger=lambda value: self._retain_deadline_report(
+                    run_id, requirements=value, assumptions=assumptions
+                ),
             )
             context = replace(context, requirements=ledger)
             if pending is not None:

@@ -100,8 +100,10 @@ def protected_block_status(
     *,
     source_indentation_uncertain: bool = False,
     region_index: int | None = None,
+    source_region_count: int | None = None,
 ) -> str:
     blocks = fenced_sources(candidate)
+    shifted = source_region_count is not None and len(blocks) != source_region_count
     if region_index is not None:
         if region_index >= len(blocks):
             return "untestable" if expected in candidate else "failed"
@@ -131,6 +133,10 @@ def protected_block_status(
             )
             else "failed"
         )
+    if shifted:
+        # A changed/missing target already failed above. An equal surviving
+        # body cannot establish identity after another fence was added/deleted.
+        return "untestable" if expected in candidate else "failed"
     if any(
         block.body == expected
         and not block.indentation_uncertain
@@ -172,7 +178,16 @@ def source_data_spans(prompt: str) -> tuple[tuple[int, int], ...]:
             prompt[delegation.end() :],
         ):
             position = delegation.end() + continuation.start()
-            if not any(a <= position < b for a, b in spans):
+            if any(a <= position < b for a, b in spans):
+                continue
+            line_end = prompt.find("\n", position)
+            line = prompt[position : line_end if line_end >= 0 else len(prompt)]
+            refers_back = re.match(
+                r"(?i)Then[ \t]+\w+[ \t]+(?:the[ \t]+)?(?:summary|translation|analysis|review|response|explanation)\b",
+                line,
+            )
+            separated = re.search(r"\n[ \t]*\n[ \t]*$", prompt[:position])
+            if refers_back is not None or separated is not None:
                 end = position
                 break
         spans.append((delegation.end(), end))

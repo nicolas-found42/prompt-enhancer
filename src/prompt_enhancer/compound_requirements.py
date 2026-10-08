@@ -221,6 +221,9 @@ def audit_ledger(
                 scope,
                 expected,
                 declared_values=tuple(protected),
+                source_region_count=len(fenced_sources(prompt))
+                if protected and fenced_sources(prompt)
+                else None,
                 protected_regions=tuple(
                     (
                         literal,
@@ -318,9 +321,11 @@ def apply_ledger_answers(
 ) -> dict[str, Any]:
     result = json.loads(json.dumps(ledger))
     legacy = requirement_ledger(prompt, assumptions)
+    by_id = {item["id"]: item for item in result["requirements"]}
     for item in legacy["requirements"]:
         if item["source_kind"] == "user_answer":
-            result["requirements"].append(item)
+            by_id[item["id"]] = item
+    result["requirements"] = list(by_id.values())
     resolved_legacy = {item["id"]: item for item in legacy["contradictions"]}
     result["contradictions"] = [
         resolved_legacy.get(item["id"], item)
@@ -333,12 +338,23 @@ def apply_ledger_answers(
         answer = answers.get(conflict["id"])
         if answer is None:
             continue
+        selected_count = conflict.get("selected_count")
         selected = next(
             (
                 item
                 for item in result["requirements"]
-                if item["id"] in conflict["requirement_ids"]
-                and item["source"] == answer["value"]
+                if (
+                    item["id"] in conflict["requirement_ids"]
+                    or item["id"] == "user_answer:" + conflict["id"]
+                )
+                and (
+                    item["oracle"]["expected"] == selected_count
+                    if selected_count is not None
+                    else item.get("effective_interpretation", {}).get(
+                        "source", item["source"]
+                    )
+                    == answer["value"]
+                )
             ),
             None,
         )
@@ -355,10 +371,79 @@ def apply_ledger_answers(
                 and item["id"] != selected["id"]
             ):
                 item["superseded_by"] = answer
+    rejected = [
+        item
+        for item in result["requirements"]
+        if item.get("superseded_by") and item["source_kind"] == "original_prompt"
+    ]
+    for item in result["requirements"]:
+        if item.get("superseded_by") or item["source_kind"] != "original_prompt":
+            continue
+        span = item["source_span"]
+        # A duplicate extraction of the rejected clause is also superseded.
+        # Never drop a broader obligation that could contain unrelated meaning.
+        end = span["end"]
+        while end > span["start"] and prompt[end - 1] in ".; \t\n":
+            end -= 1
+        for losing in rejected:
+            bound = losing["source_span"]
+            if (
+                bound["start"] <= span["start"]
+                and end <= bound["end"]
+                and item["scope"].casefold() == losing["scope"].casefold()
+            ):
+                item["superseded_by"] = losing["superseded_by"]
+                break
     for item in result.get("requirements", []):
         answer = answers.get(f"meaning:{item['id']}")
         if answer is not None:
             item["user_answer"] = answer
+    for item in result["requirements"]:
+        if item["kind"] != "semantic" or item.get("superseded_by"):
+            continue
+        span = item["source_span"]
+        overrides = [
+            {
+                "requirement_id": losing["id"],
+                "source_span": losing["source_span"],
+                "provenance": losing["superseded_by"],
+            }
+            for losing in rejected
+            if losing["source_span"]["start"] < span["end"]
+            and span["start"] < losing["source_span"]["end"]
+        ]
+        if not overrides:
+            continue
+        fragments = []
+        cursor = span["start"]
+        for start, end in _superseded_spans(prompt, result):
+            if end <= cursor or start >= span["end"]:
+                continue
+            if cursor < start:
+                fragments.append({"start": cursor, "end": min(start, span["end"])})
+            cursor = max(cursor, min(end, span["end"]))
+        if cursor < span["end"]:
+            fragments.append({"start": cursor, "end": span["end"]})
+        effective = {
+            "source": "".join(
+                prompt[part["start"] : part["end"]] for part in fragments
+            ),
+            "source_fragments": fragments,
+            "overrides": overrides,
+        }
+        previous = item.get("effective_interpretation", {})
+        if any(previous.get(key) != value for key, value in effective.items()):
+            item["effective_interpretation"] = effective
+    if any(
+        item.get("effective_interpretation", {}).get("audit", {}).get("status")
+        != "accepted"
+        for item in result["requirements"]
+        if item.get("effective_interpretation") and not item.get("superseded_by")
+    ):
+        result.update(
+            coverage="partial",
+            reason="Coverage is partial: the remaining meaning of a user-modified obligation needs an audit.",
+        )
     result["release_eligible"] = (
         result.get("coverage") == "audited"
         and all(
@@ -400,19 +485,37 @@ def ledger_requirements(
                 span["end"],
                 item["kind"],
                 item["scope"],
-                item["oracle"]["expected"],
+                item.get("effective_interpretation", {}).get(
+                    "source", item["oracle"]["expected"]
+                )
+                if item.get("effective_interpretation", {})
+                .get("audit", {})
+                .get("status")
+                == "accepted"
+                else item["oracle"]["expected"],
                 declared_values=tuple(item["protected_values"]),
                 protected_regions=tuple(
                     (binding["value"], binding["region_index"], binding.get("body"))
                     for binding in item["oracle"].get("protected_regions", [])
                 ),
                 oracle_uncertainty=item["oracle"].get("uncertainty"),
+                source_region_count=item["oracle"].get("source_region_count"),
             )
     return tuple(items.values())
 
 
 def _conflict_key(pair: tuple[dict[str, Any], dict[str, Any]]) -> str:
-    return f"requirements:audit:conflict:{pair[0]['id']}:{pair[1]['id']}"
+    key = f"requirements:audit:conflict:{pair[0]['id']}:{pair[1]['id']}"
+    effective = [
+        item["effective_interpretation"]["source"]
+        for item in pair
+        if item.get("effective_interpretation")
+    ]
+    return key + (
+        ":" + hashlib.sha256(json.dumps(effective).encode()).hexdigest()[:12]
+        if effective
+        else ""
+    )
 
 
 def _conflict_audits(
@@ -451,7 +554,12 @@ def _conflict_audits(
                     ledger["gaps"].append(gap)
                 continue
             key = _conflict_key(pair)
-            if key not in cached:
+            previous = cached.get(key)
+            if (
+                previous is None
+                or previous["failure_kind"] is not None
+                or previous["probability"] is None
+            ):
                 requests.append(
                     {
                         "model": judge_model,
@@ -468,14 +576,81 @@ def _conflict_audits(
     if requests:
         for audit in _audit(gateway, requests, run_id):
             cached[audit["key"]] = audit
-    ledger["conflict_audits"] = list(cached.values())
+            ledger.setdefault("conflict_audits", []).append(audit)
     return cached
 
 
+def _audit_effective(
+    gateway: Any, prompt: str, ledger: dict[str, Any], judge_model: str, run_id: str
+) -> None:
+    pending = []
+    for item in ledger["requirements"]:
+        effective = item.get("effective_interpretation")
+        if item.get("superseded_by") or effective is None:
+            continue
+        audit = effective.get("audit")
+        if (
+            audit is None
+            or audit.get("failure_kind") is not None
+            or audit.get("probability") is None
+        ):
+            pending.append(item)
+    requests = [
+        {
+            "model": judge_model,
+            "key": f"requirements:audit:effective:{item['id']}:"
+            + hashlib.sha256(
+                json.dumps(
+                    item["effective_interpretation"]["overrides"], sort_keys=True
+                ).encode()
+            ).hexdigest()[:12],
+            "type": "noul",
+            "query": "Does this residual interpretation preserve ALL meaning in the original obligation except the exact clauses explicitly superseded by the recorded user choices? Validate every surviving source fragment and choice provenance. The unchanged source remains authoritative for all other meaning; do not invent or silently drop an unrelated obligation.",
+            "state": {
+                "source": prompt,
+                "original_obligation": item,
+                "effective_interpretation": item["effective_interpretation"],
+            },
+        }
+        for item in pending
+    ]
+    if requests:
+        for item, audit in zip(pending, _audit(gateway, requests, run_id), strict=True):
+            effective = item["effective_interpretation"]
+            effective["audit"] = audit
+            effective.setdefault("audit_attempts", []).append(audit)
+
+
 def ledger_plan(
-    gateway: Any, prompt: str, ledger: dict[str, Any], *, judge_model: str, run_id: str
+    gateway: Any,
+    prompt: str,
+    ledger: dict[str, Any],
+    *,
+    judge_model: str,
+    run_id: str,
+    on_ledger: Callable[[dict[str, Any]], None] | None = None,
 ) -> ClarificationPlan | None:
     """Ask only source-backed conflicts and essential missing meaning."""
+    if on_ledger is not None:
+        on_ledger(json.loads(json.dumps(ledger)))
+    _audit_effective(gateway, prompt, ledger, judge_model, run_id)
+    if on_ledger is not None:
+        on_ledger(json.loads(json.dumps(ledger)))
+    if (
+        not ledger.get("gaps")
+        and ledger.get("whole_source_audit", {}).get("status") == "accepted"
+        and all(
+            item.get("audit", {}).get("status") == "accepted"
+            for item in ledger["requirements"]
+            if item["source_kind"] == "original_prompt"
+        )
+    ):
+        # Prior conflict transport failures can recover on a later explicit resume.
+        # All active pairs are reconsidered below; source audit gaps stay partial.
+        ledger["coverage"] = "audited"
+        ledger["reason"] = (
+            "Each obligation and the complete original request were audited separately."
+        )
     questions = []
     grouped: dict[str, list[dict[str, Any]]] = {}
     for item in ledger["requirements"]:
@@ -501,7 +676,21 @@ def ledger_plan(
                 )
             )
         else:
-            grouped.setdefault(item["scope"].casefold(), []).append(item)
+            effective_item: dict[str, Any] = item
+            effective = item.get("effective_interpretation")
+            if effective is not None:
+                if effective.get("audit", {}).get("status") != "accepted":
+                    ledger.update(
+                        coverage="partial",
+                        release_eligible=False,
+                        reason="Coverage is partial: the remaining meaning of a user-modified obligation is unresolved.",
+                    )
+                    continue
+                effective_item = {
+                    **item,
+                    "oracle": {**item["oracle"], "expected": effective["source"]},
+                }
+            grouped.setdefault(item["scope"].casefold(), []).append(effective_item)
     # Audit pairs, not a collection whose unrelated requirements might otherwise
     # be discarded by one choice. Keep overlapping conflicts for later resolution.
     audits = _conflict_audits(gateway, prompt, ledger, grouped, judge_model, run_id)
@@ -553,7 +742,13 @@ def ledger_plan(
                     identity,
                     f"Which requirement should apply to {scope.removeprefix('section:')}?",
                     tuple(
-                        ClarificationOption(item["id"], item["source"]) for item in pair
+                        ClarificationOption(
+                            item["id"],
+                            item.get("effective_interpretation", {}).get(
+                                "source", item["source"]
+                            ),
+                        )
+                        for item in pair
                     ),
                     "",
                     label="Resolve conflicting requirements",
@@ -563,13 +758,19 @@ def ledger_plan(
             # One minimal choice per scope; any remaining conflicts stay pending
             # and are checked again against the effective ledger on continuation.
             break
-    if questions:
-        ledger["release_eligible"] = False
+    ledger["release_eligible"] = (
+        not questions
+        and ledger.get("coverage") == "audited"
+        and all(
+            item["status"] == "resolved_by_user"
+            for item in ledger.get("contradictions", [])
+        )
+    )
     return ClarificationPlan(tuple(questions), ()) if questions else None
 
 
-def resolved_ledger_prompt(prompt: str, ledger: Mapping[str, Any]) -> str:
-    """Remove only explicitly superseded source clauses from the working copy."""
+def _superseded_spans(prompt: str, ledger: Mapping[str, Any]) -> list[tuple[int, int]]:
+    """Merged deletion spans include only source-backed clause connectors."""
     import re
 
     spans = []
@@ -585,6 +786,17 @@ def resolved_ledger_prompt(prompt: str, ledger: Mapping[str, Any]) -> str:
                 start += 1  # retain the section's separator before the chosen count
                 end += following.end()
         spans.append((start, end))
-    for start, end in sorted(spans, reverse=True):
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def resolved_ledger_prompt(prompt: str, ledger: Mapping[str, Any]) -> str:
+    """Remove only explicitly superseded source clauses from the working copy."""
+    for start, end in reversed(_superseded_spans(prompt, ledger)):
         prompt = prompt[:start] + prompt[end:]
     return prompt

@@ -245,11 +245,16 @@ def run_understand(
     if requirements is not None:
         provenance["requirements"] = dict(requirements)
         hard_constraints.extend(
-            item["source"]
+            item.get("effective_interpretation", {}).get("source", item["source"])
             for item in requirements.get("requirements", [])
             if item["kind"] == "semantic"
             and item.get("audit", {}).get("status") == "accepted"
             and not item.get("superseded_by")
+            and (
+                "effective_interpretation" not in item
+                or item["effective_interpretation"].get("audit", {}).get("status")
+                == "accepted"
+            )
         )
     elif recognized:
         provenance["requirements"] = requirement_ledger(prompt, assumptions)

@@ -41,6 +41,12 @@ def release_report(path: Path) -> None:
             if item.get("source_kind") == "original_prompt"
         )
         or any(
+            item.get("effective_interpretation", {}).get("audit", {}).get("status")
+            != "accepted"
+            for item in ledger.get("requirements", [])
+            if item.get("effective_interpretation") and not item.get("superseded_by")
+        )
+        or any(
             item.get("status") != "resolved_by_user"
             for item in ledger.get("contradictions", [])
         )

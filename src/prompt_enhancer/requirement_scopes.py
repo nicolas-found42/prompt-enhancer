@@ -10,7 +10,7 @@ _NUMBER = r"\d{1,9}|one|two|three|four|five|six|seven|eight|nine|ten"
 _COUNT = rf"(?:exactly\s+)?(?P<count>{_NUMBER})\s+(?P<unit>words?|sentences?|lines?|bullets?)"
 _AFTER = re.compile(
     _COUNT
-    + r"\s+(?:under\s+(?:the\s+)?(?:section\s+)?|in\s+(?:the\s+)?section\s+)(?P<name>[A-Za-z][A-Za-z0-9 _-]{0,80}?)(?=\s+and\s+|[.;\n]|$)",
+    + r"\s+(?:under\s+(?:the\s+)?(?:section\s+)?|in\s+(?:the\s+)?section\s+)(?P<name>[A-Za-z][A-Za-z0-9 _-]{0,80}?)(?:\s+(?:section|heading|list))?(?=\s+and\s+|[.;\n]|$)",
     re.I,
 )
 _BEFORE = re.compile(
@@ -59,6 +59,7 @@ def scoped_counts(prompt: str) -> tuple[ScopedCount, ...]:
                     re.I,
                 )
                 and not name[0].isupper()
+                and not re.search(r"\b(?:section|heading|list)$", match[0], re.I)
             ):
                 # Bare lower-case phrases such as "under pressure" do not name
                 # a section. Semantic extraction retains any actual instruction.

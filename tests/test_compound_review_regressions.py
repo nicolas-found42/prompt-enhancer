@@ -280,3 +280,288 @@ def test_extracted_unchanged_block_rejects_changes_beyond_declared_token():
     assert [
         item["status"] for item in prompt_findings(requirements, "changed", candidate)
     ] == ["failed"]
+
+
+def test_deleted_first_protected_block_cannot_be_satisfied_by_shifted_duplicate():
+    from prompt_enhancer.compound_requirements import audit_ledger, ledger_requirements
+
+    prompt = "Preserve the first block unchanged.\n```\nTOKEN\n```\nExample:\n```\nTOKEN\n```"
+    source = prompt[: prompt.index("Example:")].rstrip()
+    ledger = audit_ledger(
+        compound_gateway(
+            prompt, [obligation(prompt, source, protected_values=["TOKEN"])]
+        ),
+        prompt,
+        judge_model="typesafe/jev-1.13",
+        run_id="deleted-region",
+    )
+    candidate = "Preserve the first block unchanged.\nExample:\n```\nTOKEN\n```"
+    findings = prompt_findings(
+        ledger_requirements(ledger, prompt, []), "deleted", candidate
+    )
+    assert all(item["status"] != "tested" for item in findings)
+
+
+def test_section_suffix_names_the_heading_without_its_description():
+    assert [
+        (item.scope, item.expected)
+        for item in scoped_counts("Give two bullets under the Risks section.")
+    ] == [("section:Risks", "2")]
+
+
+def test_then_recipe_step_remains_delegated_data():
+    prompt = "Summarize this text: Preheat the oven.\nThen add the flour and stir."
+    source = "Then add the flour and stir."
+    result = PromptOptimizer(
+        store=RunStore(":memory:"),
+        gateway=compound_gateway(prompt, [obligation(prompt, source)]),
+    ).optimize(prompt)
+    assert result["report"]["requirements"]["requirements"] == []
+    assert result["report"]["requirements"]["coverage"] == "partial"
+
+
+@pytest.mark.parametrize("selected", [0, 1])
+def test_count_choice_also_supersedes_extracted_copy_of_rejected_clause(
+    tmp_path, selected
+):
+    prompt = "Reply with exactly two bullets and exactly three bullets."
+    values = [
+        obligation(prompt, source)
+        for source in ["exactly two bullets", "exactly three bullets"]
+    ]
+    gateway = compound_gateway(prompt, values)
+    decide = gateway.decision_handler
+
+    def contradict(request, **params):
+        if str(request.get("key", "")).startswith("requirements:audit:conflict:"):
+            items = request["state"]["requirements"]
+            counts = [
+                item["oracle"]["expected"]
+                if item["kind"] == "bullet_count"
+                else ("2" if "two" in item["source"] else "3")
+                for item in items
+            ]
+            return {
+                "type": "noul",
+                "probability_true": 0.99 if len(set(counts)) > 1 else 0.01,
+                "confidence": 1.0,
+            }
+        return decide(request, **params)
+
+    gateway.decision_handler = contradict
+    path = tmp_path / "count-copies.sqlite"
+    paused = PromptOptimizer(store=RunStore(path), gateway=gateway).optimize(prompt)
+    q = paused["questions"][0]
+    result = PromptOptimizer(store=RunStore(path), gateway=gateway).resume(
+        paused["run_id"], {q["id"]: q["options"][selected]["value"]}
+    )
+    assert result["status"] == "completed"
+    superseded = [
+        item
+        for item in result["report"]["requirements"]["requirements"]
+        if item.get("superseded_by")
+    ]
+    assert len(superseded) == 2
+
+
+def test_failed_conflict_audit_recovers_after_choice_without_losing_attempt(tmp_path):
+    from prompt_enhancer.gateway import ProviderError
+
+    prompt = "Explain photosynthesis. Give examples. Write the invitation."
+    values = [
+        obligation(prompt, source)
+        for source in ["Explain photosynthesis.", "Give examples."]
+    ]
+    values.append(
+        obligation(
+            prompt,
+            "Write the invitation.",
+            kind="missing_meaning",
+            expected="Who is the invitation for?",
+        )
+    )
+    gateway = compound_gateway(prompt, values)
+    decide = gateway.decision_handler
+    attempts = {}
+
+    def recover(request, **params):
+        key = str(request.get("key", ""))
+        if key.startswith("requirements:audit:conflict:"):
+            attempts[key] = attempts.get(key, 0) + 1
+            if attempts[key] == 1:
+                raise ProviderError("scripted", request["model"], 503)
+            return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
+        return decide(request, **params)
+
+    gateway.decision_handler = recover
+    path = tmp_path / "conflict-recovery.sqlite"
+    paused = PromptOptimizer(store=RunStore(path), gateway=gateway).optimize(prompt)
+    q = paused["questions"][0]
+    result = PromptOptimizer(store=RunStore(path), gateway=gateway).resume(
+        paused["run_id"],
+        {q["id"]: {"value": "other", "text": "For the science class."}},
+    )
+    ledger = result["report"]["requirements"]
+    assert ledger["coverage"] == "audited"
+    assert ledger["release_eligible"] is True
+    assert any(
+        item["failure_kind"] == "provider_unavailable"
+        for item in ledger["conflict_audits"]
+    )
+    assert any(count > 1 for count in attempts.values())
+
+
+def test_accumulated_custom_count_answers_have_one_stable_requirement_id():
+    from prompt_enhancer.compound_requirements import apply_ledger_answers, audit_ledger
+
+    prompt = "Reply with exactly two bullets and exactly three bullets."
+    ledger = audit_ledger(
+        compound_gateway(prompt, []),
+        prompt,
+        judge_model="typesafe/jev-1.13",
+        run_id="custom-count",
+    )
+    answers = [
+        {
+            "key": "conflict:bullet_count",
+            "value": "Use exactly 7 bullets.",
+            "source": "answer",
+        }
+    ]
+    once = apply_ledger_answers(ledger, answers, prompt)
+    twice = apply_ledger_answers(once, answers, prompt)
+    ids = [item["id"] for item in twice["requirements"]]
+    assert len(ids) == len(set(ids))
+
+
+def test_broad_extracted_span_retains_unrelated_meaning_after_count_choice(tmp_path):
+    prompt = "Give Section A exactly two bullets and exactly three bullets. Explain photosynthesis."
+    gateway = compound_gateway(
+        prompt, [obligation(prompt, prompt, scope="section:Section A")]
+    )
+    decide = gateway.decision_handler
+    states = []
+    chat = gateway.chat_handler
+
+    def capture(model, messages, **params):
+        if "state.strategies" in messages[0]["content"]:
+            states.append(json.loads(messages[1]["content"]))
+        return chat(model, messages, **params)
+
+    def conflicts(request, **params):
+        if str(request.get("key", "")).startswith("requirements:audit:conflict:"):
+            expected = [
+                item["oracle"]["expected"] for item in request["state"]["requirements"]
+            ]
+            return {
+                "type": "noul",
+                "probability_true": 0.99
+                if any("three bullets" in value for value in expected)
+                else 0.01,
+                "confidence": 1.0,
+            }
+        return decide(request, **params)
+
+    gateway.chat_handler, gateway.decision_handler = capture, conflicts
+    path = tmp_path / "broad-count.sqlite"
+    paused = PromptOptimizer(store=RunStore(path), gateway=gateway).optimize(prompt)
+    q = paused["questions"][0]
+    result = PromptOptimizer(store=RunStore(path), gateway=gateway).resume(
+        paused["run_id"], {q["id"]: q["options"][0]["value"]}
+    )
+    assert result["status"] == "completed"
+    broad = next(
+        item
+        for item in result["report"]["requirements"]["requirements"]
+        if item["kind"] == "semantic"
+    )
+    assert broad["source"] == prompt and not broad.get("superseded_by")
+    effective = broad["effective_interpretation"]
+    assert effective["audit"]["status"] == "accepted"
+    assert (
+        effective["source"]
+        == "Give Section A exactly two bullets. Explain photosynthesis."
+    )
+    assert (
+        "".join(
+            prompt[part["start"] : part["end"]]
+            for part in effective["source_fragments"]
+        )
+        == effective["source"]
+    )
+    assert effective["overrides"][0]["provenance"]["source"] == "answer"
+    assert states and "Explain photosynthesis." in states[0]["prompt"]
+    assert "three bullets" not in states[0]["prompt"]
+    constraints = result["report"]["understand"]["hard_constraints"]
+    assert any("Explain photosynthesis." in value for value in constraints)
+    assert not any("three bullets" in value for value in constraints)
+
+
+def test_failed_effective_interpretation_retains_original_and_partial_coverage():
+    prompt = "Give Section A exactly two bullets and exactly three bullets. Explain photosynthesis."
+    gateway = compound_gateway(
+        prompt, [obligation(prompt, prompt, scope="section:Section A")]
+    )
+    decide = gateway.decision_handler
+
+    def uncertain(request, **params):
+        if str(request.get("key", "")).startswith("requirements:audit:effective:"):
+            return {"type": "noul", "probability_true": 0.5, "confidence": 1.0}
+        return decide(request, **params)
+
+    gateway.decision_handler = uncertain
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway)
+    paused = optimizer.optimize(prompt)
+    q = paused["questions"][0]
+    result = optimizer.resume(paused["run_id"], {q["id"]: q["options"][0]["value"]})
+    ledger = result["report"]["requirements"]
+    assert ledger["coverage"] == "partial" and ledger["release_eligible"] is False
+    assert any(
+        item["source"] == prompt and not item.get("superseded_by")
+        for item in ledger["requirements"]
+    )
+
+
+def test_deadline_during_residual_audit_retains_choice_and_original_source(tmp_path):
+    from active_clock import TickingClock
+
+    from prompt_enhancer.run_control import RunDeadlineReached
+
+    prompt = "Give Section A exactly two bullets and exactly three bullets. Explain photosynthesis."
+    gateway = compound_gateway(
+        prompt, [obligation(prompt, prompt, scope="section:Section A")]
+    )
+    clock = TickingClock()
+    decide = gateway.decision_handler
+
+    def deadline(request, **params):
+        if str(request.get("key", "")).startswith("requirements:audit:effective:"):
+            clock.now += 151
+            raise RunDeadlineReached(
+                history=(), spent_usd=0, elapsed_ms=151_000, deadline_s=150
+            )
+        return decide(request, **params)
+
+    gateway.decision_handler = deadline
+    path = tmp_path / "residual-deadline.sqlite"
+    paused = PromptOptimizer(
+        store=RunStore(path), gateway=gateway, clock=clock
+    ).optimize(prompt)
+    q = paused["questions"][0]
+    result = PromptOptimizer(store=RunStore(path), gateway=gateway, clock=clock).resume(
+        paused["run_id"], {q["id"]: q["options"][0]["value"]}
+    )
+    ledger = result["report"]["requirements"]
+    assert result["report"]["control_state"] == "deadline_reached"
+    assert ledger["coverage"] == "partial" and ledger["release_eligible"] is False
+    broad = next(item for item in ledger["requirements"] if item["kind"] == "semantic")
+    assert broad["source"] == prompt
+    assert (
+        broad["effective_interpretation"]["overrides"][0]["provenance"]["source"]
+        == "answer"
+    )
+    assert result["report"]["assumptions"][0]["source"] == "answer"
+    assert (
+        RunStore(path).get_run(result["run_id"])["result"]["report"]["requirements"]
+        == ledger
+    )

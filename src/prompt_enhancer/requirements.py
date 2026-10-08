@@ -98,6 +98,7 @@ class Requirement:
     source_kind: str = "original_prompt"
     oracle_uncertainty: str | None = None
     region_index: int | None = None
+    source_region_count: int | None = None
     declared_values: tuple[str, ...] = ()
     protected_regions: tuple[tuple[str, int, str | None], ...] = ()
 
@@ -155,6 +156,11 @@ class Requirement:
                     else {}
                 ),
                 **(
+                    {"source_region_count": self.source_region_count}
+                    if self.source_region_count is not None
+                    else {}
+                ),
+                **(
                     {"region_index": self.region_index}
                     if self.region_index is not None
                     else {}
@@ -187,6 +193,7 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
                 scope="candidate_prompt",
                 expected=body,
                 oracle_uncertainty="source_indentation" if uncertain else None,
+                source_region_count=len(fenced_sources(prompt)),
                 region_index=next(
                     (
                         index
@@ -628,13 +635,23 @@ def _protected_value_status(item: Requirement, candidate: str, value: str) -> st
             else ("tested" if preserves_literal(candidate, value) else "failed")
         )
     if binding is not None and binding[1] is not None:
-        return protected_block_status(candidate, binding[1], region_index=region)
+        return protected_block_status(
+            candidate,
+            binding[1],
+            region_index=region,
+            source_region_count=item.source_region_count,
+        )
     blocks = fenced_sources(candidate)
+    shifted = (
+        item.source_region_count is not None and len(blocks) != item.source_region_count
+    )
     if region >= len(blocks):
         return "untestable" if preserves_literal(candidate, value) else "failed"
     block = blocks[region]
     if not preserves_literal(block.body, value):
         return "failed"
+    if shifted:
+        return "untestable"
     return (
         "untestable"
         if block.boundary_uncertain or block.indentation_uncertain
@@ -671,6 +688,7 @@ def prompt_findings(
                 source_indentation_uncertain=item.oracle_uncertainty
                 == "source_indentation",
                 region_index=item.region_index,
+                source_region_count=item.source_region_count,
             )
             if item.kind == "protected_block"
             else _protected_value_status(item, candidate, value)
