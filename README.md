@@ -208,6 +208,20 @@ weak replies stop operationally with allowlisted finish/token metadata rather
 than contributing a prompt-quality score. Operation deadlines remain separate
 from output caps and Round-boundary run limits.
 
+For the provisional #187 evaluation contract, submit
+`options={"evaluation_profile": "llama-tuning-v1"}` to the optimizer or job API.
+It pins Jev as judge, `qwen/qwen3.7-flash` for non-Jev roles, and
+`meta-llama/llama-3.1-8b-instruct` through OpenRouter for three weak samples.
+Novita is the provisional first service; `"evaluation_provider": "groq"`
+selects Groq first for the matched pilot. Requests restrict routing to that
+service and require parameter support. A permitted service fallback reruns the
+baseline and every draft on the other service with matching requested seeds;
+incomplete attempts and completed sibling samples remain in the evidence.
+Reported provider/model identities remain unknown when the response omits them,
+and matching requests do not establish effective sampling settings. The
+4,096-token weak output cap is a pilot starting point. Neither service has been
+chosen by a measured pilot, and this profile does not establish the release bar.
+
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
 [delegated-review follow-up](docs/delegated-evaluation-2026-09-23.md) state

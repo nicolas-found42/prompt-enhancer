@@ -9,6 +9,59 @@ from prompt_enhancer.jobs import RunJobs
 from prompt_enhancer.store import RunStore
 
 
+def test_matched_service_fallback_events_and_samples_survive_reload(tmp_path):
+    from active_clock import advancing_chat
+    from test_always_attempt import _gateway
+
+    from prompt_enhancer.gateway import ProviderError
+    from prompt_enhancer.optimizer import PromptOptimizer
+
+    clock = TickingClock()
+    store = RunStore(tmp_path / "fallback.sqlite")
+    jobs = RunJobs(store=store, monotonic=clock)
+    gateway = _gateway(
+        candidate_text="Respond with exactly PING and nothing else.", weak_output="PING"
+    )
+    handler = gateway.chat_handler
+
+    def chat(model, messages, **params):
+        if params["role"] == "weak" and params["provider"]["only"] == ["novita"]:
+            raise ProviderError("openrouter", model, 503, role="weak")
+        return handler(model, messages, **params)
+
+    gateway.chat_handler = advancing_chat(chat, clock, 20)
+    optimizer = PromptOptimizer(store=store, clock=clock, gateway=gateway)
+    prompt = "Reply with exactly PING and nothing else."
+    jobs.submit(
+        "fallback",
+        "optimize",
+        lambda progress, _cancel, _observe: optimizer.optimize(
+            prompt,
+            {"evaluation_profile": "llama-tuning-v1"},
+            run_id="fallback",
+            progress=progress,
+        ),
+        lambda _exc: {},
+        prompt=prompt,
+    )
+    done = jobs.wait("fallback")
+    fallback = next(item for item in done["events"] if item["kind"] == "fallback")
+    assert "baseline and drafts on Groq" in fallback["summary"]
+    assert fallback["comparison"]["attempts"][0]["status"] == "incomplete"
+    assert len(fallback["comparison"]["attempts"][0]["requests"]) == 3
+    comparison = done["result"]["report"]["comparisons"][0]
+    assert comparison["attempts"][-1]["status"] == "completed"
+    assert len(comparison["attempts"][-1]["outputs"]) >= 6
+    restored = RunJobs(
+        store=RunStore(tmp_path / "fallback.sqlite"), monotonic=clock
+    ).get("fallback")
+    assert restored["events"] == done["events"]
+    assert (
+        restored["result"]["report"]["comparisons"]
+        == done["result"]["report"]["comparisons"]
+    )
+
+
 def test_requirement_check_events_keep_candidate_evidence_across_reload(tmp_path):
     from test_always_attempt import _gateway
 

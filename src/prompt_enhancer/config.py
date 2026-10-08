@@ -44,6 +44,9 @@ class Settings:
     # coverage remains unresolved rather than falling back to invented gates.
     decision_policy_path: str | None = None
     weak_max_output_tokens: int = 16384
+    # An opt-in evaluation contract; ordinary product model choices stay separate.
+    evaluation_profile: str | None = None
+    evaluation_provider: str | None = None
     # Quality score-vector floors (#168): per-dimension minima on the 0-1
     # scale. Any dimension below its floor rejects the candidate outright
     # (max-gate: a breach is never averaged away by strong siblings). These
@@ -118,6 +121,11 @@ class Settings:
 
     def public_dict(self) -> dict[str, Any]:
         return {
+            **(
+                {"evaluation_profile": self.evaluation_profile}
+                if self.evaluation_profile
+                else {}
+            ),
             "judge_model": self.judge_model,
             "writer_model": self.writer_model,
             "strong_check_model": self.strong_check_model,

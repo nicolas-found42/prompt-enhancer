@@ -1006,6 +1006,20 @@ def run_round(
         {candidate.candidate_id: candidate.text for candidate in candidates}
     )
     stage("running_weak_models")
+
+    def comparison_activity(facts: Mapping[str, Any]) -> None:
+        if on_activity is not None:
+            destination = facts.get("fallback_to")
+            on_activity(
+                {
+                    "kind": "fallback" if destination else "comparison",
+                    "summary": f"The comparison service could not finish. Rerunning the baseline and drafts on {str(destination).title()}."
+                    if destination
+                    else "The comparison attempt returned; completed samples and failures were retained.",
+                    "comparison": dict(facts),
+                }
+            )
+
     panel = run_candidates(
         candidates,
         settings.weak_models,
@@ -1015,6 +1029,7 @@ def run_round(
         run_seed=plan.seed,
         run_id=plan.run_id,
         validate_response=plan.writer_instruction_version >= 15,
+        on_comparison=comparison_activity if settings.evaluation_profile else None,
     )
     stage("grading")
     grading_observation: dict[str, Any] = {}

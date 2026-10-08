@@ -523,6 +523,7 @@ class RunJobs:
                             "reasons",
                             "stage",
                             "checks",
+                            "comparison",
                         )
                         if key in round_info
                     }

@@ -619,9 +619,17 @@ class HttpGateway:
                 return result
         raise TypeError("catalog.fetch() must return CatalogSnapshot")
 
-    def route_model(self, model: str, *, run_id: str | None = None) -> RouteDecision:
+    def route_model(
+        self,
+        model: str,
+        *,
+        run_id: str | None = None,
+        route_provider: str | None = None,
+    ) -> RouteDecision:
+        if route_provider not in {None, "openrouter"}:
+            raise ValueError("only an explicit OpenRouter route is supported")
         provider = "openrouter"
-        if model != JEV_MODEL:
+        if model != JEV_MODEL and route_provider is None:
             try:
                 snapshot = self.list_models()
                 provider = "go" if model in snapshot.go_ids else "openrouter"
@@ -1446,6 +1454,8 @@ class HttpGateway:
     ) -> Any:
         if isinstance(messages, str):
             messages = [{"role": "user", "content": messages}]
+        # Adapter routing belongs to the Gateway, never to the provider payload.
+        route_provider = params.pop("route_provider", None)
         routed_decisions: list[RouteDecision] = []
 
         def build_payload(decision: RouteDecision) -> Mapping[str, Any]:
@@ -1510,7 +1520,9 @@ class HttpGateway:
             role=role,
             operation="chat",
             run_id=run_id,
-            route_factory=lambda: self.route_model(model, run_id=run_id),
+            route_factory=lambda: self.route_model(
+                model, run_id=run_id, route_provider=route_provider
+            ),
         )
         decision = routed_decisions[0]
         if decision.url.endswith("/messages") and isinstance(response, Mapping):

@@ -105,12 +105,15 @@ from .success_tests import (
     DEFAULT_FAITHFULNESS_THRESHOLD,
     SuccessTestScreenCache,
 )
+from .tuning_profile import apply_tuning_profile
 from .understand import UnderstandResult, run_understand
 from .writer_replies import WRITER_REPLY_RECOVERY_MIN_VERSION
 
 RUN_OPTION_KEYS = frozenset(
     {
         "clarification_allowed",
+        "evaluation_profile",
+        "evaluation_provider",
         "improvement_style",
         "model_overrides",
         "prior_round_failures",
@@ -469,6 +472,17 @@ class PromptOptimizer:
         overrides = options.get("model_overrides") or {}
         if not isinstance(overrides, Mapping):
             raise TypeError("model_overrides must be a mapping")
+        profile = options.get("evaluation_profile", self.config.evaluation_profile)
+        if profile is not None:
+            if overrides:
+                raise ValueError("evaluation profile models cannot be overridden")
+            if not isinstance(profile, str):
+                raise ValueError("evaluation profile must be a profile ID")
+            return apply_tuning_profile(
+                self.config, profile, options.get("evaluation_provider")
+            )
+        if options.get("evaluation_provider") is not None:
+            raise ValueError("evaluation_provider requires an evaluation profile")
         if "judge" in overrides or "judge_model" in overrides:
             raise ValueError("judge model is fixed to Jev")
         writer = overrides.get(
@@ -615,6 +629,22 @@ class PromptOptimizer:
         gateway_config = getattr(self.gateway, "config", None)
         return {
             "models": settings.model_roles(),
+            **(
+                {
+                    "evaluation_profile": settings.evaluation_profile,
+                    "weak_samples": settings.weak_samples,
+                    "weak_max_output_tokens": settings.weak_max_output_tokens,
+                    "provider_policy": {
+                        "route": "openrouter",
+                        "allowed": ["novita", "groq"],
+                        "primary": settings.evaluation_provider,
+                        "status": "provisional",
+                        "fallback_scope": "whole_comparison",
+                    },
+                }
+                if settings.evaluation_profile
+                else {}
+            ),
             "operation_timeout_s": getattr(gateway_config, "operation_timeout_s", None),
             "request_timeout_s": getattr(gateway_config, "timeout", None),
             "run_control": {
@@ -1145,6 +1175,7 @@ class PromptOptimizer:
         understand: UnderstandResult,
         route: RouteResult,
         writer_attempts: list[dict[str, Any]],
+        comparisons: list[dict[str, Any]],
     ) -> RoundRunner:
         def execute(request: RoundRequest) -> RoundOutcome:
             self._round = {"round": request.round_number}
@@ -1172,8 +1203,24 @@ class PromptOptimizer:
                 exact_output=understand.exact_output,
                 route_strategies=tuple(route.strategies),
             )
+
+            def activity(facts: Mapping[str, Any]) -> None:
+                if isinstance(facts.get("comparison"), Mapping):
+                    comparison = {"round": request.round_number, **facts["comparison"]}
+                    if (
+                        comparisons
+                        and comparisons[-1].get("round") == request.round_number
+                    ):
+                        comparisons[-1] = comparison
+                    else:
+                        comparisons.append(comparison)
+                    self._retain_deadline_report(
+                        context.run_id, comparisons=list(comparisons)
+                    )
+                self._activity(facts)
+
             return run_round(
-                self.gateway, plan, on_stage=self._stage, on_activity=self._activity
+                self.gateway, plan, on_stage=self._stage, on_activity=activity
             )
 
         return execute
@@ -1323,8 +1370,14 @@ class PromptOptimizer:
                 for attempt in entry.evidence.get("writer_attempts", ())
             ]
         )
+        comparisons: list[dict[str, Any]] = []
 
         def with_writer_attempts(result: OptimizeResult) -> OptimizeResult:
+            if context.settings.evaluation_profile:
+                result["report"]["configuration"] = self._configuration(
+                    context.settings, state.control
+                )
+                result["report"]["comparisons"] = list(comparisons)
             if self.writer_instruction_version >= 15:
                 result["report"]["requirements"] = requirement_ledger(
                     context.prompt, context.assumptions
@@ -1359,6 +1412,11 @@ class PromptOptimizer:
                 "assumptions": list(context.assumptions),
                 "models": context.settings.model_roles(),
                 "report_context": {
+                    **(
+                        {"comparisons": list(comparisons)}
+                        if context.settings.evaluation_profile
+                        else {}
+                    ),
                     **(
                         {
                             "requirements": requirement_ledger(
@@ -1428,7 +1486,7 @@ class PromptOptimizer:
             if route.impossible_reason is not None:
                 return self._impossible_result(context, understand, route)
             base_execute = self._round_executor(
-                context, understand, route, writer_attempts
+                context, understand, route, writer_attempts, comparisons
             )
             repeated = self.repeat.run(
                 run_id=context.run_id,
