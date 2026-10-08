@@ -30,6 +30,13 @@ from .clarification import (
     UnknownRunError,
 )
 from .clarifier import Clarifier
+from .compound_requirements import (
+    apply_ledger_answers,
+    audit_ledger,
+    ledger_plan,
+    ledger_requirements,
+    resolved_ledger_prompt,
+)
 from .config import Settings
 from .criterion_reading import (
     CRITERION_READING_MIN_VERSION,
@@ -181,6 +188,7 @@ class _RunContext:
     improvement_style: str = "auto"
     understand: UnderstandResult | None = None
     route: RouteResult | None = None
+    requirements: Mapping[str, Any] | None = None
 
 
 class PromptOptimizer:
@@ -1038,9 +1046,39 @@ class PromptOptimizer:
         started_at: str,
         started_perf: float,
     ) -> OptimizeResult:
-        conflict = (
+        known_conflict = (
             conflict_plan(prompt) if self.writer_instruction_version >= 15 else None
         )
+        ledger = (
+            requirement_ledger(prompt)
+            if self.writer_instruction_version >= 15
+            else None
+        )
+        if ledger is not None:
+            self._retain_deadline_report(run_id, requirements=ledger)
+        if self.writer_instruction_version >= 15 and known_conflict is None:
+            ledger = audit_ledger(
+                self.gateway,
+                prompt,
+                judge_model=run_settings.judge_model,
+                run_id=run_id,
+                on_ledger=lambda partial: self._retain_deadline_report(
+                    run_id, requirements=partial
+                ),
+            )
+            self._retain_deadline_report(run_id, requirements=ledger)
+        compound_plan = (
+            ledger_plan(
+                self.gateway,
+                prompt,
+                ledger,
+                judge_model=run_settings.judge_model,
+                run_id=run_id,
+            )
+            if ledger and known_conflict is None
+            else None
+        )
+        conflict = known_conflict or compound_plan
         if conflict is not None:
             self._stage("clarifying")
             self._activity(
@@ -1050,10 +1088,13 @@ class PromptOptimizer:
                 }
             )
             state = self._clarification.start(
-                run_id, prompt, conflict, metadata={"options": dict(options)}
+                run_id,
+                prompt,
+                conflict,
+                metadata={"options": dict(options), "requirements": ledger},
             )
             result = self._needs_input_result(run_id, state, started_at, started_perf)
-            result["report"]["requirements"] = requirement_ledger(prompt)
+            result["report"]["requirements"] = ledger or requirement_ledger(prompt)
             result["report"]["models"] = run_settings.model_roles()
             return result
         self._stage("diagnosing")
@@ -1102,6 +1143,7 @@ class PromptOptimizer:
                         "hint": "The run could not complete diagnosis. Partial answers and missing questions are retained in the report.",
                     },
                     "diagnosis": diagnosis_payload,
+                    **({"requirements": ledger} if ledger is not None else {}),
                     "assumptions": [],
                     "history": [],
                     "models": run_settings.model_roles(),
@@ -1151,11 +1193,14 @@ class PromptOptimizer:
                 metadata={
                     "options": dict(options),
                     "diagnosis": diagnosis_payload,
+                    "requirements": ledger,
                 },
             )
             result = self._needs_input_result(run_id, state, started_at, started_perf)
             result["report"]["models"] = run_settings.model_roles()
             result["report"]["diagnosis"] = diagnosis_payload
+            if ledger is not None:
+                result["report"]["requirements"] = ledger
             return result
         return self._run_rounds(
             _RunContext(
@@ -1166,6 +1211,7 @@ class PromptOptimizer:
                 run_settings,
                 run_seed,
                 str(options.get("improvement_style", "auto")),
+                requirements=ledger,
             ),
             prior_failures=options.get("prior_round_failures", ()),
             control=RunControl.from_options(options),
@@ -1187,7 +1233,7 @@ class PromptOptimizer:
             plan = RoundPlan(
                 prompt=context.prompt,
                 working_prompt=_prompt_with_assumptions(
-                    context.prompt, context.assumptions
+                    context.prompt, context.assumptions, context.requirements
                 ),
                 run_id=context.run_id,
                 seed=context.seed,
@@ -1205,6 +1251,11 @@ class PromptOptimizer:
                 decision_policy=self.decision_policy,
                 applied_style=route.applied_style,
                 hard_constraints=tuple(understand.hard_constraints),
+                requirements=ledger_requirements(
+                    context.requirements or {}, context.prompt, context.assumptions
+                )
+                if self.writer_instruction_version >= 15
+                else None,
                 exact_output=understand.exact_output,
                 route_strategies=tuple(route.strategies),
             )
@@ -1244,6 +1295,7 @@ class PromptOptimizer:
             run_id=context.run_id,
             protect_requirements=self.writer_instruction_version >= 15,
             assumptions=context.assumptions,
+            requirements=context.requirements,
         )
         route = run_route(
             self.gateway,
@@ -1349,9 +1401,9 @@ class PromptOptimizer:
             improvement_style=context.improvement_style,
             **(
                 {
-                    "requirements": requirement_ledger(
-                        context.prompt, context.assumptions
-                    )
+                    "requirements": dict(context.requirements)
+                    if context.requirements is not None
+                    else requirement_ledger(context.prompt, context.assumptions)
                 }
                 if self.writer_instruction_version >= 15
                 else {}
@@ -1384,8 +1436,10 @@ class PromptOptimizer:
                 )
                 result["report"]["comparisons"] = list(comparisons)
             if self.writer_instruction_version >= 15:
-                result["report"]["requirements"] = requirement_ledger(
-                    context.prompt, context.assumptions
+                result["report"]["requirements"] = (
+                    dict(context.requirements)
+                    if context.requirements is not None
+                    else requirement_ledger(context.prompt, context.assumptions)
                 )
             if self.writer_instruction_version >= WRITER_REPLY_RECOVERY_MIN_VERSION:
                 result["report"]["writer_attempts"] = [
@@ -1396,7 +1450,7 @@ class PromptOptimizer:
         understand, route = context.understand, context.route
         if active.final_prompt is None:
             active.final_prompt = _prompt_with_assumptions(
-                context.prompt, context.assumptions
+                context.prompt, context.assumptions, context.requirements
             )
             active.original_kept = active.final_prompt == context.prompt
         previous_record = self.store.get_run(context.run_id)
@@ -1424,9 +1478,9 @@ class PromptOptimizer:
                     ),
                     **(
                         {
-                            "requirements": requirement_ledger(
-                                context.prompt, context.assumptions
-                            )
+                            "requirements": dict(context.requirements)
+                            if context.requirements is not None
+                            else requirement_ledger(context.prompt, context.assumptions)
                         }
                         if self.writer_instruction_version >= 15
                         else {}
@@ -2017,7 +2071,34 @@ class PromptOptimizer:
             run_settings,
             _run_seed(prompt, (metadata or {}).get("options", {}).get("seed")),
             style,
+            requirements=apply_ledger_answers(
+                metadata["requirements"], assumptions, prompt
+            )
+            if metadata and metadata.get("requirements")
+            else None,
         )
+        if context.requirements is not None:
+            ledger = dict(context.requirements)
+            pending = ledger_plan(
+                self.gateway,
+                prompt,
+                ledger,
+                judge_model=run_settings.judge_model,
+                run_id=run_id,
+            )
+            context = replace(context, requirements=ledger)
+            if pending is not None:
+                paused_state = {
+                    **state,
+                    "status": "needs_input",
+                    "questions": [question.as_dict() for question in pending.questions],
+                }
+                result = self._needs_input_result(
+                    run_id, paused_state, utc_now(), self._clock()
+                )
+                result["report"]["requirements"] = ledger
+                result["report"]["assumptions"] = assumptions
+                return result
         return self._run_rounds(
             context,
             control=control,
@@ -2173,6 +2254,7 @@ class PromptOptimizer:
         )
         understand = _understand_result_from_saved(saved.get("understand"))
         route = _route_result_from_saved(saved.get("route"))
+        previous_requirements = paused_result.get("report", {}).get("requirements")
         context = _RunContext(
             prompt,
             run_id,
@@ -2183,6 +2265,9 @@ class PromptOptimizer:
             requested_style,
             understand,
             route,
+            requirements=previous_requirements
+            if isinstance(previous_requirements, Mapping)
+            else None,
         )
         prior_history = _history_from_run(paused_result)
         previous_report = paused_result.get("report", {})
@@ -2615,11 +2700,15 @@ def _apply_assumption(
     return prompt[:start] + value + prompt[end:]
 
 
-def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
+def _prompt_with_assumptions(
+    prompt: str, assumptions: Any, requirements: Mapping[str, Any] | None = None
+) -> str:
     source_prompt = prompt
     prompt = resolved_prompt(
         prompt, [item for item in assumptions if isinstance(item, Mapping)]
     )
+    if requirements is not None:
+        prompt = resolved_ledger_prompt(prompt, requirements)
     lines = []
     for item in assumptions:
         if not isinstance(item, Mapping) or item.get("source") not in {
@@ -2632,7 +2721,9 @@ def _prompt_with_assumptions(prompt: str, assumptions: Any) -> str:
         if prompt != source_prompt and key.startswith("conflict:"):
             continue
         if key and value:
-            lines.append(f"{_clarification_label(key, item.get('source'))}: {value}")
+            lines.append(
+                f"{item.get('label') if key.startswith(('requirement:', 'conflict:')) else _clarification_label(key, item.get('source'))}: {value}"
+            )
     if not lines:
         return prompt
     return prompt.rstrip() + "\n\nClarifications:\n" + "\n".join(lines)

@@ -185,7 +185,7 @@ def test_recovered_run_reports_attempts_and_cost_in_round_history() -> None:
         ("candidates", "invalid_response"),
         ("candidates", "success"),
     ]
-    assert result["cost"]["cost_by_role"]["writer"] == 3.75
+    assert result["cost"]["cost_by_role"]["writer"] == 5.0  # includes source extraction
     assert result["report"]["history"][0]["evidence"]["writer_attempts"] == attempts
 
 
@@ -434,7 +434,9 @@ def test_resuming_a_paused_retry_keeps_unfinished_round_attempts() -> None:
         "success",
         "invalid_response",
     ]
-    assert paused["cost"]["cost_by_role"]["writer"] == 2.5
+    assert (
+        paused["cost"]["cost_by_role"]["writer"] == 3.75
+    )  # includes source extraction
 
     continued = optimizer.continue_run(paused["run_id"])
     assert continued["status"] == "completed", continued["report"]
@@ -446,7 +448,7 @@ def test_resuming_a_paused_retry_keeps_unfinished_round_attempts() -> None:
         "success",
         "success",
     ]
-    assert continued["cost"]["cost_by_role"]["writer"] == 5.0
+    assert continued["cost"]["cost_by_role"]["writer"] == 6.25
     assert (
         store.get_run(paused["run_id"])["result"]["report"]["writer_attempts"]
         == attempts

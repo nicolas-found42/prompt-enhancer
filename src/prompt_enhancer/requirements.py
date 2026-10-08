@@ -16,6 +16,7 @@ from .clarification import (
 )
 from .criterion_checks import count_words
 from .criterion_reading import number_candidates
+from .edit_permissions import check_edit, edit_contract
 from .protected_blocks import fenced_sources, protected_block_status, protected_sources
 from .requirement_formats import (
     CSV_DIRECTIVE,
@@ -24,6 +25,7 @@ from .requirement_formats import (
     check_format,
     schema_from_source,
 )
+from .requirement_scopes import scoped_counts, section_text
 
 _EXACT_REPLY = re.compile(
     r"(?im)^(?>[ \t]*)(?:reply|respond|output|return|print)(?:[ \t]+with)?[ \t]+"
@@ -41,15 +43,18 @@ _PUNCTUATION_ONLY = re.compile(
     r'(?P<literal>"[^"\n]*"|\x27[^\x27\n]*\x27)(?>\s*)[.!]?[ \t]*$'
 )
 _PLACEHOLDER = re.compile(
-    r"\{\{[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\}\}|\$\{[A-Za-z_][A-Za-z0-9_]*\}"
+    r"\{\{[ \t]*[A-Za-z_][A-Za-z0-9_.]*[ \t]*\}\}|\$?\{[A-Za-z_][A-Za-z0-9_]*\}"
 )
 _COUNT_FRAGMENT = (
     r"exactly[ \t]+(?P<bound>\d{1,9}|[a-z-]{1,30}(?:[ \t]+[a-z-]{1,30}){0,5}?)"
     r"[ \t]+(?P<unit>words?|sentences?|lines?|bullets?)"
 )
 RequirementKind = Literal[
+    "semantic",
+    "missing_meaning",
     "exact_output",
     "punctuation_only",
+    "edit_restriction",
     "protected_value",
     "protected_block",
     "word_count",
@@ -92,9 +97,15 @@ class Requirement:
     expected: str
     source_kind: str = "original_prompt"
     oracle_uncertainty: str | None = None
+    region_index: int | None = None
+    declared_values: tuple[str, ...] = ()
 
     @property
     def protected_values(self) -> tuple[str, ...]:
+        if self.declared_values:
+            return self.declared_values
+        if self.kind == "edit_restriction":
+            return (json.loads(self.expected)["text"],)
         if self.kind == "json_schema":
             schema = json.loads(self.expected)
             return tuple(dict.fromkeys((*schema, *schema.values())))
@@ -129,6 +140,11 @@ class Requirement:
                 "kind": self.kind,
                 "expected": self.expected,
                 **(
+                    {"region_index": self.region_index}
+                    if self.region_index is not None
+                    else {}
+                ),
+                **(
                     {"uncertainty": self.oracle_uncertainty}
                     if self.oracle_uncertainty
                     else {}
@@ -156,6 +172,14 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
                 scope="candidate_prompt",
                 expected=body,
                 oracle_uncertainty="source_indentation" if uncertain else None,
+                region_index=next(
+                    (
+                        index
+                        for index, block in enumerate(fenced_sources(prompt))
+                        if block.end == end
+                    ),
+                    None,
+                ),
             )
         )
     json_format = JSON_DIRECTIVE.fullmatch(prompt)
@@ -221,6 +245,18 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
                     expected=str(values[bound]),
                 )
             )
+    for count in scoped_counts(prompt):
+        found.append(
+            Requirement(
+                f"requirement:{count.start}:{count.end}:{count.kind}:{count.expected}:{count.scope}",
+                prompt[count.start : count.end],
+                count.start,
+                count.end,
+                _COUNT_KINDS[count.kind.removesuffix("_count")],
+                count.scope,
+                count.expected,
+            )
+        )
     for placeholder in _PLACEHOLDER.finditer(prompt):
         found.append(
             Requirement(
@@ -244,6 +280,21 @@ def extract_requirements(prompt: str) -> tuple[Requirement, ...]:
                 kind="punctuation_only",
                 scope="whole_output",
                 expected=punctuation["literal"][1:-1],
+            )
+        )
+    contract = edit_contract(prompt)
+    if punctuation is None and contract is not None:
+        expected, uncertainty = contract
+        found.append(
+            Requirement(
+                f"requirement:0:{len(prompt)}:edit",
+                prompt,
+                0,
+                len(prompt),
+                "edit_restriction",
+                "whole_output",
+                expected,
+                oracle_uncertainty=uncertainty or None,
             )
         )
     for match in _EXACT_REPLY.finditer(prompt):
@@ -299,7 +350,8 @@ def effective_requirements(
     retained = tuple(
         item
         for item in original
-        if _selected_count(item.kind, assumptions) in {None, item.expected}
+        if item.scope != "whole_output"
+        or _selected_count(item.kind, assumptions) in {None, item.expected}
     )
     additions = []
     for kind in _COUNT_KINDS.values():
@@ -349,7 +401,11 @@ def requirement_ledger(
     requirements = extract_requirements(prompt)
     contradictions = []
     for kind in ("word_count", "sentence_count", "line_count", "bullet_count"):
-        counts = [item for item in requirements if item.kind == kind]
+        counts = [
+            item
+            for item in requirements
+            if item.kind == kind and item.scope == "whole_output"
+        ]
         if len({item.expected for item in counts}) > 1:
             selected = _selected_count(kind, assumptions)
             contradictions.append(
@@ -413,6 +469,11 @@ def output_findings(
         {
             "requirement_id": item.id,
             "source": item.source,
+            "source_span": {
+                "start": item.start,
+                "end": item.end,
+                "unit": "unicode_codepoints",
+            },
             "scope": item.scope,
             "candidate_id": output.get("candidate_id"),
             "model": output.get("model"),
@@ -424,7 +485,7 @@ def output_findings(
             "reason": _finding_reason(item, output.get("output")),
         }
         for item in requirements
-        if item.scope == "whole_output"
+        if item.scope == "whole_output" or item.scope.startswith("section:")
         for output in outputs
     )
 
@@ -438,6 +499,18 @@ def _ambiguous_word_count(requirement: Requirement, output: Any) -> bool:
 
 
 def _finding_status(requirement: Requirement, output: Any) -> str:
+    if requirement.kind == "edit_restriction":
+        return check_edit(requirement.expected, output, requirement.oracle_uncertainty)[
+            0
+        ]
+    if requirement.kind in {"semantic", "missing_meaning"}:
+        return "untestable"
+    if requirement.scope.startswith("section:") and isinstance(output, str):
+        output, uncertainty = section_text(output, requirement.scope)
+        if uncertainty:
+            return "untestable"
+        if output is None:
+            return "failed"
     if requirement.kind in {"json_format", "json_schema", "csv_shape"}:
         return check_format(requirement.kind, output, requirement.expected)[0]
     if requirement.kind == "sentence_count":
@@ -491,6 +564,18 @@ def _uncertainty(requirement: Requirement, output: Any) -> str | None:
 
 
 def _finding_reason(requirement: Requirement, output: Any) -> str:
+    if requirement.kind == "edit_restriction":
+        return check_edit(requirement.expected, output, requirement.oracle_uncertainty)[
+            1
+        ]
+    if requirement.kind in {"semantic", "missing_meaning"}:
+        return "This obligation needs semantic interpretation; mechanical checks alone cannot verify it."
+    if requirement.scope.startswith("section:") and isinstance(output, str):
+        output, uncertainty = section_text(output, requirement.scope)
+        if uncertainty:
+            return uncertainty
+        if output is None:
+            return "The explicitly requested section is missing."
     if requirement.kind in {"json_format", "json_schema", "csv_shape"}:
         return check_format(requirement.kind, output, requirement.expected)[1]
     uncertainty = _uncertainty(requirement, output)
@@ -501,7 +586,7 @@ def _finding_reason(requirement: Requirement, output: Any) -> str:
     if requirement.kind == "punctuation_only":
         return "Only punctuation may change; letters, case, spacing and order must remain intact."
     unit = requirement.kind.removesuffix("_count")
-    return f"The complete answer must contain exactly {requirement.expected} {unit}s."
+    return f"The {requirement.scope.removeprefix('section:')} must contain exactly {requirement.expected} {unit}s."
 
 
 def preserves_literal(candidate: str, literal: str) -> bool:
@@ -518,12 +603,19 @@ def prompt_findings(
             "requirement_id": item.id,
             "source": item.source,
             "scope": "candidate_prompt",
+            "source_span": {
+                "start": item.start,
+                "end": item.end,
+                "unit": "unicode_codepoints",
+            },
+            "region_index": item.region_index,
             "candidate_id": candidate_id,
             "status": protected_block_status(
                 candidate,
                 value,
                 source_indentation_uncertain=item.oracle_uncertainty
                 == "source_indentation",
+                region_index=item.region_index,
             )
             if item.kind == "protected_block"
             else "tested"
@@ -576,6 +668,8 @@ def check_summaries(
             {
                 "requirement_id": key,
                 "source": finding["source"],
+                "scope": finding.get("scope"),
+                "source_span": finding.get("source_span"),
                 "tested": 0,
                 "failed": 0,
                 "untestable": 0,

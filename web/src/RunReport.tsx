@@ -41,7 +41,7 @@ function RequirementCoverage({
   selection: Record<string, unknown>;
 }) {
   const requirements = items(ledger.requirements);
-  if (requirements.length === 0) return null;
+  if (Object.keys(ledger).length === 0) return null;
   const selected = record(selection.selected_candidate);
   const findings = items(record(selected.metadata).requirement_findings);
   const rejected = items(selection.ranking).filter(
@@ -51,16 +51,30 @@ function RequirementCoverage({
     <section aria-label="Requirement coverage">
       <h3>Requirement coverage</h3>
       <p>
-        {ledger.coverage === "partial" ? "Coverage is partial. " : ""}
+        {ledger.coverage === "partial"
+          ? "Coverage is partial. "
+          : ledger.coverage === "audited"
+            ? "Coverage was audited. "
+            : ""}
         {text(ledger.reason)}
       </p>
       {items(ledger.contradictions).map((conflict, index) => (
         <p key={index}>
           {conflict.status === "resolved_by_user"
-            ? `Your answer resolved the conflicting counts: use exactly ${text(conflict.selected_count)}.`
-            : "Conflicting counts still need your answer."}{" "}
+            ? conflict.selected_count
+              ? `Your answer resolved the conflicting counts: use exactly ${text(conflict.selected_count)}.`
+              : "Your answer resolved these conflicting requirements."
+            : "Conflicting requirements still need your answer."}{" "}
           {text(conflict.reason)}
         </p>
+      ))}
+      {record(ledger.whole_source_audit).status === "unresolved" && (
+        <p>
+          The complete request has not yet passed its separate coverage audit.
+        </p>
+      )}
+      {items(ledger.gaps).map((gap, index) => (
+        <p key={`gap-${index}`}>{text(gap.reason)}</p>
       ))}
       <ul>
         {requirements.map((requirement, index) => {
@@ -79,8 +93,27 @@ function RequirementCoverage({
                   : "From your original prompt. "}
                 {requirement.scope === "candidate_prompt"
                   ? "Applies to the rewritten prompt."
-                  : "Applies to the complete answer."}
+                  : text(requirement.scope).startsWith("section:")
+                    ? `Applies to the ${text(requirement.scope).slice(8)} section.`
+                    : "Applies to the complete answer."}
               </p>
+              {record(requirement.audit).status === "unresolved" && (
+                <p>
+                  This source interpretation remains uncertain; recognized
+                  requirements are retained.
+                </p>
+              )}
+              {requirement.superseded_by != null && (
+                <p>
+                  Superseded by your explicit choice; the original requirement
+                  remains in this history.
+                </p>
+              )}
+              {Boolean(record(requirement.user_answer).value) && (
+                <p>
+                  Your answer: {text(record(requirement.user_answer).value)}
+                </p>
+              )}
               {own.length > 0 ? (
                 <>
                   <p>Selected draft: {requirementCheckSummary(own)}.</p>

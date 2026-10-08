@@ -933,3 +933,58 @@ it("shows the applied style, marking Auto inference", () => {
   expect(document.body.textContent).toContain("Applied style: Shorter");
   expect(document.body.textContent).toContain("your style was Auto");
 });
+
+it("shows omitted-source uncertainty even when extraction returned no requirements", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          requirements: {
+            coverage: "partial",
+            reason: "The source has unresolved omissions.",
+            requirements: [],
+            whole_source_audit: { status: "unresolved" },
+            gaps: [{ reason: "Extraction was malformed." }],
+          },
+        },
+      }}
+    />
+  );
+  const coverage = screen.getByRole("region", { name: "Requirement coverage" });
+  expect(within(coverage).getByText(/Coverage is partial/)).toBeVisible();
+  expect(within(coverage).getByText(/separate coverage audit/)).toBeVisible();
+  expect(within(coverage).getByText("Extraction was malformed.")).toBeVisible();
+});
+
+it("explains section scope and a source requirement superseded by an explicit answer", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          requirements: {
+            coverage: "audited",
+            requirements: [
+              {
+                id: "r1",
+                source: "three bullets",
+                scope: "section:Risks",
+                superseded_by: { source: "answer", value: "two bullets" },
+              },
+            ],
+            contradictions: [{ status: "resolved_by_user" }],
+          },
+        },
+      }}
+    />
+  );
+  const coverage = screen.getByRole("region", { name: "Requirement coverage" });
+  expect(within(coverage).getByText(/Coverage was audited/)).toBeVisible();
+  expect(
+    within(coverage).getByText(/Applies to the Risks section/)
+  ).toBeVisible();
+  expect(
+    within(coverage).getByText(/Superseded by your explicit choice/)
+  ).toBeVisible();
+});

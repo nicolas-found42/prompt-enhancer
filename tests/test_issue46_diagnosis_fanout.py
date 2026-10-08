@@ -246,7 +246,7 @@ def test_same_gap_key_with_different_question_meaning_is_not_deduplicated() -> N
 
     matching = [
         request
-        for request in gateway.batches[0]
+        for request in _diagnosis_batches(gateway)[0]
         if str(request["key"]).startswith("gap:shared")
     ]
     assert len(matching) == 2
@@ -402,6 +402,7 @@ def test_over_character_cap_returns_incomplete_without_inference() -> None:
     )
 
     assert gateway.batches == []
+    assert result["report"]["requirements"]["release_eligible"] is False
     assert result["original_kept"] is True
     assert result["report"]["diagnosis"]["request_evidence"]["complete"] is False
     assert result["report"]["diagnosis"]["sentence_protocol_version"] == (
@@ -419,7 +420,10 @@ def test_provider_failure_keeps_original_with_incomplete_diagnosis() -> None:
 
     result = _run(gateway)
 
-    assert len(gateway.batches) == 1
+    assert len(_diagnosis_batches(gateway)) == 1
+    assert (
+        result["report"]["requirements"]["whole_source_audit"]["status"] == "unresolved"
+    )
     assert result["status"] == "failed"
     assert result["report"]["outcome"] == "failed_operational"
     assert result["report"]["failure"]["kind"] == "incomplete_diagnosis"

@@ -757,6 +757,7 @@ test("clarification, assumption editing, history, and feedback use the local API
     page
       .getByRole("list", { name: "Saved optimization runs" })
       .getByRole("button")
+      .filter({ hasText: "Help me with this." })
   ).toContainText("Converged");
   const copyGuidance = page.getByText(
     "After copying, paste this prompt into an AI chat or another tool that accepts prompts."
@@ -798,13 +799,15 @@ test("clarification, assumption editing, history, and feedback use the local API
   await expect(copyGuidance).toBeVisible();
   const runs = page
     .getByRole("list", { name: "Saved optimization runs" })
-    .getByRole("button");
+    .getByRole("button")
+    .filter({ hasText: "Help me with this." });
   await expect(runs).toContainText("Help me with this.");
   await expect(runs).toContainText("Outcome not established");
   await page.reload();
   await page
     .getByRole("list", { name: "Saved optimization runs" })
     .getByRole("button")
+    .filter({ hasText: "Help me with this." })
     .click();
   await expect(
     page.getByRole("heading", { name: "Run details" })
@@ -829,6 +832,7 @@ test("clarification, assumption editing, history, and feedback use the local API
   await page
     .getByRole("list", { name: "Saved optimization runs" })
     .getByRole("button")
+    .filter({ hasText: "Help me with this." })
     .click();
   await expect(page.getByText("Thanks, saved as helpful.")).toBeVisible();
   await page.getByRole("button", { name: "Open this result" }).click();

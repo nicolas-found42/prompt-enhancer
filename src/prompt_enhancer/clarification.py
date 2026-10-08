@@ -81,7 +81,7 @@ class ClarificationQuestion:
             "options": [option.as_dict() for option in self.options],
             "default_answer": self.default_answer,
             "default": self.default_answer,
-            "allow_other": True,
+            "allow_other": not self.required_answer or self.other_option is not None,
             "other_value": OTHER_VALUE,
             **({"required_answer": True} if self.required_answer else {}),
         }
@@ -497,6 +497,13 @@ class ClarificationService:
         }
         if not plan.questions and self.continuation is not None:
             state["result"] = dict(self.continuation(state))
+            result = state["result"]
+            if result.get("status") == "needs_input" and result.get("questions"):
+                state["status"] = "needs_input"
+                state["questions"] = result["questions"]
+                ledger = result.get("report", {}).get("requirements")
+                if ledger is not None:
+                    state.setdefault("metadata", {})["requirements"] = ledger
         self.repository.save(run_id, state)
         return json.loads(json.dumps(state))
 

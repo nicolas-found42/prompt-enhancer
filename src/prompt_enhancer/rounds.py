@@ -50,6 +50,7 @@ from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import utc_now
 from .requirements import (
+    Requirement,
     check_summaries,
     effective_requirements,
     extract_requirements,
@@ -241,6 +242,7 @@ class RoundPlan:
     decision_policy: DecisionPolicy | None = None
     applied_style: str = "auto"
     """The improvement style this round writes with (Auto already resolved)."""
+    requirements: tuple[Requirement, ...] | None = None
     hard_constraints: tuple[str, ...] = ()
     """Audited requirements every candidate must preserve semantically."""
     exact_output: bool = False
@@ -1075,7 +1077,9 @@ def run_round(
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
     requirements = (
-        effective_requirements(plan.prompt, plan.assumptions)
+        plan.requirements
+        if plan.requirements is not None
+        else effective_requirements(plan.prompt, plan.assumptions)
         if plan.writer_instruction_version >= 15
         else ()
     )

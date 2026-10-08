@@ -408,7 +408,12 @@ def test_expiry_during_clarification_planning_retains_completed_diagnosis():
     chat = gateway.chat_handler
 
     def blocked_planning(*args, **kwargs):
-        if kwargs.get("role") == "writer":
+        # Extraction now precedes diagnosis. Block the actual clarification
+        # proposal, so this control still exercises completed diagnosis evidence.
+        if (
+            kwargs.get("role") == "writer"
+            and "Suggest two or three plausible values" in args[1][0]["content"]
+        ):
             entered.set()
             assert release.wait(5)
         return chat(*args, **kwargs)
