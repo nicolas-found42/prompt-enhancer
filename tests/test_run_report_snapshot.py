@@ -25,6 +25,11 @@ from prompt_enhancer import PromptOptimizer, RunStore
 FIXTURE = Path(__file__).parent / "fixtures" / "run_report_snapshot.json"
 
 
+@pytest.fixture(autouse=True)
+def replay_clock(deterministic_active_clock):
+    deterministic_active_clock.step_per_round_s = 80.0
+
+
 def _normalized(value: Any, run_ids: set[str]) -> Any:
     if isinstance(value, dict):
         return {

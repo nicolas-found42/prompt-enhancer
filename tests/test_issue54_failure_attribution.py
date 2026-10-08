@@ -194,7 +194,10 @@ def test_supported_source_attribution_reaches_next_round_writer() -> None:
     assert first_round["evidence"]["failure_attribution"]["attributed_count"] > 0
 
 
-def test_low_confidence_none_unknown_and_provider_failure_stay_auditable() -> None:
+def test_low_confidence_none_unknown_and_provider_failure_stay_auditable(
+    deterministic_active_clock,
+) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     for options in (
         {"confidence": 0.79},
         {"pointer": "none"},
@@ -252,9 +255,14 @@ def test_pair_cap_applies_across_models_and_samples() -> None:
     attribution = result["report"]["failure_attribution"]
     assert attribution["requested_pair_count"] == 1
     assert attribution["skipped_count"] > 0
-    assert len(gateway.attribution_batches) == len(
-        result["report"]["history"]
-    )  # One per round.
+    # The deadline can interrupt the last Round after its attribution calls.
+    # Every attempted batch must still respect the per-Round pair cap.
+    assert gateway.attribution_batches
+    assert all(len(batch) == 3 for batch in gateway.attribution_batches)
+    assert all(
+        len({item["key"].rsplit(":", 1)[0] for item in batch}) == 1
+        for batch in gateway.attribution_batches
+    )
 
 
 def test_dollar_cap_skips_attribution_without_erasing_failures() -> None:
@@ -275,7 +283,9 @@ def test_dollar_cap_skips_attribution_without_erasing_failures() -> None:
 
 def test_recorded_retry_reservation_preserves_attribution_budget_on_replay(
     tmp_path: Path,
+    deterministic_active_clock,
 ) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     path = tmp_path / "attribution-retry-budget.json"
     gateway = RecordingGateway(
         AttributionGateway(retry_count=3, original_score_attempts_before_pass=0), path
@@ -379,7 +389,11 @@ def test_harness_counts_attributions_and_only_scores_independent_labels() -> Non
     }
 
 
-def test_version_eight_attribution_replays_strictly(tmp_path: Path) -> None:
+def test_version_eight_attribution_replays_strictly(
+    tmp_path: Path,
+    deterministic_active_clock,
+) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     path = tmp_path / "attribution.json"
     gateway = RecordingGateway(
         AttributionGateway(original_score_attempts_before_pass=0), path

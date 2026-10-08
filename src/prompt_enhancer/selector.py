@@ -112,6 +112,7 @@ class RankingResult:
             "winner_score": selected_grade,
             "original_kept": self.original_kept,
             "original_score": _serialize_grade(self.original.grade),
+            "original": self.original.to_dict(),
             "ranking": [item.to_dict() for item in self.ranked],
             "rejected_candidates": [
                 item.to_dict() for item in self.ranked if not item.selected

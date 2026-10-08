@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from active_clock import echo_candidates_for_diagnosis
 
 from prompt_enhancer.clarification import (
     ClarificationService,
@@ -159,7 +160,10 @@ def test_reference_to_unseen_details_is_asked_about_not_assumed() -> None:
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
-        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(
+            chat=echo_candidates_for_diagnosis(chat), decision=decide
+        ),
     )
     result = optimizer.optimize(
         "Do the letter like last time. Mention the thing about the warranty.",
@@ -211,7 +215,10 @@ def test_clarification_options_are_read_from_a_reply_wrapped_in_prose() -> None:
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
-        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(
+            chat=echo_candidates_for_diagnosis(chat), decision=decide
+        ),
     )
     result = optimizer.optimize(
         "Do the letter like last time. Mention the thing about the warranty.",
@@ -263,7 +270,10 @@ def test_answered_outside_reference_reads_as_plain_text_in_the_prompt() -> None:
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
-        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(
+            chat=echo_candidates_for_diagnosis(chat), decision=decide
+        ),
     )
     paused = optimizer.optimize("Mention the thing.", {})
     initial = optimizer.store.get_run(paused["run_id"])["configuration"]
@@ -323,7 +333,10 @@ def test_unknown_context_is_asked_about_and_the_answer_reads_as_plain_text() -> 
         return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
     optimizer = PromptOptimizer(
-        store=RunStore(":memory:"), gateway=ScriptedGateway(chat=chat, decision=decide)
+        store=RunStore(":memory:"),
+        gateway=ScriptedGateway(
+            chat=echo_candidates_for_diagnosis(chat), decision=decide
+        ),
     )
     paused = optimizer.optimize("Email my boss about the hours I worked today.", {})
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, cast
 
+from .active_budget import ACTIVE_BUDGET_S, current_budget
 from .convergence import mean_score
 from .failures import RunCancelled, describe_failure
 from .models import OptimizeResult
@@ -32,6 +33,7 @@ SPEND_LIMIT_OPTION = "spend_limit_usd"
 PAUSED_REPORT_STATUS = "awaiting_approval"
 STOPPED_REPORT_STATUS = "stopped"
 CANCELLED_REPORT_STATUS = "cancelled"
+DEADLINE_REPORT_STATUS = "deadline_reached"
 
 RESUME_CONTEXT_KEY = "run_control"
 """Record-level RunStore key holding the resume context of a paused run."""
@@ -83,6 +85,24 @@ def _parse_limit(value: Any, name: str) -> float | None:
     if not math.isfinite(amount) or amount < 0:
         raise ValueError(f"{name} must be a finite number at least 0")
     return amount
+
+
+class RunDeadlineReached(RuntimeError):
+    """The active budget ended at a Round boundary; the run stops terminally."""
+
+    def __init__(
+        self,
+        *,
+        history: tuple[dict[str, Any], ...],
+        spent_usd: float,
+        elapsed_ms: int,
+        deadline_s: float,
+    ) -> None:
+        super().__init__(f"run deadline of {deadline_s:g}s reached")
+        self.history = history
+        self.spent_usd = spent_usd
+        self.elapsed_ms = elapsed_ms
+        self.deadline_s = deadline_s
 
 
 class BudgetPaused(RuntimeError):
@@ -188,13 +208,18 @@ class RunControlState:
     started_perf: float
     cost_base: float = 0.0
     elapsed_base_ms: int = 0
+    clock: Callable[[], float] = perf_counter
+    deadline_s: float = ACTIVE_BUDGET_S
 
     def spent_usd(self) -> float:
         return max(0.0, self.cost_base + self.usage_total())
 
     def elapsed_ms(self) -> int:
+        budget = current_budget.get()
+        if budget is not None:
+            return budget.elapsed_ms()
         return self.elapsed_base_ms + max(
-            0, round((perf_counter() - self.started_perf) * 1000)
+            0, round((self.clock() - self.started_perf) * 1000)
         )
 
     def note_completed(self, request: Any, outcome: Any) -> None:
@@ -205,10 +230,20 @@ class RunControlState:
         limit stays able to pause the loop at any round boundary; a finished
         loop returns its final result instead of pausing.
         """
+        elapsed_ms = self.elapsed_ms()
+        if elapsed_ms >= self.deadline_s * 1000:
+            # The active budget is terminal: no further Round may start, and
+            # the best qualified prompt so far is returned by the caller.
+            raise RunDeadlineReached(
+                history=tuple(self.tracker.history),
+                spent_usd=self.spent_usd(),
+                elapsed_ms=elapsed_ms,
+                deadline_s=self.deadline_s,
+            )
         self.tracker.record(request, outcome)
-        if not self.control.active:
-            return
         if not outcome.continue_rounds:
+            return
+        if not self.control.active:
             return
         reason: str | None = None
         if (
@@ -280,6 +315,67 @@ def build_paused_result(
                 ),
                 "spent_usd": paused.spent_usd,
                 "elapsed_ms": paused.elapsed_ms,
+                "completed_rounds": rounds,
+            },
+            "diagnosis": dict(diagnosis),
+            "assumptions": list(assumptions),
+            "models": dict(models),
+            "history": tracker.history,
+        },
+        "cost": cost,
+        "timing": timing,
+    }
+
+
+def build_deadline_result(
+    *,
+    run_id: str,
+    prompt: str,
+    models: Mapping[str, Any],
+    diagnosis: Mapping[str, Any],
+    assumptions: Any,
+    tracker: RoundTracker,
+    deadline: RunDeadlineReached,
+    cost: Mapping[str, Any],
+    timing: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Terminal result for an active-budget stop; keeps only qualified work."""
+    rounds = len(tracker.entries)
+    final_prompt = tracker.final_prompt or prompt
+    original_kept = final_prompt == prompt
+    source = next(
+        (
+            entry
+            for entry in reversed(tracker.entries)
+            if entry.get("selected_candidate_id")
+            and entry.get("final_prompt") == final_prompt
+            and (entry.get("convergence") or {}).get("passed") is True
+        ),
+        tracker.entries[-1] if tracker.entries else {},
+    )
+    return {
+        "status": "completed",
+        "run_id": run_id,
+        "final_prompt": final_prompt,
+        "original_kept": original_kept,
+        "report": {
+            **source.get("evidence", {}),
+            "status": DEADLINE_REPORT_STATUS,
+            "summary": (
+                f"Stopped after {_rounds_text(rounds)} when the "
+                f"{deadline.deadline_s:g}-second active processing budget ended "
+                f"({deadline.elapsed_ms / 1000:.1f} seconds used). "
+                + (
+                    "The best qualified changed prompt is kept below."
+                    if source.get("selected_candidate_id") and not original_kept
+                    else "No changed prompt qualified; your prompt and confirmed clarifications are kept."
+                )
+            ),
+            "deadline": {
+                "reason": "active_budget",
+                "limit_s": deadline.deadline_s,
+                "elapsed_ms": deadline.elapsed_ms,
+                "spent_usd": deadline.spent_usd,
                 "completed_rounds": rounds,
             },
             "diagnosis": dict(diagnosis),

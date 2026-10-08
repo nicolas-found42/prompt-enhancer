@@ -49,6 +49,14 @@ from .improve import (
 from .jev import ChoiceDecision, NoulDecision, parse_decision
 from .lossless_restructuring import LosslessBuild, build_lossless_candidate
 from .models import utc_now
+from .requirements import (
+    check_summaries,
+    effective_requirements,
+    extract_requirements,
+    output_findings,
+    preserves_literal,
+    prompt_findings,
+)
 from .rewrite import CandidateWriter
 from .runner import PanelResult, PanelRunResult, run_candidates
 from .score_vector import score_candidate
@@ -561,8 +569,9 @@ def _ranking_candidate(
     candidate: CandidateDraft,
     panel_grades: Mapping[str, Any],
     original_grade: Any,
+    requirement_findings: Sequence[Mapping[str, Any]] = (),
 ) -> RankingCandidate:
-    """Eligibility with the fidelity hard gate and the score-vector max-gate."""
+    """Candidate eligibility, including source-backed checks and quality floors."""
     fidelity = check_candidate_fidelity(
         gateway,
         working_prompt,
@@ -596,10 +605,35 @@ def _ranking_candidate(
         round_number=plan.round_number,
     )
     grade = panel_grades[candidate.candidate_id]
+    block_values = {
+        item.expected
+        for item in extract_requirements(plan.prompt)
+        if plan.writer_instruction_version >= 15 and item.kind == "protected_block"
+    }
     hard_violated = tuple(
         literal
         for literal in plan.hard_constraints
-        if plan.exact_output and literal not in candidate.text
+        if literal not in block_values
+        and (
+            plan.exact_output
+            or (
+                plan.writer_instruction_version >= 15
+                and literal
+                in {
+                    value
+                    for item in extract_requirements(plan.prompt)
+                    for value in item.protected_values
+                }
+            )
+        )
+        and (
+            not preserves_literal(candidate.text, literal)
+            if plan.writer_instruction_version >= 15
+            else literal not in candidate.text
+        )
+    )
+    known_failures = tuple(
+        item for item in requirement_findings if item.get("status") == "failed"
     )
     eligible = (
         fidelity.passed
@@ -612,6 +646,7 @@ def _ranking_candidate(
         and original_grade.unresolved_grade_outputs == 0
         and grade.detected_outputs == 0
         and not hard_violated
+        and not known_failures
     )
     return RankingCandidate(
         candidate_id=candidate.candidate_id,
@@ -633,6 +668,12 @@ def _ranking_candidate(
             + tuple(
                 f"hard requirement violated: {literal!r} must be preserved verbatim"
                 for literal in hard_violated
+            )
+            + tuple(
+                dict.fromkeys(
+                    f"Known requirement failed: {item['source']!r}; {item['reason']}"
+                    for item in known_failures
+                )
             )
             + (
                 ("weak-panel grading was incomplete or oversized",)
@@ -661,6 +702,11 @@ def _ranking_candidate(
             "fidelity": fidelity.to_dict(),
             "score_vector": vector.to_dict(),
             **(
+                {"requirement_findings": [dict(item) for item in requirement_findings]}
+                if requirement_findings
+                else {}
+            ),
+            **(
                 {"lossless_restructuring": candidate.metadata["lossless_restructuring"]}
                 if "lossless_restructuring" in candidate.metadata
                 else {}
@@ -670,10 +716,37 @@ def _ranking_candidate(
 
 
 def run_round(
-    gateway: Gateway, plan: RoundPlan, *, on_stage: StageCallback | None = None
+    gateway: Gateway,
+    plan: RoundPlan,
+    *,
+    on_stage: StageCallback | None = None,
+    on_activity: Callable[[Mapping[str, Any]], None] | None = None,
 ) -> RoundOutcome:
     """Run one round and return what it decided."""
-    stage = on_stage or (lambda _name: None)
+    active_stage: str | None = None
+
+    def finish_stage() -> None:
+        nonlocal active_stage
+        if active_stage is not None and on_activity is not None:
+            on_activity(
+                {
+                    "kind": "completed",
+                    "stage": active_stage,
+                    "summary": active_stage.replace("_", " ").capitalize()
+                    + " completed.",
+                }
+            )
+        active_stage = None
+
+    def stage(name: str) -> None:
+        nonlocal active_stage
+        # This transition is reached only after the previous stage returned.
+        # Exceptions leave its start unmatched; the client never infers success.
+        finish_stage()
+        active_stage = name
+        if on_stage is not None:
+            on_stage(name)
+
     settings = plan.settings
     working_prompt = plan.working_prompt
     round_log_start = len(gateway.decision_log)
@@ -691,6 +764,7 @@ def run_round(
     def ended(
         status: str, summary: str, tests: tuple[dict[str, Any], ...]
     ) -> RoundOutcome:
+        finish_stage()
         return RoundOutcome(
             plan=plan,
             status=status,
@@ -757,6 +831,12 @@ def run_round(
         if plan.writer_instruction_version >= 4
         else STRATEGY_LIBRARY
     )
+    if plan.writer_instruction_version < 15:
+        strategy_library = tuple(
+            item
+            for item in strategy_library
+            if item.name not in {"faithful_presentation", "remove_redundancy"}
+        )
     if plan.route_strategies:
         # The Route stage picked this bundle; candidates come only from it.
         wanted = set(plan.route_strategies)
@@ -811,6 +891,10 @@ def run_round(
     )
 
     def recheck_strategy(strategy: RewriteStrategy) -> dict[str, bool]:
+        if strategy.name == "faithful_presentation":
+            # This lane authorizes a draft attempt, never its qualification.
+            # Fidelity, usefulness, requirements, floors and Accept still gate it.
+            return {"eligible": True}
         answer = gateway.decide(
             {
                 "model": settings.judge_model,
@@ -913,10 +997,35 @@ def run_round(
             rejections=tuple(rejections),
         )
     candidates = list(search.candidates)
+    if on_activity is not None:
+        for draft in candidates:
+            on_activity(
+                {
+                    "kind": "draft",
+                    "summary": "A draft is ready for checks; it has not qualified yet.",
+                    "candidate_id": draft.candidate_id,
+                    "draft": draft.text,
+                    "diff": prompt_diff(plan.prompt, draft.text),
+                }
+            )
     candidate_prompts.update(
         {candidate.candidate_id: candidate.text for candidate in candidates}
     )
     stage("running_weak_models")
+
+    def comparison_activity(facts: Mapping[str, Any]) -> None:
+        if on_activity is not None:
+            destination = facts.get("fallback_to")
+            on_activity(
+                {
+                    "kind": "fallback" if destination else "comparison",
+                    "summary": f"The comparison service could not finish. Rerunning the baseline and drafts on {str(destination).title()}."
+                    if destination
+                    else "The comparison attempt returned; completed samples and failures were retained.",
+                    "comparison": dict(facts),
+                }
+            )
+
     panel = run_candidates(
         candidates,
         settings.weak_models,
@@ -926,6 +1035,7 @@ def run_round(
         run_seed=plan.seed,
         run_id=plan.run_id,
         validate_response=plan.writer_instruction_version >= 15,
+        on_comparison=comparison_activity if settings.evaluation_profile else None,
     )
     stage("grading")
     grading_observation: dict[str, Any] = {}
@@ -964,6 +1074,11 @@ def run_round(
     )
     original_grade = panel_grades["original"]
     stage("checking_fidelity")
+    requirements = (
+        effective_requirements(plan.prompt, plan.assumptions)
+        if plan.writer_instruction_version >= 15
+        else ()
+    )
     ranking_candidates = [
         _ranking_candidate(
             gateway,
@@ -973,9 +1088,26 @@ def run_round(
             candidate,
             panel_grades,
             original_grade,
+            output_findings(
+                requirements,
+                [item.to_dict() for item in panel.by_candidate(candidate.candidate_id)],
+            )
+            + prompt_findings(requirements, candidate.candidate_id, candidate.text),
         )
         for candidate in candidates
     ]
+    if on_activity is not None:
+        for candidate in ranking_candidates:
+            checks = check_summaries(candidate.metadata.get("requirement_findings", ()))
+            if checks:
+                on_activity(
+                    {
+                        "kind": "checks",
+                        "candidate_id": candidate.candidate_id,
+                        "summary": "This draft's source requirement checks returned; uncertain checks remain unverified.",
+                        "checks": list(checks),
+                    }
+                )
     stage("strong_check")
     # Without success tests there is nothing to check answers against, so
     # the strong check cannot run; fidelity gates already passed above, and
@@ -992,6 +1124,14 @@ def run_round(
         if tests
         else None
     )
+    if not tests and on_activity is not None:
+        on_activity(
+            {
+                "kind": "skipped",
+                "stage": "strong_check",
+                "summary": "Answer verification was skipped because no supported success tests were available. Rewrite fidelity is still checked.",
+            }
+        )
     baseline_vector = score_candidate(
         gateway,
         working_prompt,
@@ -1122,13 +1262,30 @@ def run_round(
         allow_unverified_selection=not tests,
         candidate_order=evaluation.order,
     )
-    if ranking.selected is None and final_baseline.eligible:
-        # The baseline is eligible only after its own complete Accept gate.
-        ranking = replace(
-            ranking,
-            selected=final_baseline,
-            original_kept=True,
-        )
+    if on_activity is not None:
+        for candidate_id, reasons in ranking.rejection_reasons.items():
+            if reasons:
+                on_activity(
+                    {
+                        "kind": "blocked",
+                        "candidate_id": candidate_id,
+                        "summary": "This draft did not qualify. Its rejection evidence will guide the next Round.",
+                        "reasons": list(reasons),
+                    }
+                )
+        if ranking.selected is not None:
+            on_activity(
+                {
+                    "kind": "qualified",
+                    "summary": "A changed draft passed this Round's qualification checks.",
+                    "candidate_id": ranking.selected.candidate_id,
+                    "draft": ranking.selected.text,
+                }
+            )
+    # Changed-only success (#187): the original is reference evidence and is
+    # never promoted to the selected result. When no changed candidate
+    # qualifies, the ranking keeps selected=None and the round reports the
+    # original as kept without a successful outcome.
     evaluation_evidence: dict[str, Any] = {
         "candidates": {
             candidate_id: dict(evidence)
@@ -1242,6 +1399,7 @@ def run_round(
         epsilon=settings.convergence_epsilon,
     )
     convergence = decision.to_dict()
+    convergence["selected"] = False
     if vector is not None:
         convergence["selected"] = bool(vector.get("selected"))
         convergence["source"] = vector.get("source", "selected_candidate")
@@ -1257,6 +1415,7 @@ def run_round(
             first_round=plan.writer_instruction_version < 15 or plan.round_number == 1,
         )
         reported_failure = None
+    finish_stage()
     return RoundOutcome(
         plan=plan,
         status=status,

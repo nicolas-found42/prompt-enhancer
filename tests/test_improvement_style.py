@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -38,13 +40,22 @@ def _decide(request, **_kwargs):
     return {"type": "noul", "probability_true": probability, "confidence": 1.0}
 
 
+def _echoing_chat(_model, messages, *, role, **_kwargs):
+    if role == "writer":
+        state = json.loads(messages[1]["content"])
+        if "strategies" in state:
+            return json.dumps(
+                {item["name"]: state["prompt"] for item in state["strategies"]}
+            )
+        return '{"tests":[]}'
+    return "pass"
+
+
 def _client(store=None):
     from prompt_enhancer.gateway import ScriptedGateway
 
     store = store or RunStore(":memory:")
-    gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=_decide
-    )
+    gateway = ScriptedGateway(chat=_echoing_chat, decision=_decide)
     app = create_app(optimizer=PromptOptimizer(store=store, gateway=gateway))
     return TestClient(app), app.state.jobs, store
 
@@ -95,10 +106,11 @@ def test_legacy_tier_option_does_not_enter_the_run_contract() -> None:
     assert saved["options"]["improvement_style"] == "shorter"
     assert "tier" not in saved and "tier" not in saved["options"]
     assert result["report"]["applied_style"] == "shorter"
-    assert result["report"]["outcome"] == "converged"
-    assert result["report"]["outcome_reason"]
+    assert result["report"]["outcome"] is None
+    assert result["report"]["control_state"] == "deadline_reached"
+    assert "No changed prompt qualified" in result["report"]["summary"]
     last_round = result["report"]["history"][-1]
-    assert last_round["convergence"]["passed"] is True
+    assert last_round["convergence"]["passed"] is False
     assert (
         last_round["evidence"]["evaluation_evidence"]["candidates"]["original"][
             "accept"
@@ -107,7 +119,8 @@ def test_legacy_tier_option_does_not_enter_the_run_contract() -> None:
     )
 
 
-def test_each_named_style_is_accepted_and_recorded() -> None:
+def test_each_named_style_is_accepted_and_recorded(deterministic_active_clock) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     for style in IMPROVEMENT_STYLES:
         store = RunStore(":memory:")
         client, jobs, _ = _client(store)
@@ -142,9 +155,7 @@ def test_five_explicit_weak_models_keep_order_and_do_not_change_defaults() -> No
     defaults = settings.weak_models
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"),
-        gateway=ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=_decide
-        ),
+        gateway=ScriptedGateway(chat=_echoing_chat, decision=_decide),
         config=settings,
     )
     result = optimizer.optimize(

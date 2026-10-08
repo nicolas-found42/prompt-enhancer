@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from active_clock import echo_candidates_for_diagnosis
 
 from prompt_enhancer import PromptOptimizer, RunStore
 from prompt_enhancer.gateway import ScriptedGateway
@@ -9,21 +10,23 @@ from prompt_enhancer.success_tests import RejectedSuccessTest, SuccessTestCompil
 
 def test_invalid_expected_is_recorded_as_rejection_evidence() -> None:
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: json.dumps(
-            {
-                "tests": [
-                    {
-                        "question": "Which tone?",
-                        "kind": "choice",
-                        "expected": "businesslike",
-                        "options": [
-                            {"value": "formal", "description": "Formal"},
-                            {"value": "casual", "description": "Casual"},
-                            {"value": "unknown", "description": "Unknown"},
-                        ],
-                    }
-                ]
-            }
+        chat=echo_candidates_for_diagnosis(
+            lambda *_args, **_kwargs: json.dumps(
+                {
+                    "tests": [
+                        {
+                            "question": "Which tone?",
+                            "kind": "choice",
+                            "expected": "businesslike",
+                            "options": [
+                                {"value": "formal", "description": "Formal"},
+                                {"value": "casual", "description": "Casual"},
+                                {"value": "unknown", "description": "Unknown"},
+                            ],
+                        }
+                    ]
+                }
+            )
         )
     )
 
@@ -63,9 +66,11 @@ def test_calibrated_faithfulness_gate_accepts_boundary_probability() -> None:
         "success-test-screen:t1:assessability": 0.99,
     }
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: {
-            "choices": [{"message": {"content": json.dumps(tests)}}]
-        },
+        chat=echo_candidates_for_diagnosis(
+            lambda *_args, **_kwargs: {
+                "choices": [{"message": {"content": json.dumps(tests)}}]
+            }
+        ),
         decision=lambda request, **_kwargs: {
             "type": "noul",
             "noul": probabilities[request["key"]],
@@ -143,7 +148,7 @@ def test_choice_descriptions_are_repaired_then_checked_by_jev() -> None:
                 probability = 0.95
         return {"type": "noul", "noul": probability, "confidence": 0.9}
 
-    gateway = ScriptedGateway(chat=chat, decision=decide)
+    gateway = ScriptedGateway(chat=echo_candidates_for_diagnosis(chat), decision=decide)
     result = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway).optimize(
         "Ask for context before answering.",
         {"clarification_allowed": False, "time_limit_s": 0},
@@ -327,7 +332,9 @@ def test_choice_with_missing_description_after_repair_has_no_tests() -> None:
         return {"type": "noul", "noul": 0.01, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: next(writer_replies, "{}"),
+        chat=echo_candidates_for_diagnosis(
+            lambda *_args, **_kwargs: next(writer_replies, "{}")
+        ),
         decision=decide,
     )
 

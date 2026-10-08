@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from active_clock import echo_candidates_for_diagnosis
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
@@ -303,7 +304,8 @@ def test_health_request_beside_active_optimization_keeps_separate_costs(
         return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
 
     optimizer_gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=optimize_answer
+        chat=echo_candidates_for_diagnosis(lambda *_args, **_kwargs: '{"tests":[]}'),
+        decision=optimize_answer,
     )
     optimizer = PromptOptimizer(
         gateway=optimizer_gateway,

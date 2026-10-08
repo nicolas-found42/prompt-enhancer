@@ -5,6 +5,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from active_clock import echo_candidates_for_diagnosis
 
 from prompt_enhancer.catalog import JEV_MODEL
 from prompt_enhancer.diagnosis import default_gap_question
@@ -331,7 +332,10 @@ def test_runtime_policy_gates_rankers_and_abstains_on_snapshot_mismatch() -> Non
             }
 
         return ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"tests":[]}'
+            ),
+            decision=decide,
         )
 
     optimizer = PromptOptimizer(
@@ -408,7 +412,10 @@ def test_optimizer_gates_using_fitted_probability_from_artifact() -> None:
 
     optimizer = PromptOptimizer(
         gateway=ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"tests":[]}'
+            ),
+            decision=decide,
         ),
         store=RunStore(":memory:"),
         decision_policy=DecisionPolicy.from_artifact(artifact),
@@ -461,7 +468,10 @@ def test_optimizer_abstains_when_answer_snapshot_is_unknown() -> None:
 
     optimizer = PromptOptimizer(
         gateway=UnknownSnapshotGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"tests":[]}'
+            ),
+            decision=decide,
         ),
         store=RunStore(":memory:"),
         decision_policy=DecisionPolicy.from_artifact(artifact),

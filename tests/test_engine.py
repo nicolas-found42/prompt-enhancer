@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from functools import partial
 
 import pytest
+from active_clock import TickingClock, advancing_chat
 
 from prompt_enhancer import PromptOptimizer, RunStore
 from prompt_enhancer.config import Settings
@@ -105,7 +106,7 @@ def test_run_without_qualifying_candidates_reports_attempts_and_persists() -> No
     assert record["timing"] == result["timing"]
 
 
-def test_good_unchanged_prompt_converges_from_its_own_baseline_vector() -> None:
+def test_good_unchanged_prompt_is_reference_evidence_not_success() -> None:
     prompt = "Answer the question in one clear sentence."
     request_keys = []
 
@@ -148,19 +149,25 @@ def test_good_unchanged_prompt_converges_from_its_own_baseline_vector() -> None:
             }
         return {"type": "noul", "probability_true": 1.0, "confidence": 1.0}
 
+    # Changed-only success (#187): the writer only echoes the original, so no
+    # changed prompt qualifies. The original scores as reference evidence and
+    # the run ends at its active-budget deadline rather than converging on it.
+    clock = TickingClock()
     result = PromptOptimizer(
         store=RunStore(":memory:"),
-        gateway=ScriptedGateway(chat=chat, decision=decide),
+        gateway=ScriptedGateway(
+            chat=advancing_chat(chat, clock, 40.0), decision=decide
+        ),
         writer_instruction_version=4,
+        clock=clock,
     ).optimize(prompt, {"clarification_allowed": False})
 
     assert result["status"] == "completed"
     assert result["final_prompt"] == prompt
     assert result["original_kept"] is True
-    assert result["report"]["status"] == "converged"
-    assert result["report"]["convergence"]["selected_candidate_id"] == "original"
-    assert result["report"]["convergence"]["source"] == "original_baseline"
-    assert result["report"]["history"][0]["status"] == "converged"
+    assert result["report"]["status"] == "deadline_reached"
+    assert result["report"]["outcome"] is None
+    assert all(item["status"] != "converged" for item in result["report"]["history"])
     assert "score:clarity" in request_keys
 
 
@@ -220,7 +227,7 @@ def test_judge_provider_failure_stops_the_run_after_one_attempt(failure_prefix) 
     assert store.get_run(result["run_id"])["prompt"] == prompt
 
 
-def test_unchanged_prompt_without_success_tests_converges_as_unverified() -> None:
+def test_unchanged_prompt_without_success_tests_stops_without_success() -> None:
     prompt = "Answer the question directly."
 
     def chat(_model, messages, *, role, **_kwargs):
@@ -260,14 +267,19 @@ def test_unchanged_prompt_without_success_tests_converges_as_unverified() -> Non
 
     assert result["status"] == "completed"
     assert result["final_prompt"] == prompt
-    assert result["report"]["status"] == "converged"
+    assert result["report"]["status"] == "deadline_reached"
+    assert result["report"]["outcome"] is None
     assert result["report"]["tests"] == []
     assert result["report"]["strong_check"] is None
-    assert result["report"]["convergence"]["verification"] == "unverified"
-    assert result["report"]["convergence"]["source"] == "original_baseline"
+    assert all(
+        not item["convergence"]["selected"] for item in result["report"]["history"]
+    )
 
 
-def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
+def test_unsupported_added_sentence_is_rejected_and_persisted(
+    deterministic_active_clock,
+) -> None:
+    deterministic_active_clock.step_per_round_s = 80.0
     prompt = "Summarize the report in English."
     candidate = f"{prompt} Respond in French."
     store = RunStore(":memory:")
@@ -376,8 +388,8 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
     result = optimizer.optimize(prompt, {"improvement_style": "more_specific"})
 
     assert result["status"] == "completed"
-    assert result["report"]["status"] == "converged"
-    assert result["report"]["convergence"]["source"] == "original_baseline"
+    assert result["report"]["status"] == "deadline_reached"
+    assert result["report"]["outcome"] is None
     rejected = result["report"]["selection_evidence"]["rejected_candidates"]
     assert result["final_prompt"] == prompt
     rejected_by_strategy = {item["strategy"]: item for item in rejected}
@@ -412,7 +424,7 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
     ]
     # Every changed candidate is fidelity-checked now; the probe previously
     # exempted the candidate that lost before any strong-model run.
-    assert len(fidelity_requests) == 4
+    assert len(fidelity_requests) == 8  # Both attempted Rounds check both drafts.
     assert {request["type"] for request in fidelity_requests} == {"choice", "noul"}
     assert all("diagnosis" not in request["state"] for request in fidelity_requests)
     assert all(
@@ -430,7 +442,7 @@ def test_unsupported_added_sentence_is_rejected_and_persisted() -> None:
         for batch in gateway.batches
         if batch and all(str(item["key"]).startswith("fidelity:") for item in batch)
     ]
-    assert len(fidelity_batches) == 2
+    assert len(fidelity_batches) == 4
     for batch in fidelity_batches:
         assert [item["key"] for item in batch][1:] == ["fidelity:meaning"]
     assert all(
@@ -1869,6 +1881,17 @@ def test_resume_after_restart_retains_cost_spent_before_clarification(tmp_path) 
 
     assert resumed["cost"]["total"] == 0.02
     assert resumed["cost"]["cost_by_role"] == {"judge": 0.02}
+    assert resumed["report"]["control_state"] == "deadline_reached"
+    assert (
+        resumed["report"]["jev_answers"][: len(pending["report"]["jev_answers"])]
+        == pending["report"]["jev_answers"]
+    )
+    assert any(
+        item["key"] == "goal" and item["value"] == "Summarize"
+        for item in resumed["report"]["assumptions"]
+    )
+    record = RunStore(database).get_run(pending["run_id"])
+    assert record["cost"] == resumed["cost"]
 
 
 def test_unknown_high_impact_gap_offers_writer_choices_and_preserves_diagnosis() -> (

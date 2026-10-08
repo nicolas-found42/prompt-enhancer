@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+from active_clock import TickingClock, advancing_chat
 
 from prompt_enhancer.api import create_app
 from prompt_enhancer.gateway import ScriptedGateway
@@ -25,12 +26,13 @@ def chat(_model: str, messages: Any, *, role: str, **_kwargs: Any) -> str:
     if "Revise only the stated assumption" in instruction:
         return "Analyze this."
     if "state.strategies" in instruction:
-        # Echo the clarified prompt. Score and acceptance evidence should let
-        # the baseline converge without inventing an improvement.
         state = json.loads(messages[1]["content"])
-        return json.dumps(
-            {item["name"]: state["prompt"] for item in state["strategies"]}
+        # Preserve the confirmed goal while giving this lifecycle fixture a
+        # changed draft whose clarity, fidelity, and usefulness are judged below.
+        candidate = state["prompt"].replace(
+            "Help me with this.", "Help me with the supplied material."
         )
+        return json.dumps({item["name"]: candidate for item in state["strategies"]})
     return '{"tests":[]}'
 
 
@@ -99,8 +101,13 @@ def decide(request: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="prompt-enhancer-e2e-") as directory:
         store = RunStore(Path(directory) / "runs.sqlite3")
+        clock = TickingClock()
         optimizer = PromptOptimizer(
-            store=store, gateway=ScriptedGateway(chat=chat, decision=decide)
+            store=store,
+            gateway=ScriptedGateway(
+                chat=advancing_chat(chat, clock, 20), decision=decide
+            ),
+            clock=clock,
         )
         port = int(os.environ.get("E2E_API_PORT", "8765"))
         uvicorn.run(

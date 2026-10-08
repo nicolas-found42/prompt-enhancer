@@ -8,7 +8,10 @@ from prompt_enhancer import PromptOptimizer, RunStore
 from prompt_enhancer.gateway import ScriptedGateway
 
 
-def test_run_retries_until_a_changed_candidate_passes_then_plateaus() -> None:
+def test_run_retries_until_a_changed_candidate_passes_then_plateaus(
+    deterministic_active_clock,
+) -> None:
+    deterministic_active_clock.step_per_round_s = 20.0
     prompt = "Summarize the report."
     early_candidates = (
         "Provide a summary of the report.",

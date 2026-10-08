@@ -564,9 +564,19 @@ input:focus {
 
 .stage {
   align-items: center;
-  color: #6e7681;
-  display: flex;
-  gap: 10px;
+  color: #9da7b3;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr);
+  gap: 6px 10px;
+}
+
+.stage > * {
+  grid-column: 2;
+}
+
+.stage details pre {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .stage::before {

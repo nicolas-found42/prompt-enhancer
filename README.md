@@ -208,6 +208,85 @@ weak replies stop operationally with allowlisted finish/token metadata rather
 than contributing a prompt-quality score. Operation deadlines remain separate
 from output caps and Round-boundary run limits.
 
+For the provisional #187 evaluation contract, submit
+`options={"evaluation_profile": "llama-tuning-v1"}` to the optimizer or job API.
+It pins Jev as judge, `qwen/qwen3.7-flash` for non-Jev roles, and
+`meta-llama/llama-3.1-8b-instruct` through OpenRouter for three weak samples.
+Novita is the provisional first service; `"evaluation_provider": "groq"`
+selects Groq first for the matched pilot. Requests restrict routing to that
+service and require parameter support. A permitted service fallback reruns the
+baseline and every draft on the other service with matching requested seeds;
+incomplete attempts and completed sibling samples remain in the evidence.
+Reported provider/model identities remain unknown when the response omits them,
+and matching requests do not establish effective sampling settings. The
+4,096-token weak output cap is a pilot starting point. Neither service has been
+chosen by a measured pilot, and this profile does not establish the release bar.
+An injected Gateway whose actual judge differs from the pinned Jev model is
+rejected before profile calls, so configuration evidence cannot misidentify it.
+
+For request profiling, construct `HttpGateway(profile_requests=True)` and read
+`profiling_report()` after a run. Its private sidecars retain each adapter attempt,
+whether it dispatched, role, requested and reported identities, canonical JSON size,
+output cap, requested sampling/reasoning controls, available usage, and monotonic
+start/dispatch/finish times. Queue and transport durations are distinct. A new
+logical run resets these sidecars; retain the report before starting another run.
+Raw answers and adapter usage accounting keep their existing contracts. Request
+and answer content, credentials and arbitrary provider diagnostics are omitted
+from the sidecars. This nonstreaming path cannot measure headers, first byte,
+first visible token or a visible generation interval: TTFT and output TPS remain
+unknown. Requested controls do not establish their supported or effective values.
+
+For opt-in streaming measurements, construct
+`HttpGateway(profile_requests=True, stream_chat_for_profiling=True)`. An injected
+HTTP transport must also enable `HttpTransport(profile_streams=True)`. This path
+requests streamed chat answers and retains the received SSE bytes (including a
+base64 copy), parsed frames, framing errors and completion marker in a raw answer
+with protocol `raw-chat-sse-1`. Answer interpretation remains with callers;
+incomplete, malformed or error streams cannot supply a usable completion.
+Visible truncated weak-model text is retained only as failure evidence.
+The sidecars distinguish headers, first bytes and the first nonempty visible
+content frame; metadata, empty content and reasoning frames do not start TTFT.
+Observed frame-arrival timing is separate from client rendering time. Output TPS
+uses reported completion tokens minus reported reasoning tokens over the
+first-to-last visible-content frame interval. It remains unknown without both
+counts and a positive interval, or when the stream is incomplete or malformed.
+Frames in one transport read share the receipt timestamp; parsing work cannot
+create a generation interval between them.
+Conflicting reported identities stay unknown and invalidate a matched comparison.
+Raw stream answers and accounting frames stay available for private capture;
+sidecars omit their contents. The stream reader stops at the completion marker
+and rejects responses exceeding its 16 MiB retention limit. These controls do not
+establish a measured provider pilot or normal completion targets. The framing and
+accounting behavior follows the
+[OpenRouter streaming documentation](https://openrouter.ai/docs/api_reference/streaming)
+and [SSE parsing rules](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream).
+
+Native requirement evidence includes conservative whole-answer JSON validity,
+explicit top-level JSON key/type declarations, and explicit comma-delimited CSV
+headers with matching record width. Values and row counts remain unconstrained when
+the source leaves them open. Duplicate applicable JSON keys and unsupported
+parser conventions retain uncertainty. An explicit
+`Do not change any character in the supplied code:` line (using `data` for data)
+followed by a top-level fenced block protects its literal
+contents in a rewrite. The checker permits fence presentation changes that
+preserve those contents; changes or appended content in the protected block
+remain known failures. Tabs with ambiguous indentation and content moved outside
+the supported block scope retain uncertainty. The conservative lexer reads
+fenced content as source data, including exact-reply text quoted inside it;
+delegated instructions and other source scopes still need semantic coverage.
+It follows the literal-content and closing-fence rules of
+[CommonMark 0.31.2](https://spec.commonmark.org/0.31.2/#fenced-code-blocks).
+Recognized constraints keep their exact source spans; the ledger still reports
+partial coverage pending broader audited
+extraction.
+
+Native diagnosis retains the original questions, raw partial answers and errors.
+Oversized single questions use contiguous source windows, with at most sixteen
+windows per question and eight physical requests across bounded recovery.
+Held windows preserve their source, and window answers cannot establish a
+whole-prompt diagnosis. Malformed required answers make diagnosis explicitly
+incomplete; unused speculative answers remain separate from required evidence.
+
 The [spec](docs/spec.md) defines the product and acceptance criteria. The
 [evaluation report](docs/evaluation-results-2026-09-23.md) and
 [delegated-review follow-up](docs/delegated-evaluation-2026-09-23.md) state

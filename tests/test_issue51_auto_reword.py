@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from active_clock import echo_candidates_for_diagnosis
 
 from prompt_enhancer.catalog import (
     DEFAULT_GO_WRITER,
@@ -106,7 +107,9 @@ class RewordGateway(ScriptedGateway):
         self.uncertain = uncertain
         self.final_regression = final_regression
         self.calibration_bad = calibration_bad
-        super().__init__(chat=self._chat, decision=self._decide)
+        super().__init__(
+            chat=echo_candidates_for_diagnosis(self._chat), decision=self._decide
+        )
 
     def _chat(self, _model, messages, *, role, **_kwargs):
         assert role == "writer_reword"
@@ -225,7 +228,9 @@ def test_equivalent_reword_adopts_without_human_identity_and_rolls_back(
         store=RunStore(":memory:"),
         rubric_store=store,
         gateway=ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"tests":[]}',
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"tests":[]}'
+            ),
             decision=runtime_answer,
         ),
     ).optimize(

@@ -1,3 +1,4 @@
+from active_clock import echo_candidates_for_diagnosis
 from fastapi.testclient import TestClient
 
 from prompt_enhancer.api import create_app
@@ -23,7 +24,8 @@ def test_optimize_endpoint_returns_result_and_lists_local_run() -> None:
         return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: '{"tests":[]}', decision=decide
+        chat=echo_candidates_for_diagnosis(lambda *_args, **_kwargs: '{"tests":[]}'),
+        decision=decide,
     )
     client = TestClient(
         create_app(optimizer=PromptOptimizer(store=store, gateway=gateway))
@@ -150,7 +152,9 @@ def test_retired_run_option_is_rejected_before_calls_or_persistence() -> None:
     calls: list[str] = []
     store = RunStore(":memory:")
     gateway = ScriptedGateway(
-        chat=lambda *_args, **_kwargs: calls.append("chat") or "{}",
+        chat=echo_candidates_for_diagnosis(
+            lambda *_args, **_kwargs: calls.append("chat") or "{}"
+        ),
         decision=lambda *_args, **_kwargs: calls.append("decision") or {},
     )
     client = TestClient(

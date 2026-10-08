@@ -115,7 +115,9 @@ def test_current_round_reports_absent_grades_and_retains_unverified_status(
         ),
     )
     report = outcome.report()
-    assert outcome.converged
+    assert not outcome.converged
+    assert outcome.continue_rounds
+    assert report["convergence"]["selected"] is False
     assert report["selection_evidence"]["original_score"] is None
     assert report["selection_evidence"]["winner_score"] is None
     assert report["convergence"]["verification"] == "unverified"
@@ -203,7 +205,7 @@ def test_absent_success_tests_do_not_send_zero_grade_to_acceptance():
 
 
 @pytest.mark.parametrize("failed_check", [None, "verify", "audit"])
-def test_baseline_acceptance_preserves_failed_applicable_checks(failed_check):
+def test_changed_candidate_acceptance_preserves_failed_applicable_checks(failed_check):
     requests = []
 
     def decide(q, **_kwargs):
@@ -217,7 +219,7 @@ def test_baseline_acceptance_preserves_failed_applicable_checks(failed_check):
     result = evaluate_candidate_packages(
         ScriptedGateway(decision=decide),
         prompt,
-        [RankingCandidate("original", prompt)],
+        [RankingCandidate("rewrite", "Plan using a single heading.")],
         constraints=("Use a single heading.",),
         improvement_style="structured",
         style_bundle=("specify_output_format",),
@@ -228,11 +230,11 @@ def test_baseline_acceptance_preserves_failed_applicable_checks(failed_check):
         run_id="applicable-checks",
         round_number=1,
     )
-    assert result.candidates["original"]["accept"]["accepted"]
-    assert result.candidates["original"]["eligible"] is (failed_check is None)
+    assert result.candidates["rewrite"]["accept"]["accepted"]
+    assert result.candidates["rewrite"]["eligible"] is (failed_check is None)
     accept = next(q for q in requests if q["key"].startswith("evaluate:accept:"))
     assert "only when those checks are applicable" in accept["query"]
-    assert "An unchanged original may" in accept["query"]
+    assert accept["state"]["candidate_prompt"] != accept["state"]["original_prompt"]
 
 
 def test_original_baseline_retains_measured_strong_check_evidence():

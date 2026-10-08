@@ -24,6 +24,12 @@ from prompt_enhancer.gateway import ScriptedGateway
 FIXTURE = Path(__file__).parent / "fixtures" / "gateway_request_keys.json"
 
 
+@pytest.fixture(autouse=True)
+def replay_clock(deterministic_active_clock):
+    # Keep this pinned replay workload at its documented two-attempt budget.
+    deterministic_active_clock.step_per_round_s = 80.0
+
+
 def _pipeline_gateway() -> ScriptedGateway:
     rewrites = {
         "add_missing_context": "Invented rewrite",
@@ -169,7 +175,7 @@ def _no_strategy_gateway() -> ScriptedGateway:
     return ScriptedGateway(chat=gateway.chat_handler, decision=reject_every_strategy)
 
 
-def _kept_original_converged(optimizer: PromptOptimizer) -> list[Any]:
+def _kept_original_deadline(optimizer: PromptOptimizer) -> list[Any]:
     return [optimizer.optimize("Original request", {"clarification_allowed": False})]
 
 
@@ -212,7 +218,7 @@ SCENARIOS: dict[
 ] = {
     "full_pipeline": (_pipeline_gateway, _full_pipeline),
     "clarify_resume_edit": (_clarification_gateway, _clarify_resume_edit),
-    "kept_original_converged": (_no_candidate_beats_gateway, _kept_original_converged),
+    "kept_original_deadline": (_no_candidate_beats_gateway, _kept_original_deadline),
     "no_strategy": (_no_strategy_gateway, _no_strategy),
 }
 

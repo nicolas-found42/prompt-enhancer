@@ -39,7 +39,9 @@ def test_harness_sends_settings_only_when_supplied_for_a_custom_engine() -> None
     assert HarnessOptions().to_dict()["settings"] == {}
 
 
-def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
+def test_historical_original_success_replay_reports_missing_continuation(
+    tmp_path: Path,
+) -> None:
     fixtures = Path(__file__).parent / "fixtures" / "evaluation"
     output = tmp_path / "report.json"
 
@@ -53,17 +55,17 @@ def test_recorded_replay_cli_completes_cases(tmp_path: Path) -> None:
                 str(output),
             ]
         )
-        == 0
+        == 2
     )
 
     report = json.loads(output.read_text())
-    # These recorded prompts independently meet every baseline floor. Keeping
-    # that measured baseline now converges successfully; it does not imply a
-    # changed prompt or success-test verification that the recording lacks.
-    assert [case["status"] for case in report["cases"]] == ["completed"] * 3
-    assert all(case["error"] is None for case in report["cases"])
+    # The historical recording ended on an unchanged baseline. Continued
+    # search needs requests it never recorded; strict replay reports the
+    # missing evidence instead of endorsing the original as a success.
+    assert [case["status"] for case in report["cases"]] == ["failed"] * 3
+    assert all(case["error"] is not None for case in report["cases"])
     assert all(case["original_kept"] is True for case in report["cases"])
-    assert report["diagnosis"]["excluded_failed_cases"] == 0
+    assert report["diagnosis"]["excluded_failed_cases"] == 2
     assert report["diagnosis"]["problem_sentences"]["status"] == "unavailable"
     assert report["diagnosis"]["problem_sentences"]["precision"] is None
 
@@ -285,7 +287,7 @@ def test_replay_restores_recorded_case_cost_and_latency(tmp_path: Path) -> None:
                 str(output),
             ]
         )
-        == 0
+        == 2
     )
 
     report = json.loads(output.read_text())
@@ -349,7 +351,9 @@ def test_recorded_live_gateway_replays_the_same_public_run(tmp_path: Path) -> No
     )
     assert replayed["final_prompt"] == original["final_prompt"]
     assert original["status"] == "completed"
-    assert original["report"]["convergence"]["status"] == "converged"
+    assert original["report"]["control_state"] == "deadline_reached"
+    assert original["report"]["outcome"] is None
+    assert replayed["report"]["control_state"] == "deadline_reached"
     assert original["report"]["jev_snapshot"] == [JEV_MODEL]
     assert all(
         answer["answered_by"] == JEV_MODEL

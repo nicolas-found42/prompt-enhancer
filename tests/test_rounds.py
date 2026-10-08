@@ -586,32 +586,32 @@ def test_round_marks_and_blocks_a_crutch_strategy_that_regresses() -> None:
     assert outcome.final_prompt.removeprefix("Rewrite ") not in crutches
 
 
-def test_round_converges_on_its_measured_baseline_when_rewrites_are_worse() -> None:
+def test_round_continues_when_only_its_measured_baseline_passes() -> None:
     outcome = run_round(
         _gateway(weak_passes=lambda _model, prompt: prompt == PROMPT), _plan()
     )
 
     assert outcome.original_kept is True
-    assert outcome.status == "converged"
-    assert outcome.selected_strategy == "original"
-    assert outcome.failures and outcome.continue_rounds is False
+    assert outcome.status == "improvement_not_verified"
+    assert outcome.selected_strategy is None
+    assert outcome.failures and outcome.continue_rounds is True
     assert all("weak pass rates" in failure.summary for failure in outcome.failures)
     report = outcome.report()
-    assert "failure" not in report
-    assert report["convergence"]["source"] == "original_baseline"
-    assert report["selection_evidence"]["selected_candidate_id"] == "original"
+    assert report["failure"]
+    assert report["convergence"]["selected"] is False
+    assert report["selection_evidence"]["selected_candidate_id"] is None
 
 
-def test_round_converges_on_measured_baseline_when_writer_echoes_original() -> None:
+def test_round_continues_when_writer_echoes_the_measured_baseline() -> None:
     outcome = run_round(
         _gateway(writer_echo=True, weak_passes=lambda _model, _prompt: True), _plan()
     )
 
     assert outcome.original_kept is True
-    assert outcome.status == "converged"
+    assert outcome.status == "improvement_not_verified"
+    assert outcome.continue_rounds is True
     report = outcome.report()
-    assert report["convergence"]["source"] == "original_baseline"
-    assert report["convergence"]["selected"] is True
+    assert report["convergence"]["selected"] is False
     assert (
         report["evaluation_evidence"]["candidates"]["original"]["accept"]["accepted"]
         is True

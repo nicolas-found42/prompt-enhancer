@@ -5,6 +5,8 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
+from active_clock import echo_candidates_for_diagnosis
+
 from prompt_enhancer.gateway import ScriptedGateway
 from prompt_enhancer.rubric_revisions import (
     EvaluationMetrics,
@@ -235,7 +237,10 @@ def test_only_explicit_adoption_changes_runtime_rubric_and_records_evidence(
     optimizer = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=ScriptedGateway(
-            chat=lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}', decision=decide
+            chat=echo_candidates_for_diagnosis(
+                lambda *_args, **_kwargs: '{"gaps":{},"tests":[]}'
+            ),
+            decision=decide,
         ),
         rubric_store=SQLiteRubricStore(tmp_path / "adoption.sqlite3"),
     )
@@ -309,7 +314,7 @@ def test_writer_proposes_question_from_measured_error_without_supplied_question(
         store,
         ErrorSource(),
         FixtureEvaluator(),
-        writer_gateway=ScriptedGateway(chat=write),
+        writer_gateway=ScriptedGateway(chat=echo_candidates_for_diagnosis(write)),
     )
 
     result = service.propose(evaluation_set)
@@ -377,7 +382,9 @@ def test_adopted_questions_keep_unrelated_default_checks_with_explicit_polarity(
         return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=_echo_writer("Write a release note.", '{"gaps":{},"tests":[]}'),
+        chat=echo_candidates_for_diagnosis(
+            _echo_writer("Write a release note.", '{"gaps":{},"tests":[]}')
+        ),
         decision=decide,
     )
     optimizer = PromptOptimizer(
@@ -423,7 +430,9 @@ def test_disabled_default_question_stays_disabled_after_store_reopens(
         return {"type": "noul", "probability_true": 0.95, "confidence": 1.0}
 
     gateway = ScriptedGateway(
-        chat=_echo_writer("Write a release note.", '{"tests":[]}'),
+        chat=echo_candidates_for_diagnosis(
+            _echo_writer("Write a release note.", '{"tests":[]}')
+        ),
         decision=decide,
     )
     result = PromptOptimizer(
@@ -491,7 +500,10 @@ def test_historical_calibration_loads_but_cannot_gate_current_jev(
     result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=ScriptedGateway(
-            chat=_echo_writer("Draft a note.", '{"tests":[]}'), decision=decide
+            chat=echo_candidates_for_diagnosis(
+                _echo_writer("Draft a note.", '{"tests":[]}')
+            ),
+            decision=decide,
         ),
         rubric_store=SQLiteRubricStore(path),
     ).optimize("Draft a note.", {"clarification_allowed": False})
@@ -513,7 +525,10 @@ def test_historical_calibration_loads_but_cannot_gate_current_jev(
     historical_result = PromptOptimizer(
         store=RunStore(":memory:"),
         gateway=HistoricalAnswerGateway(
-            chat=_echo_writer("Draft a note.", '{"tests":[]}'), decision=decide
+            chat=echo_candidates_for_diagnosis(
+                _echo_writer("Draft a note.", '{"tests":[]}')
+            ),
+            decision=decide,
         ),
         rubric_store=SQLiteRubricStore(path),
     ).optimize("Draft a note.", {"clarification_allowed": False})
@@ -622,7 +637,7 @@ def test_writer_revision_is_read_from_a_reply_wrapped_in_prose(
         store,
         ErrorSource(),
         FixtureEvaluator(),
-        writer_gateway=ScriptedGateway(chat=write),
+        writer_gateway=ScriptedGateway(chat=echo_candidates_for_diagnosis(write)),
     )
 
     result = service.propose(evaluation_set)

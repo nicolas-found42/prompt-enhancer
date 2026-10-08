@@ -12,7 +12,7 @@ _Avoid_: client, provider, model API
 
 Each Gateway operation has a wall-clock deadline. It includes model-catalog
 routing, provider requests, retries, and retry delays. The default is 180
-seconds and `PROMPT_ENHANCER_OPERATION_TIMEOUT` sets another value in seconds.
+seconds and `PROMPT_ENHANCER_OPERATION_TIMEOUT` sets another value in seconds. During optimization, each operation is also clipped to the logical run's remaining 150-second active allowance; retries and routing share that clipped deadline.
 `PROMPT_ENHANCER_TIMEOUT` sets the per-request socket timeout. A
 `time_limit_s` run control remains a separate pause at a completed Round
 boundary.

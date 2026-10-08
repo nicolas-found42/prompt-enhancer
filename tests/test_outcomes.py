@@ -70,6 +70,7 @@ def _accepted_report(*, verification: str) -> dict:
 def test_converged_requires_all_measured_dimensions_and_gain_evidence() -> None:
     report = apply_outcome_fields(
         {
+            **_accepted_report(verification="unverified"),
             "status": "converged",
             "applied_style": "clearer",
             "convergence": {
@@ -82,12 +83,17 @@ def test_converged_requires_all_measured_dimensions_and_gain_evidence() -> None:
             },
         },
         original_prompt=ORIGINAL,
-        final_prompt=ORIGINAL,
+        final_prompt=FINAL,
     )
 
     assert report["outcome"] == "converged"
     assert "measured gain" in report["outcome_reason"]
     assert report["applied_style"] == "clearer"
+
+    baseline = apply_outcome_fields(
+        report, original_prompt=ORIGINAL, final_prompt=ORIGINAL
+    )
+    assert baseline["outcome"] is None
 
 
 def test_converged_does_not_survive_a_dimension_floor_breach() -> None:

@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -102,7 +102,7 @@ def create_app(
     app_optimizer = optimizer or PromptOptimizer(store=app_store, config=app_settings)
     app_settings = getattr(app_optimizer, "config", app_settings)
     app = FastAPI(title="Prompt Enhancer", version="0.1.0")
-    jobs = RunJobs(store=app_store)
+    jobs = getattr(app_optimizer, "jobs", None) or RunJobs(store=app_store)
     app.state.jobs = jobs
     app.state.optimizer = app_optimizer
     app.state.store = app_store
@@ -189,6 +189,14 @@ def create_app(
                 on_failure,
                 prompt=job_prompt,
                 options={**dict(options or {}), "configuration": configuration},
+                evidence=app_optimizer.deadline_evidence_for(run_id, kind)
+                if hasattr(app_optimizer, "deadline_evidence_for")
+                else None,
+                on_finished=lambda: (
+                    app_optimizer.release_deadline_evidence(run_id)
+                    if hasattr(app_optimizer, "release_deadline_evidence")
+                    else None
+                ),
             )
         except JobBusy as exc:
             raise HTTPException(
@@ -246,6 +254,19 @@ def create_app(
     @app.post("/api/jobs/{run_id}/skip", status_code=202)
     def start_skip(run_id: str) -> dict[str, Any]:
         require_run(run_id)
+        try:
+            app_optimizer.validate_skip(run_id)
+        except InvalidAnswerError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_answer",
+                    "question_id": exc.question_id,
+                    "message": str(exc),
+                },
+            ) from exc
+        except RunNotPausedError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return submit(
             run_id,
             "skip",
@@ -285,10 +306,12 @@ def create_app(
         return jobs.active()
 
     @app.get("/api/jobs/{run_id}")
-    def get_job(run_id: str, response: Response) -> dict[str, Any]:
+    def get_job(
+        run_id: str, response: Response, after_cursor: int = Query(default=0, ge=0)
+    ) -> dict[str, Any]:
         response.headers["Cache-Control"] = "no-store"
         try:
-            return jobs.get(run_id)
+            return jobs.get(run_id, after_cursor=after_cursor)
         except JobNotFound as exc:
             raise HTTPException(
                 status_code=404, detail="no run in progress with this ID"

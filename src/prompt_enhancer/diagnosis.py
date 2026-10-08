@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .evaluation.calibration import DecisionPolicy, PolicyDecision
 from . import jev_questions
 from .catalog import CatalogError
+from .diagnosis_recovery import DiagnosisRecovery
 from .gateway import Gateway, HttpGateway, ProviderError
 from .jev import (
     ChoiceDecision,
@@ -572,6 +573,7 @@ class _DecisionObservation:
     raw_answer: Any
     decision: JevDecision | None
     answered_by: str | None
+    error: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,6 +668,9 @@ class Diagnoser:
         speculative_fanout: bool = True,
         record_request_evidence: bool | None = None,
         additional_requests: Sequence[Mapping[str, Any]] = (),
+        recover_source_windows: bool = False,
+        on_recovery: Callable[[Mapping[str, Any]], None] | None = None,
+        on_evidence: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> None:
         if sentence_protocol_version not in {
             HISTORICAL_SENTENCE_DIAGNOSIS_PROTOCOL_VERSION,
@@ -702,6 +707,10 @@ class Diagnoser:
         self._fallback_reason: str | None = None
         self._dispatch_blocked = False
         self._request_byte_limit: int | None = None
+        self.recover_source_windows = recover_source_windows
+        self._recovery: DiagnosisRecovery | None = None
+        self.on_recovery = on_recovery
+        self.on_evidence = on_evidence
 
     @property
     def rubric(self) -> DiagnosisRubric:
@@ -712,6 +721,9 @@ class Diagnoser:
     def _observe(
         self, requests: Sequence[Mapping[str, Any]]
     ) -> tuple[_DecisionObservation, ...]:
+        if self._recovery is not None:
+            for request in requests:
+                self._recovery.required(request)
         if self._prefetched is not None:
             selected: list[_DecisionObservation] = []
             for request in requests:
@@ -724,6 +736,8 @@ class Diagnoser:
                     self._incomplete = True
                     observation = _DecisionObservation(dict(request), None, None, None)
                 elif observation.raw_answer is None:
+                    self._incomplete = True
+                if self._recovery is not None and observation.decision is None:
                     self._incomplete = True
                 selected.append(observation)
             return tuple(selected)
@@ -738,6 +752,9 @@ class Diagnoser:
     ) -> tuple[_DecisionObservation, ...]:
         if not requests:
             return ()
+        if self._recovery is not None:
+            for request in requests:
+                self._recovery.required(request)
         if self._bounded_fallback or not self._request_fits(requests):
             self._bounded_fallback = True
             observations: list[_DecisionObservation] = []
@@ -751,6 +768,7 @@ class Diagnoser:
                     chunk.append(request)
                 else:
                     self._incomplete = True
+                    self._recover_single(request)
                     observations.append(
                         _DecisionObservation(dict(request), None, None, None)
                     )
@@ -758,6 +776,55 @@ class Diagnoser:
                 observations.extend(self._dispatch(chunk))
             return tuple(observations)
         return self._dispatch(requests)
+
+    def _recover_single(self, request: Mapping[str, Any]) -> None:
+        if self._recovery is None:
+            return
+        self._fallback_reason = "diagnosis_source_windows"
+        if self.on_recovery is not None:
+            self.on_recovery(
+                {
+                    "kind": "repair",
+                    "summary": "Diagnosis evidence exceeded a request limit. Preserving source windows for smaller checks.",
+                }
+            )
+
+        def dispatch(window: Mapping[str, Any]) -> Mapping[str, Any]:
+            observation = self._dispatch([window], record_recovery=False)[0]
+            return {
+                "status": "completed"
+                if observation.decision is not None
+                else "invalid_answer"
+                if observation.raw_answer is not None
+                else "held",
+                "raw_answer": observation.raw_answer,
+                "answered_by": observation.answered_by,
+                **({"error": dict(observation.error)} if observation.error else {}),
+                "reason": None
+                if observation.decision is not None
+                else self._fallback_reason or "required_evidence_missing",
+            }
+
+        self._recovery.windowed(request, fits=self._request_fits, dispatch=dispatch)
+        if self.on_recovery is not None:
+            windows = self._recovery.register(request)["windows"]
+            answered = sum(item["raw_answer"] is not None for item in windows)
+            held = len(windows) - answered
+            self.on_recovery(
+                {
+                    "kind": "blocked",
+                    "summary": f"Retained {answered} source-window answers and {held} pending windows. These partial checks cannot establish a whole-prompt diagnosis.",
+                }
+            )
+
+    def _publish_partial_evidence(self) -> None:
+        if self._recovery is not None and self.on_evidence is not None:
+            self.on_evidence(
+                {
+                    **self.request_evidence(self._recovery.prompt),
+                    "complete": False,
+                }
+            )
 
     def _request_fits(self, requests: Sequence[Mapping[str, Any]]) -> bool:
         if len(requests) > MAX_DIAGNOSIS_QUESTIONS_PER_REQUEST:
@@ -804,12 +871,15 @@ class Diagnoser:
         return self._request_byte_limit
 
     def _dispatch(
-        self, requests: Sequence[Mapping[str, Any]]
+        self, requests: Sequence[Mapping[str, Any]], *, record_recovery: bool = True
     ) -> tuple[_DecisionObservation, ...]:
         from .grading_cascade import _retry_multiplier
 
         if self._dispatch_blocked:
             self._incomplete = True
+            if record_recovery and self._recovery is not None:
+                for request in requests:
+                    self._recovery.held(request, "earlier_provider_failure")
             return tuple(
                 _DecisionObservation(dict(request), None, None, None)
                 for request in requests
@@ -821,6 +891,9 @@ class Diagnoser:
             > MAX_DIAGNOSIS_PROVIDER_REQUESTS
         ):
             self._incomplete = True
+            if record_recovery and self._recovery is not None:
+                for request in requests:
+                    self._recovery.held(request, "provider_request_cap_exhausted")
             return tuple(
                 _DecisionObservation(dict(request), None, None, None)
                 for request in requests
@@ -830,30 +903,84 @@ class Diagnoser:
         transport_before = self._transport_attempt_count()
         started = perf_counter()
         self._provider_requests += 1
+        provider_error: ProviderError | None = None
+        partition = False
         try:
             raw_responses = list(self.gateway.decide_batch(requests))
-        except ProviderError:
-            if not (
-                self.speculative_fanout
-                and self.sentence_protocol_version >= 2
-                and self.task_taxonomy_version >= 2
+        except ProviderError as exc:
+            provider_error = exc
+            if record_recovery and self._recovery is not None:
+                self._recovery.error(requests, exc.to_dict())
+            if exc.kind == "context_length" and len(requests) > 1:
+                self._bounded_fallback = True
+                self._fallback_reason = "diagnosis_size_partition"
+                partition = True
+            elif not (
+                self._recovery is not None
+                or (
+                    self.speculative_fanout
+                    and self.sentence_protocol_version >= 2
+                    and self.task_taxonomy_version >= 2
+                )
             ):
                 raise
-            self._incomplete = True
-            self._dispatch_blocked = True
-            self._fallback_reason = "diagnosis_provider_error"
+            else:
+                self._incomplete = True
+                self._dispatch_blocked = not (
+                    record_recovery
+                    and self._recovery is not None
+                    and exc.kind == "context_length"
+                )
+                self._fallback_reason = "diagnosis_provider_error"
             raw_responses = []
         finally:
             transport_after = self._transport_attempt_count()
             if transport_before is not None and transport_after is not None:
-                self._provider_requests += max(
-                    0, transport_after - transport_before - 1
+                extra = transport_after - transport_before - 1
+                self._provider_requests += (
+                    extra if self._recovery is not None else max(0, extra)
                 )
-        self._request_latencies_ms.append((perf_counter() - started) * 1000)
+            self._request_latencies_ms.append((perf_counter() - started) * 1000)
+            self._publish_partial_evidence()
+        if partition:
+            middle = len(requests) // 2
+            return (
+                *self._dispatch(requests[:middle], record_recovery=record_recovery),
+                *self._dispatch(requests[middle:], record_recovery=record_recovery),
+            )
+        if (
+            provider_error is not None
+            and provider_error.kind == "context_length"
+            and len(requests) == 1
+            and record_recovery
+            and self._recovery is not None
+        ):
+            _, envelope = batch_decision_payload(requests, model=self.gateway.jev_model)
+            self._request_byte_limit = (
+                min(
+                    self._provider_request_byte_limit(),
+                    len(json.dumps(envelope, ensure_ascii=False).encode("utf-8")),
+                )
+                // 2
+            )
+            self._bounded_fallback = True
+            self._recover_single(requests[0])
         entries = list(log)[before:] if isinstance(log, Sequence) else []
         observations: list[_DecisionObservation] = []
         for index, request in enumerate(requests):
             raw_answer = raw_responses[index] if index < len(raw_responses) else None
+            entry = entries[index] if index < len(entries) else {}
+            if self._recovery is not None and provider_error is not None:
+                entry = next(
+                    (
+                        item
+                        for item in entries
+                        if isinstance(item, Mapping) and item.get("question") == request
+                    ),
+                    {},
+                )
+                if isinstance(entry, Mapping):
+                    raw_answer = entry.get("answer")
             if raw_answer is None:
                 self._incomplete = True
             try:
@@ -862,7 +989,15 @@ class Diagnoser:
                 # A malformed answer invalidates its own decision only. Other
                 # independent questions in the same batch remain usable.
                 decision = None
-            entry = entries[index] if index < len(entries) else {}
+            if self._recovery is not None and provider_error is not None:
+                decision = None
+            if (
+                self._recovery is not None
+                and decision is None
+                and record_recovery
+                and self._recovery.register(request)["required"]
+            ):
+                self._incomplete = True
             answered_by = (
                 entry.get("answered_by") if isinstance(entry, Mapping) else None
             )
@@ -872,8 +1007,19 @@ class Diagnoser:
                     raw_answer=raw_answer,
                     decision=decision,
                     answered_by=answered_by if isinstance(answered_by, str) else None,
+                    error=provider_error.to_dict()
+                    if provider_error is not None
+                    else None,
                 )
             )
+            if record_recovery and self._recovery is not None:
+                self._recovery.observed(
+                    request,
+                    raw_answer,
+                    valid=decision is not None,
+                    answered_by=answered_by if isinstance(answered_by, str) else None,
+                )
+        self._publish_partial_evidence()
         return tuple(observations)
 
     def _transport_attempt_count(self) -> int | None:
@@ -1575,6 +1721,12 @@ class Diagnoser:
 
     def _prefetch_diagnosis(self, prompt: str, rubric: DiagnosisRubric) -> None:
         planned = self._speculative_requests(prompt, rubric)
+        if self._recovery is not None:
+            for dispatched, original in planned:
+                self._recovery.register(json.loads(original), dispatched)
+                if dispatched.get("key") == "task_type":
+                    self._recovery.required(dispatched)
+            self._publish_partial_evidence()
         requests = [request for request, _identity in planned]
         if not self._request_fits(requests):
             self._bounded_fallback = True
@@ -1589,6 +1741,11 @@ class Diagnoser:
             self._prefetched[identity] = replace(observation, request=original)
 
     def diagnose(self, prompt: str) -> DiagnosisReport:
+        self._recovery = (
+            DiagnosisRecovery(prompt, self._publish_partial_evidence)
+            if self.recover_source_windows
+            else None
+        )
         self._calibration_evidence = {}
         self._provider_requests = 0
         self._request_latencies_ms = []
@@ -1630,6 +1787,23 @@ class Diagnoser:
                         "latency_source": "unavailable",
                         "input_characters": len(prompt),
                         "question_count": 0,
+                        **(
+                            {
+                                "accounting_protocol": "diagnosis-source-accounting-v1",
+                                "questions": [],
+                                "source_hold": {
+                                    "status": "held",
+                                    "reason": "draft_character_cap_exceeded",
+                                    "source_span": {
+                                        "start": 0,
+                                        "end": len(prompt),
+                                        "unit": "unicode_codepoints",
+                                    },
+                                },
+                            }
+                            if self._recovery is not None
+                            else {}
+                        ),
                     },
                 )
             self._prefetch_diagnosis(prompt, rubric)
@@ -1703,6 +1877,18 @@ class Diagnoser:
             else "deterministic_or_replay",
             "input_characters": len(prompt),
             "question_count": len(self._prefetched or {}),
+            **(
+                {
+                    **self._recovery.to_dict(),
+                    "request_count_source": "http_adapter_transport_counter"
+                    if self._transport_attempt_count() is not None
+                    else "gateway_dispatch_counter",
+                    "latency_unit": "gateway_operation_including_routing_and_retries",
+                    "operation_count": len(self._request_latencies_ms),
+                }
+                if self._recovery is not None
+                else {}
+            ),
         }
 
     def _diagnose_gaps(

@@ -4,7 +4,9 @@
   "prompt": "Explain a seed.",
   "state": "interrupted",
   "stage": "writing_tests",
-  "round": { "round": 1 },
+  "round": {
+    "round": 1
+  },
   "stages_seen": [],
   "elapsed_ms": 400,
   "last_progress_age_ms": null,
@@ -23,7 +25,10 @@
       "summary": "The run stopped before finishing; your original prompt was kept unchanged.",
       "outcome": "failed_operational",
       "outcome_reason": "The server stopped before this run finished.",
-      "diagnosis": { "confirmed_gaps": [], "problem_sentences": [] },
+      "diagnosis": {
+        "confirmed_gaps": [],
+        "problem_sentences": []
+      },
       "assumptions": [],
       "failure": {
         "kind": "interrupted",
@@ -32,7 +37,14 @@
         "message": "The server stopped before this run finished."
       }
     },
-    "cost": { "total": 0.02 },
-    "timing": { "total_ms": 400 }
-  }
+    "cost": {
+      "total": 0.02
+    },
+    "timing": {
+      "total_ms": 400
+    }
+  },
+  "events": [],
+  "event_cursor": 0,
+  "remaining_active_ms": 149600
 }

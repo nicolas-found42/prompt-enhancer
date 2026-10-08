@@ -13,6 +13,7 @@ export type ClarificationQuestion = {
   options: ClarificationOption[];
   default?: string;
   default_answer?: string;
+  required_answer?: boolean;
   allow_other?: boolean;
   other_value?: string;
 };
@@ -46,10 +47,12 @@ export function ClarificationPanel({
       Object.fromEntries(
         questions.map((question) => [
           question.id,
-          question.default ??
-            question.default_answer ??
-            question.options[0]?.value ??
-            "",
+          question.required_answer
+            ? ""
+            : (question.default ??
+              question.default_answer ??
+              question.options[0]?.value ??
+              ""),
         ])
       ),
     [questions]
@@ -58,6 +61,10 @@ export function ClarificationPanel({
   const [otherText, setOtherText] = useState<Record<string, string>>({});
   const [localErrors, setLocalErrors] = useState<Record<string, string>>({});
   const otherInputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const firstOptions = useRef<Record<string, HTMLInputElement | null>>({});
+  const hasRequiredAnswer = questions.some(
+    (question) => question.required_answer
+  );
 
   useEffect(() => {
     if (validationError) {
@@ -80,6 +87,22 @@ export function ClarificationPanel({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    const unanswered = questions.filter(
+      (question) => question.required_answer && !answers[question.id]
+    );
+    if (unanswered.length > 0) {
+      setLocalErrors(
+        Object.fromEntries(
+          unanswered.map((question) => [
+            question.id,
+            "Choose an answer to resolve this conflict.",
+          ])
+        )
+      );
+      const firstUnanswered = unanswered[0];
+      if (firstUnanswered) firstOptions.current[firstUnanswered.id]?.focus();
+      return;
+    }
     const invalidOtherQuestions = questions.filter((question) => {
       const answer = answers[question.id];
       const value = typeof answer === "string" ? answer : answer?.value;
@@ -132,8 +155,9 @@ export function ClarificationPanel({
       <h2 id="clarification-heading">A few details will improve the result</h2>
       <p>
         Choose the closest answer. (recommended) marks the option we suggest.
-        Choose Skip to carry on with assumptions &mdash; sensible defaults the
-        app fills in for the details you have not given.
+        {hasRequiredAnswer
+          ? " Conflicting requirements need your explicit choice before the run can continue."
+          : " Choose Skip to carry on with assumptions — sensible defaults the app fills in for the details you have not given."}
       </p>
       <form onSubmit={submit}>
         {questions.map((question) => {
@@ -146,13 +170,26 @@ export function ClarificationPanel({
               <legend>{question.prompt}</legend>
               {question.options
                 .filter((option) => !option.other)
-                .map((option) => (
+                .map((option, index) => (
                   <label key={option.value}>
                     <input
                       type="radio"
                       name={question.id}
                       value={option.value}
                       checked={selectedValue === option.value}
+                      ref={
+                        index === 0
+                          ? (input) => {
+                              firstOptions.current[question.id] = input;
+                            }
+                          : undefined
+                      }
+                      aria-invalid={Boolean(localErrors[question.id])}
+                      aria-describedby={
+                        localErrors[question.id]
+                          ? `clarification-error-${question.id}`
+                          : undefined
+                      }
                       onChange={() => setAnswer(question.id, option.value)}
                     />
                     {option.label}
@@ -230,7 +267,7 @@ export function ClarificationPanel({
           className="secondary"
           type="button"
           onClick={skip}
-          disabled={busy}
+          disabled={busy || hasRequiredAnswer}
         >
           Skip
         </button>

@@ -17,9 +17,11 @@ ORIGINAL = "whats 2 plus 2"
 FINAL = "What is 2 + 2?"
 
 
-def _client(gateway):
+def _client(gateway, *, writer_instruction_version=4):
     optimizer = PromptOptimizer(
-        gateway=gateway, store=RunStore(":memory:"), writer_instruction_version=4
+        gateway=gateway,
+        store=RunStore(":memory:"),
+        writer_instruction_version=writer_instruction_version,
     )
     return TestClient(create_app(optimizer=optimizer))
 
@@ -30,17 +32,17 @@ def _assert_history_matches(client, result, expected, style):
     for field in ("outcome", "outcome_reason", "applied_style", "control_state"):
         assert detail.get(field) == report.get(field), field
     assert report["outcome"] == expected
-    assert report["outcome_reason"]
+    assert bool(report["outcome_reason"]) is (expected is not None)
     assert report["applied_style"] == style
     return detail
 
 
-@pytest.mark.parametrize("kind", ["converged", "impossible", "failed_operational"])
+@pytest.mark.parametrize("kind", ["converged", "exact_output", "failed_operational"])
 def test_public_result_and_history_agree_on_terminal_outcome(kind):
     prompt, style = ORIGINAL, "clearer"
-    if kind == "impossible":
-        gateway = route_gateway()
+    if kind == "exact_output":
         prompt, style = 'Reply with exactly: "OK"', "creative"
+        gateway = route_gateway(default_candidate=prompt)
     else:
         gateway = improvement_gateway()
         if kind == "failed_operational":
@@ -54,7 +56,9 @@ def test_public_result_and_history_agree_on_terminal_outcome(kind):
                 return original_decide(request, **kwargs)
 
             gateway.decision_handler = fail_at_score
-    client = _client(gateway)
+    client = _client(
+        gateway, writer_instruction_version=15 if kind == "exact_output" else 4
+    )
     response = client.post(
         "/api/optimize",
         json={
@@ -65,7 +69,11 @@ def test_public_result_and_history_agree_on_terminal_outcome(kind):
     )
     assert response.status_code == 200, response.text
     result = response.json()
-    _assert_history_matches(client, result, kind, style)
+    _assert_history_matches(
+        client, result, None if kind == "exact_output" else kind, style
+    )
+    if kind == "exact_output":
+        assert result["report"]["control_state"] == "deadline_reached"
     if kind == "converged":
         assert result["final_prompt"] == FINAL
     else:
@@ -108,7 +116,10 @@ def _accepted_then_paused_gateway(*, tested):
 
 
 @pytest.mark.parametrize("tested", [False, True])
-def test_accepted_stop_keeps_outcome_and_feedback_but_pause_requires_approval(tested):
+def test_accepted_stop_keeps_outcome_and_feedback_but_pause_requires_approval(
+    tested, deterministic_active_clock
+):
+    deterministic_active_clock.step_per_round_s = 20.0
     client = _client(_accepted_then_paused_gateway(tested=tested))
     response = client.post(
         "/api/optimize",
@@ -166,7 +177,8 @@ def test_assumption_edit_invalidates_active_outcome_and_feedback_vector():
     )
     assert resumed_response.status_code == 200, resumed_response.text
     resumed = resumed_response.json()
-    _assert_history_matches(client, resumed, "converged", "clearer")
+    _assert_history_matches(client, resumed, None, "clearer")
+    assert resumed["report"]["control_state"] == "deadline_reached"
     edited_response = client.post(
         f"/api/runs/{initial['run_id']}/assumption",
         json={"assumption": {"key": "goal", "value": "Analyze"}},

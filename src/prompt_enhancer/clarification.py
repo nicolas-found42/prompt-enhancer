@@ -9,6 +9,7 @@ clarification replayable and keeps the HTTP and web surfaces thin.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -70,6 +71,7 @@ class ClarificationQuestion:
     options: tuple[ClarificationOption, ...]
     default_answer: str
     label: str | None = None
+    required_answer: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -81,6 +83,7 @@ class ClarificationQuestion:
             "default": self.default_answer,
             "allow_other": True,
             "other_value": OTHER_VALUE,
+            **({"required_answer": True} if self.required_answer else {}),
         }
 
     @property
@@ -287,6 +290,18 @@ def _selected_answer(question: ClarificationQuestion, answer: Any) -> str:
                 f"Answer for {question.id!r} requires other text",
                 question_id=question.id,
             )
+        if question.required_answer and question.id.startswith("conflict:"):
+            unit = question.id.removeprefix("conflict:").removesuffix("_count")
+            count = re.fullmatch(
+                rf"(?i)(?:(?:use|write) exactly )?(\d{{1,9}})(?: {unit}s?\.?)?",
+                text.strip(),
+            )
+            if count is None:
+                raise InvalidAnswerError(
+                    "Enter the exact count to use, or choose a count option.",
+                    question_id=question.id,
+                )
+            return f"Use exactly {int(count[1])} {unit}s."
         return text.strip()
     return matching[0].label
 
@@ -349,6 +364,11 @@ def skip_questions(
     assumptions = {item["key"]: dict(item) for item in state.get("assumptions", [])}
     for raw_question in state.get("questions", []):
         question = _question_from_dict(raw_question)
+        if question.required_answer:
+            raise InvalidAnswerError(
+                "This conflict needs an explicit answer before processing can continue.",
+                question_id=question.id,
+            )
         default = next(
             option.label
             for option in question.options
@@ -368,7 +388,10 @@ def skip_questions(
 def _question_from_dict(raw: Mapping[str, Any]) -> ClarificationQuestion:
     options = tuple(_option_from_mapping(item) for item in raw.get("options", []))
     default = str(raw.get("default_answer", ""))
-    if not any(option.value == default for option in options):
+    required = bool(raw.get("required_answer", False))
+    if not (required and default == "") and not any(
+        option.value == default for option in options
+    ):
         raise ClarificationError("Clarification question has an invalid default answer")
     return ClarificationQuestion(
         id=str(raw["id"]),
@@ -376,6 +399,7 @@ def _question_from_dict(raw: Mapping[str, Any]) -> ClarificationQuestion:
         options=options,
         default_answer=default,
         label=str(raw["label"]) if raw.get("label") else None,
+        required_answer=required,
     )
 
 
@@ -502,6 +526,10 @@ class ClarificationService:
     def skip(self, run_id: str) -> dict[str, Any]:
         state = self._load_paused(run_id)
         return self._finish(run_id, skip_questions(state))
+
+    def validate_skip(self, run_id: str) -> None:
+        """Reject a required conflict choice before admitting more work."""
+        skip_questions(self._load_paused(run_id))
 
 
 __all__ = [

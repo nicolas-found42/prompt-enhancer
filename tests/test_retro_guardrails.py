@@ -49,16 +49,19 @@ def test_sigterm_marks_interrupted_receipt_and_stops_child_group(tmp_path):
         assert receipt_status(before) == "active"
         assert before["checks"][0]["process"]["pid"] != runner.pid
         runner.send_signal(signal.SIGTERM)
-        assert runner.wait(timeout=8) != 0
+        # Drain the traceback while waiting: an undrained stderr pipe can fill
+        # before the interrupted Python process exits, especially on macOS.
+        _, stderr = runner.communicate(timeout=8)
+        assert runner.returncode != 0
         after = json.loads(receipt_path.read_text())
-        assert after["status"] == "interrupted", runner.stderr.read().decode()
+        assert after["status"] == "interrupted", stderr.decode()
         assert after["checks"][0]["status"] == "interrupted"
         with pytest.raises(ProcessLookupError):
             os.kill(before["checks"][0]["process"]["pid"], 0)
     finally:
         if runner.poll() is None:
             runner.kill()
-            runner.wait()
+            runner.communicate()
 
 
 def test_liveness_does_not_trust_reused_pid_or_legacy_receipt(monkeypatch):

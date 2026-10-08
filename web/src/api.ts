@@ -9,6 +9,7 @@ export type ClarificationQuestion = {
   }[];
   default?: string;
   default_answer?: string;
+  required_answer?: boolean;
   allow_other?: boolean;
   other_value?: string;
 };
@@ -134,6 +135,26 @@ export type OptimizeResult = {
 };
 
 export type JobRound = { round?: number };
+export type RunEvent = {
+  cursor: number;
+  kind: string;
+  summary: string;
+  elapsed_ms: number;
+  round: number | null;
+  stage?: string;
+  candidate_id?: string;
+  draft?: string;
+  diff?: string;
+  reasons?: string[];
+  checks?: {
+    requirement_id: string;
+    source: string;
+    tested: number;
+    failed: number;
+    untestable: number;
+    reasons: string[];
+  }[];
+};
 export type Job = {
   run_id: string;
   kind: "optimize" | "resume" | "skip" | "continue";
@@ -143,6 +164,9 @@ export type Job = {
   round: JobRound;
   stages_seen: string[];
   elapsed_ms: number;
+  remaining_active_ms?: number;
+  events?: RunEvent[];
+  event_cursor?: number;
   /** Accumulated provider cost in USD from the run's progress events. */
   cost_total?: number;
   cancel_requested: boolean;
@@ -341,8 +365,9 @@ export function stopRun(runId: string): Promise<OptimizeResult> {
   );
 }
 
-export function getJob(runId: string): Promise<Job> {
-  return requestJson<Job>(`/api/jobs/${encodeURIComponent(runId)}`);
+export function getJob(runId: string, afterCursor = 0): Promise<Job> {
+  const cursor = afterCursor > 0 ? `?after_cursor=${afterCursor}` : "";
+  return requestJson<Job>(`/api/jobs/${encodeURIComponent(runId)}${cursor}`);
 }
 
 export function getActiveJobs(): Promise<Job[]> {
