@@ -1,3 +1,5 @@
+import RequirementCoverage from "../RequirementCoverage";
+import { record } from "../outcome";
 import type { Job } from "../api";
 import { elapsedText, stageLabels } from "../outcome";
 
@@ -21,6 +23,21 @@ function spentText(costTotal: number | undefined): string | null {
 export default function RunProgress({ job, onCancel }: Props) {
   const round = job.round.round ? ` · round ${job.round.round}` : "";
   const spent = spentText(job.cost_total);
+  const coverageEvent = [...(job.events ?? [])]
+    .reverse()
+    .find((event) => event.requirements);
+  const selection = {
+    ranking: (job.events ?? [])
+      .filter((event) => event.checks?.length)
+      .map((event) => ({
+        candidate_id: `${event.round}:${event.candidate_id}:${event.cursor}`,
+        metadata: {
+          requirement_findings: event.checks?.flatMap(
+            (check) => check.evidence ?? []
+          ),
+        },
+      })),
+  };
   const cancellationPending = job.cancellation_pending ?? job.cancel_requested;
 
   return (
@@ -72,6 +89,7 @@ export default function RunProgress({ job, onCancel }: Props) {
                 · {elapsedText(event.elapsed_ms)}
                 {event.round ? ` · round ${event.round}` : ""}
               </small>
+              {event.candidate_id && <p>Draft {event.candidate_id}</p>}
               {event.draft && (
                 <details>
                   <summary>
@@ -104,7 +122,8 @@ export default function RunProgress({ job, onCancel }: Props) {
                         {check.tested} passed check
                         {check.tested === 1 ? "" : "s"}, {check.failed} failed
                         check{check.failed === 1 ? "" : "s"}, {check.untestable}{" "}
-                        untestable check{check.untestable === 1 ? "" : "s"}.
+                        untestable check{check.untestable === 1 ? "" : "s"},{" "}
+                        {check.unresolved ?? 0} unresolved checks.
                       </p>
                       {check.reasons.map((reason) => (
                         <p key={reason}>{reason}</p>
@@ -125,6 +144,13 @@ export default function RunProgress({ job, onCancel }: Props) {
           </li>
         )}
       </ol>
+      {coverageEvent && (
+        <RequirementCoverage
+          live
+          ledger={record(coverageEvent.requirements)}
+          selection={selection}
+        />
+      )}
       <p className="progress-note">
         You can leave this page open or come back later. The run keeps going and
         will show up in History.

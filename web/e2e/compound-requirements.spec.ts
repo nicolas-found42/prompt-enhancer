@@ -48,3 +48,54 @@ test("a scoped hard conflict survives reload and preserves its source ledger in 
       .getByText(prompt)
   ).toBeVisible();
 });
+
+test("compound JSON coverage preserves protected types, chronology and keyboard access after reload", async ({
+  page,
+}, testInfo) => {
+  const prompt =
+    "Read the article, then Return JSON containing title as a string and items as an array of strings.";
+  await page.goto("/");
+  await page.getByLabel("Your prompt").fill(prompt);
+  await page.getByRole("button", { name: "Optimize prompt" }).click();
+  await page.getByText("View report", { exact: true }).click();
+  const coverage = page.getByRole("region", { name: "Requirement coverage" });
+  await expect(
+    coverage.getByText(/Protected values: items, title/)
+  ).toBeVisible();
+  await expect(
+    coverage.getByText(/Source interpretation audit passed/)
+  ).toBeVisible();
+  await expect(
+    coverage.getByText(/Selected draft: .*passed checks/)
+  ).toBeVisible();
+  const summary = coverage.locator("summary").filter({ hasText: "Round 1:" });
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    coverage
+      .getByText(/The answer satisfies the declared JSON contract/)
+      .first()
+  ).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.screenshot({
+    path: testInfo.outputPath("compound-json-coverage.png"),
+    fullPage: true,
+  });
+  await page.reload();
+  await expect(
+    page
+      .getByRole("list", { name: "Saved optimization runs" })
+      .getByText(prompt)
+  ).toBeVisible();
+  await page
+    .getByRole("list", { name: "Saved optimization runs" })
+    .getByText(prompt)
+    .click();
+  await page.getByRole("button", { name: "Open this result" }).click();
+  await page.getByText("View report", { exact: true }).click();
+  await expect(
+    page
+      .getByRole("region", { name: "Requirement coverage" })
+      .getByText(/Protected values: items, title/)
+  ).toBeVisible();
+});

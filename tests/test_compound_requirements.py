@@ -23,6 +23,8 @@ def compound_gateway(prompt, obligations, *, output="4", candidate=None, audit=0
         return chat(model, messages, **params)
 
     def scripted_decision(request, **params):
+        if str(request.get("key", "")).startswith("requirement:semantic:"):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
         if str(request.get("key", "")).startswith("requirements:audit:conflict:"):
             return {"type": "noul", "probability_true": 0.01, "confidence": 1.0}
         if str(request.get("key", "")).startswith("requirements:audit:"):
@@ -299,6 +301,8 @@ def test_non_count_conflict_choice_never_supersedes_an_unrelated_request():
     decide = gateway.decision_handler
 
     def conflict(request, **params):
+        if str(request.get("key", "")).startswith("requirement:semantic:"):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
         if str(request.get("key", "")).startswith("requirements:audit:conflict:"):
             sources = [item["source"] for item in request["state"]["requirements"]]
             return {
@@ -556,6 +560,8 @@ def test_same_scope_conflicts_are_audited_across_mechanical_and_semantic_kinds()
     decide = gateway.decision_handler
 
     def conflict(request, **params):
+        if str(request.get("key", "")).startswith("requirement:semantic:"):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
         if str(request.get("key", "")).startswith("requirements:audit:conflict:"):
             return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
         return decide(request, **params)

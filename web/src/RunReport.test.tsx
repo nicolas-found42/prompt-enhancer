@@ -988,3 +988,77 @@ it("explains section scope and a source requirement superseded by an explicit an
     within(coverage).getByText(/Superseded by your explicit choice/)
   ).toBeVisible();
 });
+
+it("retains protected values, unresolved checks and prior-round draft evidence without interpreting HTML", () => {
+  render(
+    <RunReport
+      result={{
+        ...baseResult,
+        report: {
+          requirements: {
+            coverage: "partial",
+            requirements: [
+              {
+                id: "r1",
+                source: "Preserve <script>bad()</script>.",
+                scope: "candidate_prompt",
+                protected_values: ["TOKEN"],
+                audit: { status: "unresolved" },
+              },
+            ],
+            gaps: [{ reason: "Unsupported source scope." }],
+          },
+          selection_evidence: {
+            selected_candidate: {
+              candidate_id: "c1",
+              metadata: {
+                requirement_findings: [
+                  {
+                    requirement_id: "r1",
+                    status: "unresolved",
+                    reason: "Semantic judgment uncertain.",
+                  },
+                ],
+              },
+            },
+          },
+          history: [
+            {
+              round_number: 1,
+              evidence: {
+                selection_evidence: {
+                  ranking: [
+                    {
+                      candidate_id: "old",
+                      text: "Rejected text",
+                      metadata: {
+                        requirement_findings: [
+                          {
+                            requirement_id: "r1",
+                            status: "failed",
+                            reason: "TOKEN was removed.",
+                            model: "weak-a",
+                            sample: 2,
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      }}
+    />
+  );
+  const coverage = screen.getByRole("region", { name: "Requirement coverage" });
+  expect(within(coverage).getByText(/Protected values: TOKEN/)).toBeVisible();
+  expect(within(coverage).getByText(/1 unresolved check/)).toBeVisible();
+  expect(
+    within(coverage).getByText("Preserve <script>bad()</script>.")
+  ).toBeVisible();
+  expect(coverage.querySelector("script")).toBeNull();
+  expect(within(coverage).getByText(/Round 1/)).toBeVisible();
+  expect(within(coverage).getByText(/TOKEN was removed/)).toBeInTheDocument();
+});

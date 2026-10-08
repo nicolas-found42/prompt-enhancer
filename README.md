@@ -261,11 +261,40 @@ accounting behavior follows the
 [OpenRouter streaming documentation](https://openrouter.ai/docs/api_reference/streaming)
 and [SSE parsing rules](https://html.spec.whatwg.org/multipage/server-sent-events.html#parsing-an-event-stream).
 
-Native requirement evidence includes conservative whole-answer JSON validity,
-explicit top-level JSON key/type declarations, and explicit comma-delimited CSV
-headers with matching record width. Values and row counts remain unconstrained when
-the source leaves them open. Duplicate applicable JSON keys and unsupported
-parser conventions retain uncertainty. An explicit
+Native requirement evidence checks compound JSON declarations with explicitly required
+keys and types, nested object type maps, and array element types. Unless the source
+says `exactly these keys`, additional keys remain permitted. Values and array lengths
+remain unconstrained. Duplicate applicable keys fail these bindings; duplicate
+undeclared keys, byte-order marks and unsupported schemas retain uncertainty. The
+historical whole-answer grammar keeps its original duplicate-key convention.
+Compound CSV declarations check their explicit header, record width and optional
+`exactly N data rows` separately from the header. Comma-, semicolon- and tab-delimited
+forms honor quoted fields; unsupported dialects and ambiguous blank-record
+conventions remain untestable. Rewritten declarations receive separate binding
+checks so compliant sampled answers cannot hide changed declarations.
+
+Audited semantic obligations receive separate Jev judgments for the rewritten
+prompt and each model/sample answer. Raw typed decisions, source spans, Round and
+candidate identities stay in the report. A confident failure or unresolved judgment
+cannot qualify a draft. Semantic passes never erase deterministic failures. This
+records judgment uncertainty; it does not establish semantic or sentence calibration.
+Rejected proposed success tests retain their source associations and screening
+reasons. The engine may generate one replacement batch in a Round and screen it
+again within the remaining active deadline. The original obligation remains active
+when proposals are rejected or no usable binding is found. Losing drafts pass their
+own source failure IDs, offending evidence and text to the next Round's writer;
+repairs receive fresh panel and requirement checks before qualification.
+
+The live workbench and history show obligation sources, scopes, protected values,
+audit status, coverage gaps and draft findings with expandable Round chronology.
+Run the controlled public-flow checks with
+`uv run --locked python scripts/check_requirement_contract.py --output .local/requirement-controls/<new-name> --timeout 600`.
+The command retains a receipt, source and test digests, logs, test results and SQLite
+histories, and fails on timeout, skipped controls or a changed source snapshot.
+These controlled checks do not constitute a live provider evaluation or completion
+of the parent issue #187.
+
+An explicit
 `Do not change any character in the supplied code:` line (using `data` for data)
 followed by a top-level fenced block protects its literal
 contents in a rewrite. The checker permits fence presentation changes that

@@ -523,6 +523,10 @@ class RunJobs:
                             "reasons",
                             "stage",
                             "checks",
+                            "test_screening",
+                            "requirements",
+                            "repair_of",
+                            "requirement_evidence",
                             "comparison",
                         )
                         if key in round_info
