@@ -478,9 +478,9 @@ class PromptOptimizer:
         return SQLiteClarificationRepository(self.store.path)
 
     def _run_settings(self, options: Mapping[str, Any]) -> Settings:
-        overrides = options.get("model_overrides") or {}
+        overrides = options.get("model_overrides", {})
         if not isinstance(overrides, Mapping):
-            raise TypeError("model_overrides must be a mapping")
+            raise ValueError("model_overrides must be a mapping")
         profile = options.get("evaluation_profile", self.config.evaluation_profile)
         if profile is not None:
             if overrides:
@@ -510,9 +510,9 @@ class PromptOptimizer:
             selected_weak = self.config.weak_models
         if (
             not isinstance(writer, str)
-            or not writer
+            or not writer.strip()
             or not isinstance(strong, str)
-            or not strong
+            or not strong.strip()
         ):
             raise ValueError("writer and strong model overrides must be model IDs")
         if isinstance(selected_weak, str):
@@ -520,7 +520,9 @@ class PromptOptimizer:
         if (
             not isinstance(selected_weak, (list, tuple))
             or not selected_weak
-            or any(not isinstance(item, str) or not item for item in selected_weak)
+            or any(
+                not isinstance(item, str) or not item.strip() for item in selected_weak
+            )
         ):
             raise ValueError("weak model overrides must be a non-empty list")
         count = self.config.weak_model_count
@@ -549,6 +551,10 @@ class PromptOptimizer:
         if unknown_options:
             names = ", ".join(sorted(unknown_options))
             raise ValueError(f"unknown run option(s): {names}")
+        if "clarification_allowed" in supplied_options and not isinstance(
+            supplied_options["clarification_allowed"], bool
+        ):
+            raise ValueError("clarification_allowed must be a boolean")
         overrides = supplied_options.get("model_overrides")
         if isinstance(overrides, Mapping):
             unknown_overrides = set(overrides).difference(MODEL_OVERRIDE_KEYS)
@@ -2736,7 +2742,7 @@ def _prompt_with_assumptions(
             continue
         if key and value:
             lines.append(
-                f"{item.get('label') if key.startswith(('requirement:', 'conflict:')) else _clarification_label(key, item.get('source'))}: {value}"
+                f"{item.get('label') if key.startswith(('requirement:', 'conflict:', 'choice:')) else _clarification_label(key, item.get('source'))}: {value}"
             )
     if not lines:
         return prompt

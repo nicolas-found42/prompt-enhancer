@@ -12,7 +12,9 @@ uv run --locked python scripts/run_validation.py --output .local/validation/fina
 ```
 
 The runner reads hook IDs from `.pre-commit-config.yaml`, runs all fast hooks
-first, then build and test hooks, and stops at the first failure. Every command
+first, then the bounded CPU and browser phases described in the
+[validation workflow](validation.md#local-throughput). A failing check stops
+unfinished peers; all configured checks must pass for completion. Every command
 uses pre-commit's existing all-file scope and verbose output. A formatter change
 ends that run; inspect, stage, and rerun before expensive checks. Source changes
 during a run invalidate its completion receipt.
@@ -34,7 +36,9 @@ other checks cannot produce a final validation receipt.
 
 Receipts include runner PID/start identity, host, child process identity and a
 heartbeat updated while waiting for a check. SIGINT/SIGTERM stop the child process
-group and retain an `interrupted` receipt. A hard kill cannot update the file;
+groups and retain an `interrupted` receipt. Graceful interruption gives test
+runners an opportunity to close their detached fixture services before
+termination escalates. A hard kill cannot update the file;
 inspect it without rewriting the original evidence:
 
 ```sh

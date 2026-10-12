@@ -1292,3 +1292,92 @@ test("a first run can use the provider fallback without opening model choices", 
     "or-strong"
   );
 });
+
+test("reload restores this tab's result while another run is active", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "my-result", at: Date.now() })
+    );
+  });
+  const mine = {
+    ...completedBase,
+    run_id: "my-result",
+    report: { status: "optimized", assumptions: [], summary: "Saved result." },
+    original_prompt: "My saved prompt.",
+    final_prompt: "My saved result.",
+  };
+  const other = job("other-run", "running", null, {
+    prompt: "Another tab's prompt.",
+  });
+  await page.route("**/api/jobs", (route) => route.fulfill({ json: [other] }));
+  await page.route("**/api/jobs/other-run", (route) =>
+    route.fulfill({ json: other })
+  );
+  await page.route("**/api/runs/my-result", (route) =>
+    route.fulfill({ json: { run_id: "my-result", result: mine } })
+  );
+  await page.goto("/");
+  await expect(page.locator(".final-prompt")).toHaveText("My saved result.");
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toHaveCount(0);
+});
+
+test("restoring and opening the same run share an unfinished detail read", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "shared-result", at: Date.now() })
+    );
+  });
+  const result = {
+    ...completedBase,
+    run_id: "shared-result",
+    report: { status: "optimized", assumptions: [], summary: "Shared result." },
+    original_prompt: "Shared saved prompt.",
+    final_prompt: "Shared saved result.",
+  };
+  const detail = {
+    run_id: result.run_id,
+    prompt: result.original_prompt,
+    status: "completed",
+    created_at: "2026-10-12T12:00:00Z",
+    result,
+  };
+  let reads = 0;
+  let signalStarted!: () => void;
+  let releaseRead!: () => void;
+  const started = new Promise<void>((resolve) => {
+    signalStarted = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    releaseRead = resolve;
+  });
+  await page.route("**/api/runs?*", (route) =>
+    route.fulfill({ json: [detail] })
+  );
+  await page.route("**/api/runs/shared-result", async (route) => {
+    reads += 1;
+    signalStarted();
+    await released;
+    await route.fulfill({ json: detail });
+  });
+  await page.goto("/");
+  await started;
+  await page
+    .getByRole("list", { name: "Saved optimization runs" })
+    .getByRole("button")
+    .filter({ hasText: result.original_prompt })
+    .click();
+  releaseRead();
+  await expect(
+    page.getByRole("heading", { name: "Run details" })
+  ).toBeVisible();
+  await expect(page.locator(".final-prompt")).toHaveText(result.final_prompt);
+  expect(reads).toBe(1);
+});

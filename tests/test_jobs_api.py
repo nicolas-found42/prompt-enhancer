@@ -424,7 +424,16 @@ def test_concurrent_cancel_save_cannot_overwrite_a_terminal_job(tmp_path) -> Non
             terminal_saved.set()
         return result
 
+    original_update_job = store.update_job
+
+    def controlled_job_update(run_id, job):
+        if threading.current_thread().name == "stale-cancel":
+            stale_ready.set()
+            assert release_stale.wait(5)
+        return original_update_job(run_id, job)
+
     store.save_run = controlled_save
+    store.update_job = controlled_job_update
 
     def work(progress, cancel_check, _observe_operation):
         progress("writing_tests", {"round": 1})
@@ -750,7 +759,18 @@ def test_job_status_and_cancel_signal_do_not_wait_for_sqlite_io(tmp_path, operat
             assert release_write.wait(5)
         return save(record)
 
+    update_job = store.update_job
+
+    def slow_job_write(run_id, job):
+        if (job.get("operation") or {}).get(
+            "operation"
+        ) == "held-write" and not writing.is_set():
+            writing.set()
+            assert release_write.wait(5)
+        return update_job(run_id, job)
+
     store.save_run = slow_operation_write
+    store.update_job = slow_job_write
 
     def work(_progress, cancel_check, observe):
         observe({"event": "start", "operation": "held-write"})

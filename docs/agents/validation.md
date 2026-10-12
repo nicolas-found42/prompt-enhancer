@@ -17,8 +17,8 @@ versions when deciding which checks apply.
    `uv run --locked pre-commit install`.
 3. Validate the final implementation with
    `uv run --locked python scripts/run_validation.py --output .local/validation/<run-name>`.
-   This runs every configured hook, finishes fast checks before build/tests, and
-   saves successful output as well as failures. Use a new run directory each time;
+   This runs every configured hook through the bounded scheduling described below
+   and saves successful output as well as failures. Use a new run directory each time;
    see [validation receipts](validation-receipts.md). A successful commit-hook run covers
    the staged-file checks and its always-run project checks; check any remaining
    unstaged implementation separately. Reuse successful results for unchanged
@@ -92,3 +92,30 @@ In the final handoff, report local checks performed and their results, remote CI
 status for the relevant commit, Jev review status when applicable, and any
 remaining validation gaps. Include enough evidence to distinguish a passed check
 from a check that was not run.
+
+## Local throughput
+
+Use the receipt runner for a complete local validation result. The configuration
+owns the limits: up to six local pytest-xdist workers with worksteal scheduling,
+two Vitest workers, and four local Chromium workers (one in CI). Worker flags
+belong on the top-level hook, not global pytest addopts or nested scripts.
+`uv run --locked pytest -q -n0` runs serially for debugging.
+
+Guard and formatting hooks run serially, followed by read-only fast hooks in
+batches of four. Build, Vitest, and Python coverage then overlap within those
+limits. Chromium runs afterward, alone: overlapping browser assertions with
+other CPU-heavy checks caused observed failures at their existing deadlines.
+Receipts retain each result and stop unfinished owned process groups on failure.
+An interrupted or partial run cannot become a complete receipt.
+
+Combined Python coverage retains the 80% floor. Existing Python 3.12+ supports
+sys.monitoring line coverage; incompatible branch/context settings or older
+Python fall back with a warning. Coverage plugins require the CTracer core.
+
+The measured full pipeline took 92.052 and 92.149 seconds on the documented local
+environment with installed locked dependencies. Use receipt wall time rather
+than summing overlapping check durations. Re-measure after changes that could
+invalidate throughput; dependency setup, slower platforms, and arbitrary external
+load are outside that timing claim. Investigate a measured bottleneck before
+raising worker counts, adding tools, or changing phase boundaries. Preserve the
+full case inventory, coverage floor, and assertions in performance comparisons.

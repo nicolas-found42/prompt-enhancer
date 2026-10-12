@@ -24,8 +24,11 @@ content checks rather than model inference.
    with their relevant tests, helpers, and trusted contracts. Inspect the selected
    evidence and budgets. If the task ends with uncommitted changes, report that
    this tool has not reviewed them; its input is Git commits, not the working tree.
-4. **Use the appropriate inference mode.** Honor existing authorization for live
-   inference in the task. When authorized, use `lint --live` and, for applicable
+4. **Use the appropriate inference mode.** Honor the current authorization for
+   live inference in the task. A no-live-provider/model restriction includes
+   development Jev/TypeSafe MCP calls and overrides earlier permission. Use
+   offline planning or existing recordings, and report missing live judgment
+   coverage rather than claiming fresh model approval. When authorized, use `lint --live` and, for applicable
    Gateway or candidate findings, `run --live`. Otherwise use offline planning or
    an applicable recording. A dry run, replay, missing key, or partial review must
    be identified as such. Follow the limits below; narrow scope or report omitted

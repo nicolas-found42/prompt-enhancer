@@ -3,6 +3,7 @@
 import argparse
 import os
 import shlex
+import time
 from pathlib import Path
 
 import yaml
@@ -23,6 +24,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     repo = args.repo.resolve()
+    started = time.monotonic()
     receipt = Receipt(
         args.output.resolve(),
         kind="validation",
@@ -47,27 +49,69 @@ def main() -> int:
                 skipped_hooks=skipped,
             )
             receipt.save()
-            for stage, selected in [
-                ("fast", [name for name in hooks if name not in EXPENSIVE]),
-                ("tests", [name for name in hooks if name in EXPENSIVE]),
-            ]:
-                for name in selected:
-                    print(f"{stage}: {name}", flush=True)
-                    env = dict(os.environ)
-                    if name == "python-tests":
-                        report = receipt.output / "pytest.xml"
-                        env["PYTEST_ADDOPTS"] = (
-                            f"{env.get('PYTEST_ADDOPTS', '')} "
-                            + shlex.join(["--durations=10", f"--junitxml={report}"])
+            # Mutating fixers run before readers; bound independent fast checks
+            # to four processes so tool startup does not serialize the pipeline.
+            serial = {
+                "no-commit-to-branch",
+                "python-lint-staged",
+                "python-format",
+                "web-format",
+                "web-lint-staged",
+            }
+            for name in hooks:
+                if name not in serial:
+                    continue
+                print(f"fast: {name}", flush=True)
+                receipt.run(
+                    name,
+                    [args.pre_commit, "run", name, "--all-files", "--verbose"],
+                    cwd=repo,
+                )
+                receipt.value["checks"][-1]["stage"] = "fast"
+                receipt.save()
+            readers = [
+                name for name in hooks if name not in EXPENSIVE and name not in serial
+            ]
+            for start in range(0, len(readers), 4):
+                batch = readers[start : start + 4]
+                for name in batch:
+                    print(f"fast: {name}", flush=True)
+                receipt.run_many(
+                    [
+                        (
+                            name,
+                            [args.pre_commit, "run", name, "--all-files", "--verbose"],
+                            None,
                         )
-                    receipt.run(
-                        name,
-                        [args.pre_commit, "run", name, "--all-files", "--verbose"],
-                        cwd=repo,
-                        env=env,
+                        for name in batch
+                    ],
+                    cwd=repo,
+                )
+                for check in receipt.value["checks"]:
+                    check["stage"] = "fast"
+                receipt.save()
+            commands: list[tuple[str, list[str], dict | None]] = []
+            for name in hooks:
+                if name not in EXPENSIVE:
+                    continue
+                print(f"tests: {name}", flush=True)
+                env = dict(os.environ)
+                if name == "python-tests":
+                    report = receipt.output / "pytest.xml"
+                    env["PYTEST_ADDOPTS"] = (
+                        f"{env.get('PYTEST_ADDOPTS', '')} "
+                        + shlex.join(["--durations=10", f"--junitxml={report}"])
                     )
-                    receipt.value["checks"][-1]["stage"] = stage
-                    receipt.save()
+                command = [args.pre_commit, "run", name, "--all-files", "--verbose"]
+                commands.append((name, command, env))
+            cpu_checks = [item for item in commands if item[0] != "web-tests"]
+            browsers = [item for item in commands if item[0] == "web-tests"]
+            receipt.run_many(cpu_checks, cwd=repo)
+            receipt.run_many(browsers, cwd=repo)
+            for check in receipt.value["checks"]:
+                if check["name"] in EXPENSIVE:
+                    check["stage"] = "tests"
+            receipt.value["duration_seconds"] = round(time.monotonic() - started, 3)
             if worktree_digest(repo) != receipt.value["source_digest"]:
                 raise ValueError(
                     "source changed during validation; inspect changes and rerun"

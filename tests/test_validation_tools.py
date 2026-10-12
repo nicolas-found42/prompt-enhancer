@@ -375,3 +375,163 @@ def test_invalid_dependency_is_bounded_rejection(repo, tmp_path, name):
     )
     assert "Traceback" not in result.stderr
     assert not output.exists()
+
+
+def test_validation_runs_independent_test_checks_together_after_fast_checks(
+    repo, tmp_path
+):
+    (repo / ".pre-commit-config.yaml").write_text("""repos:
+  - repo: local
+    hooks:
+      - id: python-tests
+      - id: web-tests
+      - id: web-unit-tests
+      - id: python-format
+""")
+    tool = tmp_path / "parallel-pre-commit"
+    tool.write_text(f"""#!{sys.executable}
+import pathlib,sys,time
+root=pathlib.Path.cwd()/'.local'/'sync';root.mkdir(parents=True,exist_ok=True);name=sys.argv[2]
+if name == 'python-format':
+    (root/'fast-done').write_text('done')
+elif name == 'web-tests':
+    assert len(list(root.glob('finished-*'))) ==2
+else:
+    assert (root/'fast-done').exists()
+    (root/('started-'+name)).write_text('started')
+    end=time.monotonic()+3
+    while len(list(root.glob('started-*'))) !=2:
+        assert time.monotonic()<end, 'test checks were serialized'
+        time.sleep(.01)
+    (root/('finished-'+name)).write_text('done')
+print(name+' completed')
+""")
+    tool.chmod(0o755)
+    output = tmp_path / "parallel-checks"
+    result = command(
+        [
+            sys.executable,
+            str(SCRIPTS / "run_validation.py"),
+            "--repo",
+            str(repo),
+            "--pre-commit",
+            str(tool),
+            "--output",
+            str(output),
+        ]
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    receipt = json.loads((output / "receipt.json").read_text())
+    assert receipt["status"] == "complete"
+    assert [c["name"] for c in receipt["checks"]] == [
+        "python-format",
+        "python-tests",
+        "web-unit-tests",
+        "web-tests",
+    ]
+    assert all(c["status"] == "passed" for c in receipt["checks"])
+    assert all(
+        "completed" in (output / c["log"]).read_text() for c in receipt["checks"]
+    )
+
+
+def test_failed_parallel_check_stops_the_other_owned_group(repo, tmp_path):
+    (repo / ".pre-commit-config.yaml").write_text("""repos:
+  - repo: local
+    hooks:
+      - id: web-unit-tests
+      - id: python-tests
+""")
+    tool = tmp_path / "failing-pre-commit"
+    tool.write_text(f"""#!{sys.executable}
+import os,pathlib,sys,time
+root=pathlib.Path.cwd()/'.local'/'sync';root.mkdir(parents=True,exist_ok=True);name=sys.argv[2]
+(root/('pid-'+name)).write_text(str(os.getpid()))
+end=time.monotonic()+3
+while len(list(root.glob('pid-*'))) !=2:
+    assert time.monotonic()<end
+    time.sleep(.01)
+if name == 'web-unit-tests':
+    print('intentional failure',flush=True)
+    sys.exit(7)
+time.sleep(60)
+""")
+    tool.chmod(0o755)
+    output = tmp_path / "parallel-failure"
+    result = command(
+        [
+            sys.executable,
+            str(SCRIPTS / "run_validation.py"),
+            "--repo",
+            str(repo),
+            "--pre-commit",
+            str(tool),
+            "--output",
+            str(output),
+        ]
+    )
+    assert result.returncode == 1
+    receipt = json.loads((output / "receipt.json").read_text())
+    assert receipt["status"] == "failed"
+    assert [(c["name"], c["status"]) for c in receipt["checks"]] == [
+        ("web-unit-tests", "failed"),
+        ("python-tests", "interrupted"),
+    ]
+    assert receipt["checks"][0]["exit_code"] == 7
+    assert "intentional failure" in (output / receipt["checks"][0]["log"]).read_text()
+    import signal
+
+    pid = int((repo / ".local" / "sync" / "pid-python-tests").read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, signal.SIGCONT)
+
+
+def test_parallel_interrupt_allows_runner_to_close_detached_service(tmp_path):
+    sys.path.insert(0, str(SCRIPTS))
+    from validation.receipts import Receipt
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    marker = root / "child"
+    peer = root / "peer.py"
+    peer.write_text(
+        "import pathlib,subprocess,sys,time\n"
+        "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(60)'],start_new_session=True)\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid))\n"
+        "try: time.sleep(60)\n"
+        "finally: child.terminate(); child.wait(timeout=3)\n"
+    )
+    fail = root / "fail.py"
+    fail.write_text(
+        "import pathlib,sys,time\n"
+        "end=time.monotonic()+3\n"
+        "while not pathlib.Path(sys.argv[1]).exists():\n"
+        " assert time.monotonic()<end\n"
+        " time.sleep(.01)\n"
+        "sys.exit(7)\n"
+    )
+    receipt = Receipt(
+        root / "receipt", kind="validation", phase="reproduction", sha="fixture"
+    )
+    try:
+        with pytest.raises(RuntimeError):
+            receipt.run_many(
+                [
+                    ("service", [sys.executable, str(peer), str(marker)], None),
+                    ("failure", [sys.executable, str(fail), str(marker)], None),
+                ],
+                cwd=root,
+            )
+        child_pid = int(marker.read_text())
+        with pytest.raises(ProcessLookupError):
+            os.kill(child_pid, 0)
+        assert [c["status"] for c in receipt.value["checks"]] == [
+            "interrupted",
+            "failed",
+        ]
+    finally:
+        if marker.exists():
+            try:
+                os.kill(int(marker.read_text()), 15)
+            except ProcessLookupError:
+                pass

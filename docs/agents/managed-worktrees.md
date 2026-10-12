@@ -21,7 +21,12 @@ similar directory name. Include these fields beside remaining delivery work:
 ```
 
 Preserve needed ignored artifacts before archive and verify the manifest against
-the external copy. Use `archive_worktree` for app-managed worktrees; the app's
+the external copy. For a teardown, retain failed experiments, raw judgments,
+profiles, traces, fixtures, and final receipts as well as successful summaries.
+Store them outside the worktree and primary checkout; record relative paths,
+file sizes and SHA-256 hashes, plus symlink targets. Preserve existing artifacts
+in place and use a new destination. A PR description should name the durable
+location and distinguish local evidence from reviewer-accessible CI artifacts. Use `archive_worktree` for app-managed worktrees; the app's
 ownership check determines which chat can do it. If another chat owns the
 attachment, prepare its bounded cleanup request after preservation. Sending
 that request requires explicit user authorization. Carry that authorization

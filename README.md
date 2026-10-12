@@ -61,6 +61,20 @@ should use the job endpoints. Synchronous callers can set `time_limit_s` or
 `spend_limit_usd` explicitly to pause at a completed-round boundary. Limits are
 optional, and a healthy run has no automatic attempt or stagnation cap.
 
+Run limits must be finite, nonnegative JSON numbers; booleans and numeric strings
+are rejected. `clarification_allowed` must be a JSON boolean when supplied in
+`options`, or a boolean or `null` at the top level (`null` leaves it unspecified).
+`model_overrides` must be an object with valid model IDs. Top-level overrides
+merge over those in `options`. Invalid requests return HTTP 422 before starting
+a job, storing a run, or making model calls.
+
+History search inspects every saved native SQLite run before applying its result
+limit, including prompts, metadata, and stored evidence. The Python history
+interface paginates that complete snapshot; the underlying `RunStore.list_runs`
+remains bounded to 200 records. Injected legacy stores without `all_runs` retain
+their own listing limits. Complete history search uses memory proportional to
+the saved history, so very large local databases may need an indexed search path.
+
 Each Gateway operation has a separate 180-second deadline by default. Set
 `PROMPT_ENHANCER_OPERATION_TIMEOUT` to change this limit in seconds. The
 deadline covers model-catalog routing, the provider request, retries, and retry
@@ -294,3 +308,8 @@ the measured results, exact denominators, and remaining evidence limits. The
 [gap cutoff recalibration](docs/gap-cutoff-recalibration-2026-09-24.md) records
 why the tool now asks more readily and what the version 2 writer measured.
 Source prompts and provider recordings stay in ignored `.local/evaluation/`.
+
+Progress snapshots are persisted separately from model evidence in SQLite. Existing
+databases migrate on open; history and detail responses retain the same evidence
+fields. Reloading a tab restores its recent saved result before discovering other
+active runs, while tabs without a saved result can still join a running job.

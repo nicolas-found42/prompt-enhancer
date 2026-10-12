@@ -198,10 +198,21 @@ class RunJobs:
             elif job.state == "done" and job.result is not None:
                 # Optimizer usually saved its canonical result already. Keep any
                 # richer record it wrote; generic jobs still get a durable result.
-                if (
-                    needs_result
-                    or (job.result.get("report") or {}).get("control_state")
+                saved_report = (
+                    saved_result.get("report")
+                    if isinstance(saved_result, Mapping)
+                    else None
+                )
+                edited = (
+                    isinstance(saved_report, Mapping)
+                    and saved_report.get("status") == "edited"
+                )
+                if needs_result or (
+                    (job.result.get("report") or {}).get("control_state")
                     == "deadline_reached"
+                    # A later assumption edit supersedes this execution result.
+                    # Worker cleanup must not publish its old prompt over it.
+                    and not edited
                 ):
                     record["result"] = dict(job.result)
                     record["timing"] = dict(job.result.get("timing") or {})
@@ -218,6 +229,16 @@ class RunJobs:
             with self._lock:
                 owns_record = self._jobs.get(job.run_id) is job
             if owns_record:
+                # Progress changes only the job snapshot. Keep initial/terminal
+                # publication on the full update path, including legacy stores.
+                update_job = getattr(self._store, "update_job", None)
+                if (
+                    job.state == "running"
+                    and recovery_result is None
+                    and callable(update_job)
+                    and update_job(job.run_id, self._job_record(job))
+                ):
+                    return
                 self._store.update_run(job.run_id, update)
 
     def _recover(self) -> None:

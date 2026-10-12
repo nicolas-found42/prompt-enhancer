@@ -497,10 +497,14 @@ export default function App() {
   // Reattach to a run that was in progress before a reload or dropped connection.
   useEffect(() => {
     const remembered = rememberedRun();
+    const last = stored<RememberedResult>(LAST_RESULT_KEY);
+    const hasRecentResult = last && Date.now() - last.at <= RESTORE_RESULT_MS;
     if (remembered?.prompt) restoreDraft(remembered.prompt);
     const lookup = remembered
       ? getJob(remembered.runId).then((found) => [found])
-      : getActiveJobs();
+      : hasRecentResult
+        ? Promise.resolve([])
+        : getActiveJobs();
     void lookup
       .then((found) => {
         const current = found[0];
