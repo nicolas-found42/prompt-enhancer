@@ -497,6 +497,7 @@ def test_continuation_save_preserves_concurrent_configuration_history(monkeypatc
         if saving.is_set() and not triggered:
             triggered = True
             read.set()
+            thread.start()
             assert attempted.wait(5)
         return record
 
@@ -546,12 +547,12 @@ def test_continuation_save_preserves_concurrent_configuration_history(monkeypatc
     monkeypatch.setattr(store, "get_run", get_run)
     monkeypatch.setattr(optimizer, "_save_continued_run", save)
     thread = threading.Thread(target=writer)
-    thread.start()
     try:
         result = optimizer.continue_run(run_id)
     finally:
         finished.set()
-        thread.join(timeout=5)
+        if thread.ident is not None:
+            thread.join(timeout=5)
     assert not thread.is_alive()
     assert not errors
     assert result["status"] == "completed"

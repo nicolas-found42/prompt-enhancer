@@ -266,7 +266,44 @@ export class ApiError extends Error {
 export const connectionLostMessage =
   "Lost connection to the local engine. Check that it is still running. A run in progress may still finish; it will show up in History.";
 
-export async function requestJson<T>(
+const pendingRunReads = new Map<string, Promise<unknown>>();
+
+/** Share only overlapping run reads; completed responses are never cached. */
+export function requestJson<T>(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<T> {
+  const method =
+    init?.method ??
+    (typeof input !== "string" && "method" in input ? input.method : "GET");
+  const url =
+    typeof input === "string"
+      ? input
+      : "url" in input
+        ? input.url
+        : input.toString();
+  if (method.toUpperCase() !== "GET" && /\/api\/(?:runs|jobs)\//.test(url)) {
+    pendingRunReads.clear();
+    return fetchJson<T>(input, init).finally(() => pendingRunReads.clear());
+  }
+  const key =
+    typeof input === "string" && !init && /^\/api\/runs\/[^/?]+$/.test(input)
+      ? input
+      : null;
+  if (!key) return fetchJson<T>(input, init);
+  let pending = pendingRunReads.get(key);
+  if (!pending) {
+    const started = fetchJson<unknown>(input).finally(() => {
+      if (pendingRunReads.get(key) === started) pendingRunReads.delete(key);
+    });
+    pendingRunReads.set(key, started);
+    pending = started;
+  }
+  // Independent values preserve the existing caller ownership contract.
+  return pending.then((value) => structuredClone(value) as T);
+}
+
+async function fetchJson<T>(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<T> {

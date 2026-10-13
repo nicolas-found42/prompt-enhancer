@@ -196,14 +196,23 @@ def _winning_score_vector(
 
 
 def _normalise_record(
-    record: Mapping[str, Any], existing: Mapping[str, Any] | None = None
+    record: Mapping[str, Any],
+    existing: Mapping[str, Any] | None = None,
+    *,
+    copy_values: bool = True,
 ) -> dict[str, Any]:
     """Flatten the canonical store record while retaining its original shape.
 
     Bootstrap stores ``result`` and ``report`` nested.  The history API also
     exposes those top-level fields because several UI panels need them
     independently, and later engine versions can add fields under ``metadata``.
+    Read-only snapshot listings can defer JSON copies until emitting summaries
+    or searching evidence. Public details retain independent JSON values.
     """
+
+    def convert(value: Any) -> Any:
+        return _jsonable(value) if copy_values else value
+
     source = dict(existing or {})
     source.update(_mapping(record))
     result = source.get("result")
@@ -219,7 +228,7 @@ def _normalise_record(
             value = _first(result_map, *names, default=None)
         if value is None:
             value = _first(report_map, *names, default=None)
-        return _jsonable(default if value is None else value)
+        return convert(default if value is None else value)
 
     original_prompt = pick(
         "original_prompt",
@@ -322,7 +331,7 @@ def _normalise_record(
     }
     for key, value in source.items():
         if str(key) not in known and str(key) != "metadata":
-            metadata.setdefault(str(key), _jsonable(value))
+            metadata.setdefault(str(key), convert(value))
     models = pick("models", "model_choices", "modelChoices", default={})
     if not models and isinstance(source.get("options"), Mapping):
         options = source["options"]
@@ -363,7 +372,7 @@ def _normalise_record(
         "outcome_reason": canonical.get("outcome_reason") if outcome else None,
         "applied_style": applied_style,
         "control_state": control_state,
-        "legacy_metadata": _jsonable(legacy_metadata) if is_legacy else None,
+        "legacy_metadata": convert(legacy_metadata) if is_legacy else None,
         "prompt": str(original_prompt or ""),
         "original_prompt": str(original_prompt or ""),
         "final_prompt": final_prompt,
@@ -379,13 +388,13 @@ def _normalise_record(
         "cost": pick("cost", "cost_breakdown", "costBreakdown", default={}),
         "timing": pick("timing", "timings", "duration", default={}),
         "timings": pick("timing", "timings", "duration", default={}),
-        "report": _jsonable(report),
-        "result": _jsonable(result),
+        "report": convert(report),
+        "result": convert(result),
         "original": pick(
             "original", "original_results", "originalResults", default=None
         ),
         "jev_answers": pick("jev_answers", "jevAnswers", "decisions", default=[]),
-        "metadata": _jsonable(metadata),
+        "metadata": convert(metadata),
         "feedback": feedback_value,
         "feedback_at": _first(source, "feedback_at", "feedbackAt", default=None),
         "feedback_labels": pick("feedback_labels", default=None),
@@ -395,10 +404,10 @@ def _normalise_record(
 class RunHistory:
     """History repository adapter over the canonical ``RunStore``.
 
-    The adapter intentionally calls only ``save_run``, ``get_run`` and
-    ``list_runs``.  Any bootstrap-compatible store therefore remains the sole
-    owner of SQLite durability, while history gains search, flattened detail,
-    and feedback semantics.
+    Stores must provide ``save_run``, ``get_run`` and ``list_runs``. Native
+    stores also provide ``all_runs`` so search and pagination can use a complete
+    snapshot rather than their bounded listing. Legacy stores retain their
+    existing listing behavior and remain the owner of durability.
     """
 
     def __init__(self, store: Any) -> None:
@@ -477,31 +486,34 @@ class RunHistory:
 
     @staticmethod
     def _summary(detail: Mapping[str, Any]) -> dict[str, Any]:
-        return {
-            key: detail.get(key)
-            for key in (
-                "run_id",
-                "id",
-                "created_at",
-                "updated_at",
-                "status",
-                "outcome",
-                "outcome_reason",
-                "applied_style",
-                "control_state",
-                "prompt",
-                "original_prompt",
-                "final_prompt",
-                "original_kept",
-                "feedback",
-                "feedback_at",
-                "feedback_labels",
-                "cost",
-                "timings",
-            )
-        } | {
-            "models": detail.get("models", {}),
-        }
+        return _jsonable(
+            {
+                key: detail.get(key)
+                for key in (
+                    "run_id",
+                    "id",
+                    "created_at",
+                    "updated_at",
+                    "status",
+                    "outcome",
+                    "outcome_reason",
+                    "applied_style",
+                    "control_state",
+                    "prompt",
+                    "original_prompt",
+                    "final_prompt",
+                    "original_kept",
+                    "feedback",
+                    "feedback_at",
+                    "feedback_labels",
+                    "cost",
+                    "timings",
+                )
+            }
+            | {
+                "models": detail.get("models", {}),
+            }
+        )
 
     @staticmethod
     def _metadata_value(metadata: Mapping[str, Any], path: str) -> Any:
@@ -532,21 +544,41 @@ class RunHistory:
         terms = dict(query) if isinstance(query, Mapping) else {}
         terms.update(metadata or {})
         wanted_feedback = _feedback(feedback) if feedback is not None else None
-        # A local store is small; request enough rows to make filtering and
-        # pagination stable.  Details are loaded only for filtering and then
-        # reduced to summaries.
-        raw = self._store_list(limit=100000, offset=0)
+        page = getattr(self.store, "page_runs", None)
+        if (
+            callable(page)
+            and int(limit) > 0
+            and not search_text
+            and not terms
+            and status is None
+            and feedback is None
+        ):
+            return [
+                self._summary(_normalise_record(_mapping(item), copy_values=False))
+                for item in page(int(limit), max(0, int(offset)))
+            ]
         details: list[dict[str, Any]] = []
-        for item in raw:
-            item_map = _mapping(item)
-            run_id = _first(item_map, "run_id", "runId", "id")
-            detail = (
-                self._get(str(run_id))
-                if run_id is not None
-                else _normalise_record(item_map)
-            )
-            if detail is not None:
-                details.append(detail)
+        complete_snapshot = getattr(self.store, "all_runs", None)
+        if callable(complete_snapshot):
+            # Native snapshots contain full records, including searchable
+            # evidence. Avoid per-record rereads after the snapshot was taken.
+            details = [
+                _normalise_record(_mapping(item), copy_values=False)
+                for item in complete_snapshot()
+            ]
+        else:
+            # Legacy stores may list summaries, so load their full details.
+            # Their own listing limits still bound available search coverage.
+            for item in self._store_list(limit=100000, offset=0):
+                item_map = _mapping(item)
+                run_id = _first(item_map, "run_id", "runId", "id")
+                detail = (
+                    self._get(str(run_id))
+                    if run_id is not None
+                    else _normalise_record(item_map)
+                )
+                if detail is not None:
+                    details.append(detail)
         details.sort(
             key=lambda item: (
                 str(item.get("created_at") or ""),
@@ -624,14 +656,18 @@ class RunHistory:
             "weak_dimensions": weak_dimensions,
             "recorded_at": _utc_now(),
         }
-        self.store.save_run(
-            {
-                **original,
-                "feedback": value,
-                "feedback_at": labels["recorded_at"],
-                "feedback_labels": labels,
-            }
-        )
+        changes = {
+            "feedback": value,
+            "feedback_at": labels["recorded_at"],
+            "feedback_labels": labels,
+        }
+        atomic_update = getattr(self.store, "update_run", None)
+        if callable(atomic_update):
+            atomic_update(
+                str(run_id), lambda current: {**(current or original), **changes}
+            )
+        else:
+            self.store.save_run({**original, **changes})
         return self.require_run(str(run_id))
 
     def all_runs(self) -> list[dict[str, Any]]:

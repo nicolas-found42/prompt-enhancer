@@ -7,7 +7,7 @@ const apiTarget = `http://127.0.0.1:${apiPort}`;
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
-  workers: process.env.CI ? 1 : undefined,
+  workers: process.env.CI ? 1 : 4,
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:5174",
