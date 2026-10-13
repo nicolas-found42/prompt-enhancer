@@ -29,14 +29,14 @@ class OptimizeRequest(BaseModel):
     improvement_style: str = "auto"
     options: dict[str, Any] = Field(default_factory=dict)
     model_overrides: dict[str, Any] = Field(default_factory=dict)
-    clarification_allowed: bool | None = None
-    time_limit_s: float | None = None
-    spend_limit_usd: float | None = None
+    clarification_allowed: bool | None = Field(default=None, strict=True)
+    time_limit_s: float | None = Field(default=None, strict=True)
+    spend_limit_usd: float | None = Field(default=None, strict=True)
 
 
 class ContinueRequest(BaseModel):
-    time_limit_s: float | None = None
-    spend_limit_usd: float | None = None
+    time_limit_s: float | None = Field(default=None, strict=True)
+    spend_limit_usd: float | None = Field(default=None, strict=True)
 
 
 class AnswersRequest(BaseModel):
@@ -77,8 +77,11 @@ def _optimize_options(request: OptimizeRequest) -> dict[str, Any]:
     if request.spend_limit_usd is not None:
         options["spend_limit_usd"] = request.spend_limit_usd
     if request.model_overrides:
+        nested_overrides = options.get("model_overrides", {})
+        if not isinstance(nested_overrides, Mapping):
+            raise ValueError("model_overrides must be a mapping")
         options["model_overrides"] = {
-            **options.get("model_overrides", {}),
+            **nested_overrides,
             **request.model_overrides,
         }
     if request.clarification_allowed is not None:
@@ -209,8 +212,8 @@ def create_app(
 
     @app.post("/api/jobs/optimize", status_code=202)
     def start_optimize(request: OptimizeRequest) -> dict[str, Any]:
-        options = _optimize_options(request)
         try:
+            options = _optimize_options(request)
             app_optimizer.validate_request(request.prompt, options)
         except (ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc

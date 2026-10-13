@@ -136,8 +136,9 @@ function healthSession(): string {
 // Storage can be unavailable; reattaching then falls back to /api/jobs.
 function store(key: string, value: unknown) {
   try {
-    if (value) localStorage.setItem(key, JSON.stringify(value));
-    else localStorage.removeItem(key);
+    const storage = key === LAST_RESULT_KEY ? sessionStorage : localStorage;
+    if (value) storage.setItem(key, JSON.stringify(value));
+    else storage.removeItem(key);
   } catch {
     // Ignore: these are conveniences only.
   }
@@ -145,7 +146,8 @@ function store(key: string, value: unknown) {
 
 function stored<T extends { runId: string }>(key: string): T | null {
   try {
-    const parsed = JSON.parse(localStorage.getItem(key) ?? "null") as T | null;
+    const storage = key === LAST_RESULT_KEY ? sessionStorage : localStorage;
+    const parsed = JSON.parse(storage.getItem(key) ?? "null") as T | null;
     return parsed && typeof parsed.runId === "string" ? parsed : null;
   } catch {
     return null;
@@ -497,10 +499,14 @@ export default function App() {
   // Reattach to a run that was in progress before a reload or dropped connection.
   useEffect(() => {
     const remembered = rememberedRun();
+    const last = stored<RememberedResult>(LAST_RESULT_KEY);
+    const hasRecentResult = last && Date.now() - last.at <= RESTORE_RESULT_MS;
     if (remembered?.prompt) restoreDraft(remembered.prompt);
     const lookup = remembered
       ? getJob(remembered.runId).then((found) => [found])
-      : getActiveJobs();
+      : hasRecentResult
+        ? Promise.resolve([])
+        : getActiveJobs();
     void lookup
       .then((found) => {
         const current = found[0];

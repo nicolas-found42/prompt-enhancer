@@ -88,6 +88,7 @@ const providers: ProviderReport = {
 
 beforeEach(() => {
   window.localStorage.clear();
+  window.sessionStorage.clear();
   vi.mocked(getActiveJobs).mockResolvedValue([]);
   vi.mocked(getCatalog).mockResolvedValue(catalog);
   vi.mocked(getProviders).mockResolvedValue(providers);

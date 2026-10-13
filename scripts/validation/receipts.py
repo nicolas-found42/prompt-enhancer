@@ -117,16 +117,12 @@ def interrupt_signal(signum, frame) -> None:
 
 def stop_process_group(process: subprocess.Popen) -> None:
     # The child owns a separate session; terminating it cannot kill the agent.
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-        # Keep the leader unreaped until escalation, reserving its PID/PGID even
-        # when it exits before a descendant that ignores SIGTERM.
-        time.sleep(2)
+    def send(signum: int) -> None:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process.pid, signum)
         except PermissionError:
-            # macOS can return EPERM for a group containing only zombies.
-            # Do not hide a permissions error while a live member remains.
+            # macOS can report EPERM for a group containing only zombies,
+            # including after graceful SIGINT. A live member still fails closed.
             members = subprocess.check_output(["ps", "-axo", "pgid=,stat="], text=True)
             if any(
                 group == str(process.pid) and not state.startswith("Z")
@@ -135,6 +131,16 @@ def stop_process_group(process: subprocess.Popen) -> None:
                 for group, state in [fields]
             ):
                 raise
+
+    try:
+        # Playwright handles SIGINT by stopping its detached web-server groups.
+        send(signal.SIGINT)
+        time.sleep(0.5)
+        send(signal.SIGTERM)
+        # Reserve the unreaped leader's PID/PGID throughout escalation, even
+        # when it exits before a descendant that ignores termination.
+        time.sleep(2)
+        send(signal.SIGKILL)
         process.wait(timeout=2)
     except ProcessLookupError:
         process.wait()
@@ -182,63 +188,112 @@ class Receipt:
     def run(
         self, name: str, command: list[str], *, cwd: Path, env: dict | None = None
     ) -> Path:
-        log = self.output / f"{len(self.value['checks']):02d}-{name}.log"
-        check = {"name": name, "command": command, "status": "running", "log": log.name}
-        self.value["checks"].append(check)
-        self.save()
-        started = time.monotonic()
+        return self.run_many([(name, command, env)], cwd=cwd)[0]
+
+    def run_many(
+        self,
+        commands: list[tuple[str, list[str], dict | None]],
+        *,
+        cwd: Path,
+    ) -> list[Path]:
+        """Run independent checks together, retaining each result and owned group.
+
+        Bookkeeping and signals stay on the main thread. A failure or interruption
+        stops every unfinished group; partial success never completes a receipt.
+        """
+        running = []
+        logs = []
         previous_handler = signal.signal(signal.SIGTERM, interrupt_signal)
-        with log.open("wb") as stream:
-            try:
-                process = subprocess.Popen(
-                    command,
-                    cwd=cwd,
-                    env=local_environment(env),
-                    stdout=stream,
-                    stderr=subprocess.STDOUT,
-                    start_new_session=True,
-                )
+
+        def finish(item, *, status: str | None = None) -> None:
+            process, check, started, log, stream = item
+            stream.close()
+            exit_code = process.returncode
+            check.update(
+                exit_code=exit_code,
+                duration_seconds=round(time.monotonic() - started, 3),
+                log_sha256=digest(log.read_bytes()),
+                status=status or ("passed" if exit_code == 0 else "failed"),
+            )
+            self.save()
+
+        try:
+            for name, command, env in commands:
+                log = self.output / f"{len(self.value['checks']):02d}-{name}.log"
+                logs.append(log)
+                check = {
+                    "name": name,
+                    "command": command,
+                    "status": "running",
+                    "log": log.name,
+                }
+                self.value["checks"].append(check)
+                self.save()
+                started = time.monotonic()
+                stream = log.open("wb")
+                try:
+                    process = subprocess.Popen(
+                        command,
+                        cwd=cwd,
+                        env=local_environment(env),
+                        stdout=stream,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+                except OSError as exc:
+                    stream.write(str(exc).encode())
+                    stream.close()
+                    check.update(
+                        status="failed",
+                        exit_code=127,
+                        duration_seconds=round(time.monotonic() - started, 3),
+                        log_sha256=digest(log.read_bytes()),
+                    )
+                    self.save()
+                    raise RuntimeError(f"{name} could not start; see {log}") from exc
                 check["process"] = {
                     "pid": process.pid,
                     "identity": process_identity(process.pid),
                 }
-                while True:
-                    self.save()
-                    try:
-                        exit_code = process.wait(timeout=1)
-                        break
-                    except subprocess.TimeoutExpired:
-                        continue
-            except KeyboardInterrupt as exc:
-                check.update(
-                    status="interrupted",
-                    duration_seconds=round(time.monotonic() - started, 3),
-                )
-                self.value.update(status="interrupted", error=str(exc))
+                running.append((process, check, started, log, stream))
+            while running:
                 self.save()
-                if "process" in locals():
-                    try:
-                        stop_process_group(process)
-                    except (OSError, subprocess.TimeoutExpired) as cleanup_error:
-                        check["cleanup_error"] = type(cleanup_error).__name__
-                        self.save()
-                        raise
-                raise
-            except OSError as exc:
-                stream.write(str(exc).encode())
-                exit_code = 127
-            finally:
-                signal.signal(signal.SIGTERM, previous_handler)
-        check.update(
-            exit_code=exit_code,
-            duration_seconds=round(time.monotonic() - started, 3),
-            log_sha256=digest(log.read_bytes()),
-            status="passed" if exit_code == 0 else "failed",
-        )
-        self.save()
-        if exit_code:
-            raise RuntimeError(f"{name} exited {exit_code}; see {log}")
-        return log
+                for item in list(running):
+                    process, check, _, log, _ = item
+                    if process.poll() is None:
+                        continue
+                    running.remove(item)
+                    finish(item)
+                    if process.returncode:
+                        raise RuntimeError(
+                            f"{check['name']} exited {process.returncode}; see {log}"
+                        )
+                if running:
+                    time.sleep(0.1)
+        except BaseException as exc:
+            if isinstance(exc, KeyboardInterrupt):
+                self.value.update(status="interrupted", error=str(exc) or "interrupted")
+            cleanup_failures: list[str] = []
+            for item in running:
+                process, check, _, _, _ = item
+                try:
+                    stop_process_group(process)
+                except (OSError, subprocess.TimeoutExpired) as cleanup_error:
+                    check["cleanup_error"] = type(cleanup_error).__name__
+                    cleanup_failures.append(str(check["name"]))
+                    finish(item, status="cleanup_failed")
+                else:
+                    finish(item, status="interrupted")
+            if cleanup_failures:
+                raise RuntimeError(
+                    "Process cleanup failed for "
+                    + ", ".join(cleanup_failures)
+                    + "; owned processes may still be running"
+                ) from exc
+            raise
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+        return logs
 
     def finish(self) -> None:
         checks = self.value["checks"]

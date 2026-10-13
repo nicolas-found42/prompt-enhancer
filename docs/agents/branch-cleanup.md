@@ -71,3 +71,13 @@ stashing is recorded as reconciliation required; the stash and snapshot remain
 available. Ignored files are excluded from snapshots and remain in the checkout.
 The helper requires the requested branch (main by default), refuses existing
 conflicts and divergence, and detects checkout changes during rehearsal.
+
+## Retain investigation evidence
+
+Before worktree cleanup, follow [managed-worktree preservation](managed-worktrees.md).
+Copy or archive the investigation artifacts to a new directory outside both
+checkouts and verify the complete inventory and hashes. Keep failed experiments
+and raw review outcomes alongside final receipts. A recoverable Git snapshot
+does not retain ignored evidence. After updating dirty primary main, compare its
+restored files and index with the WIP-preserving pull receipt before declaring
+cleanup complete.

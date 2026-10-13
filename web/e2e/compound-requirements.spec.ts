@@ -1,6 +1,10 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
+// These scenarios share the real API's store and active-job list. Run them in
+// one worker so a reload cannot restore the other scenario's unfinished job.
+test.describe.configure({ mode: "serial" });
+
 test("a scoped hard conflict survives reload and preserves its source ledger in history", async ({
   page,
 }, testInfo) => {

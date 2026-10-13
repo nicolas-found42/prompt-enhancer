@@ -26,8 +26,9 @@ the engine's single route to model providers.
 - When creating a branch, use a short lowercase kebab-case name. Prefix Codex
   task branches with `codex/`; otherwise use a conventional type prefix. Preserve
   a branch name supplied by the user.
-- Before handing off changes, follow the
-  [validation workflow](docs/agents/validation.md).
+- For full local validation and performance claims, follow the
+  [validation workflow](docs/agents/validation.md). Use its receipt runner and
+  configured worker limits; retain all tests, assertions, and coverage floors.
 - For source or test changes, branch reviews, or changes to Jev review tooling,
   follow the [semantic review procedure](docs/quality-review.md#agent-procedure).
   Jev findings are advisory; deterministic checks decide completion.
@@ -37,7 +38,9 @@ the engine's single route to model providers.
   [cleanup guide](docs/agents/branch-cleanup.md).
 
 Keep credentials in the ignored `.env` and server-side. Make live model calls
-only when the task has authorized them; never expose credentials in arguments,
+only when the task has authorized them. A no-live-model restriction includes
+development Jev/TypeSafe tools; use offline planning or existing recordings and
+report the resulting judgment gap. Never expose credentials in arguments,
 logs, fixtures, or committed files.
 Stop and ask before reading or writing real credentials or weakening a
 deterministic check.

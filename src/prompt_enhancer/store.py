@@ -65,6 +65,8 @@ class RunStore:
             self._connection.execute(
                 "ALTER TABLE runs ADD COLUMN legacy_metadata_json TEXT NOT NULL DEFAULT '{}'"
             )
+        if "job_json" not in columns:
+            self._connection.execute("ALTER TABLE runs ADD COLUMN job_json TEXT")
         self._connection.execute(
             "CREATE INDEX IF NOT EXISTS runs_created_at_idx ON runs(created_at DESC)"
         )
@@ -186,6 +188,7 @@ class RunStore:
             "feedback",
             "feedback_at",
             "legacy_metadata",
+            "job",
         }
         evidence = {key: value for key, value in record.items() if key not in known}
         with self._lock:
@@ -198,8 +201,9 @@ class RunStore:
                 """
                 INSERT OR REPLACE INTO runs
                     (run_id, created_at, prompt, options_json, result_json, cost_json,
-                     timing_json, feedback_json, feedback_at, evidence_json, legacy_metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     timing_json, feedback_json, feedback_at, evidence_json, legacy_metadata_json,
+                     job_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -221,10 +225,32 @@ class RunStore:
                     str(feedback_at) if feedback_at is not None else None,
                     json.dumps(evidence, ensure_ascii=False),
                     json.dumps(record.get("legacy_metadata") or {}, ensure_ascii=False),
+                    json.dumps(record["job"], ensure_ascii=False)
+                    if "job" in record
+                    else None,
                 ),
             )
             self._connection.commit()
         return run_id
+
+    def update_job(self, run_id: str, job: dict[str, Any]) -> bool:
+        """Persist progress without parsing or rewriting model evidence.
+
+        Return false for an absent run or a worker that no longer owns publication.
+        Initial and terminal writes still use the full atomic record update.
+        """
+        with self._lock:
+            from .publication import publication_allowed
+
+            owner = publication_allowed.get()
+            if owner is not None and not owner():
+                return False
+            cursor = self._connection.execute(
+                "UPDATE runs SET job_json = ? WHERE run_id = ?",
+                (json.dumps(job, ensure_ascii=False), run_id),
+            )
+            self._connection.commit()
+            return cursor.rowcount == 1
 
     def update_run(
         self,
@@ -249,6 +275,15 @@ class RunStore:
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM runs ORDER BY created_at DESC LIMIT ?", (bounded,)
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def page_runs(self, limit: int, offset: int) -> list[dict[str, Any]]:
+        """Read one unfiltered history page in the same stable order as search."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM runs ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?",
+                (max(1, int(limit)), max(0, int(offset))),
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
@@ -289,6 +324,8 @@ class RunStore:
             record.update(json.loads(row["evidence_json"]))
         if legacy:
             record["legacy_metadata"] = legacy
+        if "job_json" in keys and row["job_json"] is not None:
+            record["job"] = json.loads(row["job_json"])
         return record
 
 

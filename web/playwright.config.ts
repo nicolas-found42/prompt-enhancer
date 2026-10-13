@@ -7,9 +7,7 @@ const apiTarget = `http://127.0.0.1:${apiPort}`;
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
-  // Real API scenarios share one store and active-job list. Separate browser
-  // contexts must not restore another scenario's active job during reload.
-  workers: 1,
+  workers: process.env.CI ? 1 : 4,
   reporter: "list",
   use: {
     baseURL: "http://127.0.0.1:5174",
