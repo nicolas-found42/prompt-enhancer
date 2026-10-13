@@ -45,9 +45,11 @@ def test_live_catalog_decodes_both_providers_and_never_exposes_keys():
     assert "or-secret" not in repr(public)
 
 
-def test_unknown_model_routes_openrouter_even_without_catalog():
+def test_only_namespaced_models_route_openrouter_without_catalog():
     gateway = HttpGateway(config=GatewayConfig(max_retries=0))
-    assert gateway.route_model("unknown-model").provider == "openrouter"
+    # A mistyped or retired Go ID fails at Go under its own name.
+    assert gateway.route_model("unknown-model").provider == "go"
+    assert gateway.route_model("mistralai/mistral-large-4-0").provider == "openrouter"
     assert gateway.route_model(JEV_MODEL).provider == "openrouter"
 
 

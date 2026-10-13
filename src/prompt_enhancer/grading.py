@@ -133,9 +133,12 @@ def metrics_from_scores(
         )
     mean = fmean(rates.values()) if rates else 0.0
     worst = min(rates.values(), default=0.0)
+    # A model repeated in the panel has extra samples. Only indexes every model
+    # shares enter spread, so it measures sample consistency, not which models
+    # happen to have an extra index.
     sample_means = [
-        fmean(values[index] for values in samples.values() if index < len(values))
-        for index in range(max((len(values) for values in samples.values()), default=0))
+        fmean(values[index] for values in samples.values())
+        for index in range(min((len(values) for values in samples.values()), default=0))
     ]
     sample_means = [value for value in sample_means if value is not None]
     spread = max(sample_means) - min(sample_means) if len(sample_means) > 1 else 0.0

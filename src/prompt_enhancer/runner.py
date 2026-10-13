@@ -315,6 +315,21 @@ def _response_details(response: Any, output: str) -> dict[str, Any]:
     return details
 
 
+def _panel_slots(models: tuple[str, ...], samples: int) -> list[tuple[str, int]]:
+    """Return (model, sample) pairs; a repeated model continues its sample count.
+
+    Distinct sample indexes give a repeated model distinct seeds and grade keys,
+    so a repeat adds samples instead of resending or overwriting the first.
+    """
+    seen: dict[str, int] = {}
+    slots: list[tuple[str, int]] = []
+    for model in models:
+        offset = seen.get(model, 0)
+        slots.extend((model, offset + sample) for sample in range(samples))
+        seen[model] = offset + samples
+    return slots
+
+
 def _run_panel(
     candidate_id: str,
     prompt: str,
@@ -343,8 +358,7 @@ def _run_panel(
             validate_response,
             comparison_provider,
         )
-        for model in models
-        for sample in range(samples)
+        for model, sample in _panel_slots(models, samples)
     ]
     requested_workers = len(requests) if max_workers is None else max_workers
     workers = min(len(requests), requested_workers, MAX_CONCURRENT_TRANSPORT_REQUESTS)
@@ -413,8 +427,9 @@ def run_candidates(
     """Run the original and candidates on the settings-backed weak panel.
 
     The original runs first, as ``original``, when it is provided. The panel
-    uses the first configured number of distinct models and configured sample
-    count; an explicit ``samples`` value overrides the count.
+    uses the first configured number of models and configured sample count; an
+    explicit ``samples`` value overrides the count. A repeated model receives
+    additional samples.
     """
 
     workload = settings or Settings()
@@ -430,8 +445,6 @@ def run_candidates(
     models = configured_models[:model_count]
     if any(not isinstance(model, str) or not model for model in models):
         raise ValueError("weak_models must contain non-empty model IDs")
-    if len(set(models)) != model_count:
-        raise ValueError(f"weak_models must contain {model_count} distinct models")
     selected_samples = workload.weak_samples if samples is None else samples
     output_limit = workload.weak_max_output_tokens if validate_response else None
     if output_limit is not None and (

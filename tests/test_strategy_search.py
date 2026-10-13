@@ -6,7 +6,7 @@ import pytest
 
 from prompt_enhancer.config import Settings
 from prompt_enhancer.gateway import GatewayConfig, HttpGateway, ScriptedGateway
-from prompt_enhancer.grading import GradeReport
+from prompt_enhancer.grading import GradeReport, metrics_from_scores
 from prompt_enhancer.runner import run_candidates
 from prompt_enhancer.selector import RankingCandidate, rank_candidates
 from prompt_enhancer.strategies import (
@@ -40,7 +40,6 @@ def test_search_strategies_uses_settings_backed_fixed_candidate_workload():
     assert len(oversized.candidates) == 6
     assert len(calls) == 3
     assert len(Settings().weak_models) == 5
-    assert len(set(Settings().weak_models)) == 5
     assert "muse-spark-1.3-contributor" not in Settings().weak_models
     assert len({candidate.strategy_kind for candidate in default.candidates}) == 2
     assert any(candidate.is_crutch for candidate in default.candidates)
@@ -112,21 +111,43 @@ def test_run_candidates_uses_five_settings_models_and_three_samples_by_default()
     assert len(overridden.results) == 20
 
 
-def test_run_candidates_rejects_short_or_duplicate_panels_before_gateway_calls():
+def test_run_candidates_rejects_short_panels_before_gateway_calls():
     calls = []
     gateway = ScriptedGateway(
         chat=lambda *_args, **_kwargs: calls.append("called") or "answer"
     )
     candidates = search_strategies("Explain the result").candidates[:1]
 
-    for models in (
-        ("one", "two", "three", "four"),
-        ("one", "two", "two", "four", "five"),
-    ):
-        with pytest.raises(ValueError):
-            run_candidates(candidates, models, gateway)
+    with pytest.raises(ValueError):
+        run_candidates(candidates, ("one", "two", "three", "four"), gateway)
 
     assert calls == []
+
+
+def test_sample_spread_ignores_extra_samples_from_a_repeated_model():
+    rates, _samples, worst, mean, spread, sample_scores = metrics_from_scores(
+        {"repeated": [1.0] * 6, "once": [0.0] * 3}
+    )
+
+    assert rates == {"once": 0.0, "repeated": 1.0}
+    assert (worst, mean) == (0.0, 0.5)
+    # Consistent samples have no spread, whichever model has extra positions.
+    assert sample_scores == (0.5, 0.5, 0.5)
+    assert spread == 0.0
+
+
+def test_run_candidates_gives_a_repeated_model_additional_distinct_samples():
+    gateway = ScriptedGateway(chat=lambda *_args, **_kwargs: "answer")
+    candidates = search_strategies("Explain the result").candidates[:1]
+
+    panel = run_candidates(
+        candidates, ("one", "two", "two", "four", "five"), gateway, samples=3
+    )
+
+    repeated = [result for result in panel.results if result.model == "two"]
+    assert [result.sample for result in repeated] == [0, 1, 2, 3, 4, 5]
+    assert len({result.seed for result in repeated}) == 6
+    assert len(panel.results) == 15
 
 
 def test_cancellation_reaches_weak_panel_requests_running_in_executor_threads():

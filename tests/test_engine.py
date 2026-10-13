@@ -1599,7 +1599,7 @@ def test_run_model_overrides_are_reported_without_changing_defaults() -> None:
         "weak": ["weak-a", "weak-b", "weak-c", "weak-d", "weak-e"],
     }
     next_result = optimizer.optimize("Summarize this report.")
-    assert next_result["report"]["models"]["writer"] == "space-bunny-free"
+    assert next_result["report"]["models"]["writer"] == "deepseek-v4.1-flash"
 
 
 def test_model_settings_reject_three_or_four_weak_models_before_save(tmp_path) -> None:
@@ -1611,7 +1611,7 @@ def test_model_settings_reject_three_or_four_weak_models_before_save(tmp_path) -
 
     for weak in (["one", "two", "three"], ["one", "two", "three", "four"]):
         with pytest.raises(
-            ValueError, match="weak_models must contain at least 5 distinct model IDs"
+            ValueError, match="weak_models must contain at least 5 model IDs"
         ):
             optimizer.update_model_settings({"weak_models": weak})
         assert optimizer.get_model_settings() == before
@@ -1655,14 +1655,65 @@ def test_engine_model_defaults_persist_and_apply_after_restart(tmp_path) -> None
     [
         ["one", "two", "three"],
         ["one", "two", "three", "four"],
-        ["one", "two", "three", "four", "four"],
     ],
 )
 def test_run_rejects_weak_panels_below_fixed_minimum(weak: list[str]) -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
 
-    with pytest.raises(ValueError, match="weak panel requires 5 distinct models"):
+    with pytest.raises(ValueError, match="weak panel requires 5 models"):
         optimizer.optimize("Write a release note.", {"model_overrides": {"weak": weak}})
+
+
+def test_run_and_saved_settings_accept_repeated_weak_models(tmp_path) -> None:
+    optimizer = PromptOptimizer(
+        store=RunStore(tmp_path / "runs.sqlite3"),
+        gateway=_no_test_gateway(healthy_baseline=True),
+    )
+    weak = ["one", "one", "two", "three", "three"]
+
+    assert optimizer.update_model_settings({"weak_models": weak})["weak_models"] == weak
+    result = optimizer.optimize("Write a release note.")
+
+    assert result["report"]["models"]["weak"] == weak
+
+
+def test_run_rejects_a_disallowed_weak_override_beyond_the_panel_size() -> None:
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
+    weak = ["one", "two", "three", "four", "five", "google/gemma-3-4b-it"]
+
+    with pytest.raises(ValueError, match="google/gemma-3-4b-it"):
+        optimizer.optimize("Write a release note.", {"model_overrides": {"weak": weak}})
+
+
+@pytest.mark.parametrize("role", ["writer", "strong", "weak"])
+def test_run_rejects_openrouter_models_other_than_mistral_large(role: str) -> None:
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
+    llama = "meta-llama/llama-3.1-8b-instruct"
+    override: object = (
+        [llama, "one", "two", "three", "four"] if role == "weak" else llama
+    )
+
+    with pytest.raises(ValueError, match="only OpenCode Go models") as caught:
+        optimizer.optimize(
+            "Write a release note.", {"model_overrides": {role: override}}
+        )
+    assert llama in str(caught.value)
+
+
+def test_model_settings_allow_only_mistral_large_from_openrouter(tmp_path) -> None:
+    optimizer = PromptOptimizer(
+        store=RunStore(tmp_path / "runs.sqlite3"), gateway=_no_test_gateway()
+    )
+    before = optimizer.get_model_settings()
+
+    with pytest.raises(ValueError, match="only OpenCode Go models"):
+        optimizer.update_model_settings({"strong_check_model": "google/gemma-3-4b-it"})
+    assert optimizer.get_model_settings() == before
+
+    saved = optimizer.update_model_settings(
+        {"writer_model": "mistralai/mistral-large-4-0"}
+    )
+    assert saved["writer_model"] == "mistralai/mistral-large-4-0"
 
 
 @pytest.mark.parametrize("failing_gate", ["no_invention", "meaning"])

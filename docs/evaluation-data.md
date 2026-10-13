@@ -118,11 +118,13 @@ that run. It is not presented as a before/after latency comparison unless the
 recording has matched historical classification-only timings. Synthetic task
 labels validate the metric plumbing but do not establish classifier accuracy.
 
-The current model split is OpenCode Go for `space-bunny-free` (writer),
-`glm-5.3-flash` (strong check), `mimo-v2.6-flash`, and
-`muse-spark-1.3-contributor` (the two additional Deep weak models). OpenRouter
-supplies the pinned `typesafe/jev-1.13-20260917` snapshot and the three default
-Llama/Mistral weak models. New recordings store the snapshot returned by Jev
+The current model split is OpenCode Go for `deepseek-v4.1-flash` (writer),
+`glm-5.3-flash` (strong check), and the default weak panel
+(`deepseek-v4.1-flash`, `mimo-v2.6-flash`, `longcat-2.5-preview-free`,
+`mimo-v2.6-flash`, `deepseek-v4.1-flash`). OpenRouter supplies the pinned
+`typesafe/jev-1.13-20260917` snapshot; `mistralai/mistral-large-4-0` is the only
+other OpenRouter model a run may select. Recordings made with the earlier
+Space Bunny writer or Llama/Mistral panel do not replay under the new defaults. New recordings store the snapshot returned by Jev
 for each decision. Replay checks it against `PROMPT_ENHANCER_JEV_MODEL` (or the
 default pin); use `--allow-snapshot-mismatch` only when comparing across snapshots.
 Historical recordings without snapshot metadata remain replayable, with unknown

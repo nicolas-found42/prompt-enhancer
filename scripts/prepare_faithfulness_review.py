@@ -15,6 +15,7 @@ from typing import Any
 
 from evaluation_review_common import has_soar_placeholder
 
+from prompt_enhancer.catalog import DEFAULT_GO_WRITER
 from prompt_enhancer.evaluation.datasets import load_dataset, replay_digest
 from prompt_enhancer.evaluation.harness import HarnessOptions, default_engine_factory
 from prompt_enhancer.jev import NoulDecision, parse_decision
@@ -50,7 +51,7 @@ def collect(
             raise TypeError("expected product optimizer")
         evidence["replay_digests"][writer] = replay_digest(replay_path)
         options = HarnessOptions(
-            model_overrides={"writer": writer} if writer != "space-bunny-free" else {},
+            model_overrides={"writer": writer} if writer != DEFAULT_GO_WRITER else {},
         )
         candidates = []
         for case in dataset.cases:

@@ -36,6 +36,7 @@ from .catalog import (
     CatalogSnapshot,
     ModelInfo,
     StaticModelCatalog,
+    route_for,
 )
 from .jev import batch_decision_payload, decision_payload
 from .request_profiling import RequestProfile, RequestProfiles
@@ -551,6 +552,7 @@ class HttpGateway:
             "deepseek-v4.1-flash",
             DEFAULT_GO_STRONG,
             "mimo-v2.6-flash",
+            "longcat-2.5-preview-free",
             "qwen3.8-flash",
             "muse-spark-1.3-contributor",
         } | {item if isinstance(item, str) else item.id for item in (go_models or ())}
@@ -729,10 +731,10 @@ class HttpGateway:
         provider = "openrouter"
         if model != JEV_MODEL and route_provider is None:
             try:
-                snapshot = self.list_models()
-                provider = "go" if model in snapshot.go_ids else "openrouter"
+                go_ids = self.list_models().go_ids
             except (RuntimeError, TypeError):
-                provider = "go" if model in self._go_model_ids else "openrouter"
+                go_ids = frozenset(self._go_model_ids)
+            provider = route_for(model, go_ids)
         base = (
             self.config.go_base_url
             if provider == "go"

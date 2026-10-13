@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, replace
@@ -21,7 +21,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from . import jev_questions
 from .candidate_evaluation import round_judgment_provenance, summarize_capabilities
-from .catalog import JEV_MODEL, LiveModelCatalog
+from .catalog import (
+    JEV_MODEL,
+    MISTRAL_LARGE_MODEL,
+    LiveModelCatalog,
+    unselectable_models,
+)
 from .clarification import (
     ClarificationService,
     InMemoryClarificationRepository,
@@ -160,6 +165,16 @@ ProgressCallback = Callable[[str, Mapping[str, Any]], None]
 def _active_clock() -> float:
     """Default active-time clock, resolved per optimizer so tests can replace it."""
     return perf_counter()
+
+
+def _require_selectable(models: Iterable[str]) -> None:
+    rejected = unselectable_models(models)
+    if rejected:
+        raise ValueError(
+            "only OpenCode Go models and "
+            f"{MISTRAL_LARGE_MODEL} can be selected; not allowed: "
+            + ", ".join(rejected)
+        )
 
 
 STAGES = (
@@ -438,11 +453,11 @@ class PromptOptimizer:
             not isinstance(weak, (list, tuple))
             or len(weak) < self.config.weak_model_count
             or any(not isinstance(item, str) or not item.strip() for item in weak)
-            or len(set(weak)) != len(weak)
         ):
             raise ValueError(
-                f"weak_models must contain at least {self.config.weak_model_count} distinct model IDs"
+                f"weak_models must contain at least {self.config.weak_model_count} model IDs"
             )
+        _require_selectable((writer, strong, *weak))
         selected = ModelDefaults(
             writer=writer.strip(), strong=strong.strip(), weak=tuple(weak)
         )
@@ -526,8 +541,9 @@ class PromptOptimizer:
         ):
             raise ValueError("weak model overrides must be a non-empty list")
         count = self.config.weak_model_count
-        if len(selected_weak) < count or len(set(selected_weak[:count])) != count:
-            raise ValueError(f"weak panel requires {count} distinct models")
+        if len(selected_weak) < count:
+            raise ValueError(f"weak panel requires {count} models")
+        _require_selectable((writer, strong, *selected_weak))
         return replace(
             self.config,
             writer_model=writer,

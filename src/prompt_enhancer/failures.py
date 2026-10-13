@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .catalog import MISTRAL_LARGE_MODEL
 from .gateway import ACCESS_DENIED_STATUS, ProviderError
 
 
@@ -43,7 +44,7 @@ def describe_failure(exc: BaseException) -> dict[str, Any]:
             hint = f"{exc.model} answered, but not in the format the optimizer needs. Try again, or choose a different {role} model in Model choices."
         elif exc.status in ACCESS_DENIED_STATUS and exc.provider == "go":
             headline = "OpenCode Go refused the request"
-            hint = f"Go models such as {exc.model} need an active OpenCode Go subscription. Choose OpenRouter models for the writer and strong check in Model choices, or renew the subscription."
+            hint = f"Go models such as {exc.model} need an active OpenCode Go subscription. Renew the subscription, or choose {MISTRAL_LARGE_MODEL} for the writer and strong check in Model choices."
         elif exc.status in ACCESS_DENIED_STATUS:
             headline = f"{name} refused the request"
             hint = f"Check that the {name} API key is valid and the account has credit, or choose a different model for the {role}."

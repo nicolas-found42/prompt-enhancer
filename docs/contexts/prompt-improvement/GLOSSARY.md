@@ -7,8 +7,10 @@ This context tests whether a prompt can be improved and decides which version to
 **Round**:
 One bounded evaluation with capacity for up to six candidate rewrites. An
 early routing or writing decision can end a Round before panel requests.
-Generated candidates run on five distinct weak models with three samples per
-model; fidelity, score-floor, and acceptance checks then decide which qualify.
+Generated candidates run on a five-entry weak panel with three samples per
+entry; a model listed more than once gets more samples rather than a second,
+separate vote. Fidelity, score-floor, and acceptance checks then decide which
+qualify.
 A Round records the selected candidate and score evidence, or why no changed
 candidate qualified.
 _Avoid_: iteration, attempt count

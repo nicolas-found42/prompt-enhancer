@@ -37,7 +37,7 @@ def test_candidate_writer_keeps_user_text_in_state_and_preserves_language() -> N
     assert {candidate.text for candidate in result.candidates} == {
         "Escribe un resumen específico."
     }
-    assert calls[0]["model"] == "space-bunny-free"
+    assert calls[0]["model"] == "deepseek-v4.1-flash"
     assert calls[0]["role"] == "writer"
     system, user = calls[0]["messages"]
     assert "Escribe un resumen." not in system["content"]

@@ -188,8 +188,8 @@ def test_supported_source_attribution_reaches_next_round_writer() -> None:
     assert len(records) >= 2
     assert all(record["prompt_digest"] for record in records)
     assert {record["model"] for record in records} >= {
-        "meta-llama/llama-3.1-8b-instruct",
-        "mistralai/mistral-nemo",
+        "deepseek-v4.1-flash",
+        "mimo-v2.6-flash",
     }
     assert first_round["evidence"]["failure_attribution"]["attributed_count"] > 0
 

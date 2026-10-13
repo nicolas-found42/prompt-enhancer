@@ -78,7 +78,7 @@ def test_known_go_defaults_do_not_fall_back_to_openrouter_without_catalog():
     gateway = HttpGateway(config=GatewayConfig())
 
     assert gateway.route_model("deepseek-v4.1-flash").provider == "go"
-    assert gateway.route_model("space-bunny-free").provider == "go"
+    assert gateway.route_model("longcat-2.5-preview-free").provider == "go"
     assert gateway.route_model("glm-5.3-flash").provider == "go"
     assert gateway.route_model("qwen3.8-flash").url.endswith("/messages")
     assert gateway.route_model("muse-spark-1.3-contributor").url.endswith("/responses")
@@ -235,7 +235,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
         ],
         [
             ModelInfo(
-                "or-writer",
+                "vendor/or-writer",
                 "openrouter",
                 input_cost_per_token=0.01,
                 output_cost_per_token=0.02,
@@ -255,7 +255,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
     )
     gateway.new_run("run-1")
     gateway.chat("go-writer", "hello", role="writer")
-    gateway.chat("or-writer", "hello", role="strong", run_id="run-1")
+    gateway.chat("vendor/or-writer", "hello", role="strong", run_id="run-1")
     gateway.decide(
         {"state": "the user prompt", "instructions": "classify"}, role="judge"
     )

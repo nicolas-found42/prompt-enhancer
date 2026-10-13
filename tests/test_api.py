@@ -106,7 +106,11 @@ def test_configured_app_uses_live_gateway_and_persists_model_defaults(tmp_path) 
 def test_catalog_exposes_gateway_models_without_credentials() -> None:
     gateway = ScriptedGateway(
         catalog=StaticModelCatalog(
-            [ModelInfo("go-one", "go")], [ModelInfo("or-one", "openrouter")]
+            [ModelInfo("go-one", "go")],
+            [
+                ModelInfo("or-one/model", "openrouter"),
+                ModelInfo("mistralai/mistral-large-4-0", "openrouter"),
+            ],
         )
     )
     optimizer = PromptOptimizer(gateway=gateway, store=RunStore(":memory:"))
@@ -116,8 +120,9 @@ def test_catalog_exposes_gateway_models_without_credentials() -> None:
 
     assert catalog.status_code == 200
     assert [item["id"] for item in catalog.json()["providers"]["go"]] == ["go-one"]
+    # Mistral Large 4 is the only OpenRouter model a user may pick.
     assert [item["id"] for item in catalog.json()["providers"]["openrouter"]] == [
-        "or-one"
+        "mistralai/mistral-large-4-0"
     ]
     assert catalog.json()["judge"]["id"] == "typesafe/jev-1.13-20260917"
 

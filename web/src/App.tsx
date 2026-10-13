@@ -46,7 +46,6 @@ import PromptHealthPanel from "./PromptHealthPanel";
 import {
   confirmedGaps,
   humanize,
-  failureOf,
   outcomeOf,
   pauseOf,
   pauseText,
@@ -323,10 +322,6 @@ export default function App() {
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [selection, setSelection] = useState<ModelSelection | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [modelSwitch, setModelSwitch] = useState<{
-    writer: string;
-    strong: string;
-  } | null>(null);
   const [providers, setProviders] = useState<ProviderReport | null>(null);
   const lastRequest = useRef<{
     prompt: string;
@@ -595,7 +590,6 @@ export default function App() {
     setClarificationError(null);
     setCopied(false);
     setViewingHistoryResult(false);
-    setModelSwitch(null);
     try {
       const started = await start();
       rememberRun({ runId: started.run_id, prompt });
@@ -782,49 +776,6 @@ export default function App() {
           : null,
       ].filter((item): item is string => item !== null)
     : [];
-  const fallbackProviderUnavailable =
-    providers?.providers.openrouter?.status === "unavailable";
-  const canSwitchToFallbackModels = Boolean(
-    selection &&
-    providers &&
-    goRoles.length > 0 &&
-    !fallbackProviderUnavailable &&
-    (!goIds.has(selection.writer) ||
-      (providers.fallback.writer.trim() &&
-        !goIds.has(providers.fallback.writer))) &&
-    (!goIds.has(selection.strong) ||
-      (providers.fallback.strong.trim() &&
-        !goIds.has(providers.fallback.strong)))
-  );
-
-  function switchToFallbackModels() {
-    if (!selection || !providers) return;
-    const openRouterIds = new Set(
-      (catalog?.providers.openrouter ?? []).map((model) => model.id)
-    );
-    const next = {
-      writer: goIds.has(selection.writer)
-        ? providers.fallback.writer
-        : selection.writer,
-      strong: goIds.has(selection.strong)
-        ? providers.fallback.strong
-        : selection.strong,
-      weak: selection.weak.filter(
-        (id) => !goIds.has(id) || openRouterIds.has(id)
-      ),
-    };
-    setSelection(next);
-    setModelSwitch({ writer: next.writer, strong: next.strong });
-    // A refusal from the models just replaced is out of date; other failures stay.
-    if (
-      !job &&
-      result?.status === "failed" &&
-      failureOf(result).provider === "go"
-    ) {
-      setResult(null);
-    }
-  }
-
   const questions: ClarificationQuestion[] =
     !job && result?.status === "needs_input" ? (result.questions ?? []) : [];
   const paused = !job && result ? pauseOf(result) : null;
@@ -860,25 +811,13 @@ export default function App() {
         </p>
       </header>
 
-      {modelSwitch && (
-        <div className="switch-confirmation" role="status">
-          <p>
-            Switched to different models (writer {modelSwitch.writer}, strong
-            check {modelSwitch.strong}). Your prompt is unchanged; press{" "}
-            <strong>Optimize prompt</strong> to run it again.
-          </p>
-        </div>
-      )}
-
       {goUnavailable && goRoles.length > 0 && (
         <div className="banner" role="status">
           <div>
             <p>
               Some models selected for this app can&apos;t be reached, so your
-              prompt can&apos;t run.{" "}
-              {canSwitchToFallbackModels
-                ? "Use the button to try a different set of models."
-                : "Open Model choices below to choose different models."}
+              prompt can&apos;t run. Check your OpenCode Go subscription, or
+              open Model choices below to choose different models.
             </p>
             <details className="provider-warning-details">
               <summary>Show troubleshooting details</summary>
@@ -891,15 +830,6 @@ export default function App() {
               <p>Selected models: {goRoles.join(" and ")}</p>
             </details>
           </div>
-          {canSwitchToFallbackModels && (
-            <button
-              className="primary"
-              type="button"
-              onClick={switchToFallbackModels}
-            >
-              Try different models
-            </button>
-          )}
         </div>
       )}
 

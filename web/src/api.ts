@@ -186,7 +186,6 @@ export type ProviderState = {
 };
 export type ProviderReport = {
   providers: Record<string, ProviderState>;
-  fallback: { writer: string; strong: string };
 };
 
 export type JudgmentCapability =

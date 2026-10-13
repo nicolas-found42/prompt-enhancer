@@ -920,7 +920,7 @@ def test_optimizer_applies_compatible_order_policy(
         if candidate["candidate_id"] != "original"
     )
     assert (
-        first_choice_grade["per_model_samples"]["meta-llama/llama-3.1-8b-instruct"]
+        first_choice_grade["per_model_samples"]["longcat-2.5-preview-free"]
         == [expected_mass] * 3
     )
     applied = result["report"]["grading_policy"]
@@ -958,8 +958,7 @@ def test_optimizer_aligns_reversed_score_levels_before_averaging() -> None:
         if item["candidate_id"] != "original"
     )
     assert (
-        candidate["grade"]["per_model_samples"]["meta-llama/llama-3.1-8b-instruct"]
-        == [0.7] * 3
+        candidate["grade"]["per_model_samples"]["longcat-2.5-preview-free"] == [0.7] * 3
     )
     grading_requests = [
         event["question"]
@@ -1159,8 +1158,7 @@ def test_optimizer_keeps_legacy_min_pair_without_compatible_evidence(
         item for item in report["candidates"] if item["candidate_id"] != "original"
     )
     assert (
-        candidate["grade"]["per_model_samples"]["meta-llama/llama-3.1-8b-instruct"]
-        == [0.4] * 3
+        candidate["grade"]["per_model_samples"]["longcat-2.5-preview-free"] == [0.4] * 3
     )
 
 
