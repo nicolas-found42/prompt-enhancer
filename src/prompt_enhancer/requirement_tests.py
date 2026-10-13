@@ -141,15 +141,18 @@ def compile_source_tests(
                     if not isinstance(decision, NoulDecision)
                     else "The binding decision does not establish source support."
                 )
-                if (
-                    isinstance(decision, NoulDecision)
-                    and decision.probability >= 0.8
-                    and decision.confidence >= 0.8
-                ):
-                    binding["status"] = "supported"
-                    binding["reason"] = (
-                        "The proposed check has supported source binding."
-                    )
+                if isinstance(decision, NoulDecision) and decision.confidence >= 0.8:
+                    if decision.probability >= 0.8:
+                        binding["status"] = "supported"
+                        binding["reason"] = (
+                            "The proposed check has supported source binding."
+                        )
+                    elif decision.probability <= 0.2:
+                        binding["status"] = "rejected"
+                        binding["reason"] = (
+                            "The binding judge found that the proposed check "
+                            "does not test this original requirement."
+                        )
             if on_evidence:
                 on_evidence(
                     json.loads(json.dumps({"attempts": attempts, "coverage": coverage}))
@@ -157,10 +160,21 @@ def compile_source_tests(
         supported_ids = {
             item["test_id"] for item in bindings if item["status"] == "supported"
         }
+        judged_ids = {
+            item["test_id"] for item in bindings if item["status"] != "rejected"
+        }
+        # Exclude a check only when every binding is a confident rejection. A
+        # missing, invalid, uncertain or oversized judgment leaves the screened
+        # check in use, but it cannot establish requirement coverage.
         unbound = [
             test
             for test in compiled.tests
-            if requirements and test.id not in supported_ids
+            if requirements and test.id not in judged_ids
+        ]
+        unresolved_tests = [
+            test
+            for test in compiled.tests
+            if requirements and test.id in judged_ids and test.id not in supported_ids
         ]
         accepted.update(
             {test.id: test for test in compiled.tests if test not in unbound}
@@ -179,6 +193,9 @@ def compile_source_tests(
         # Retain the physical compiler acceptance separately from the binding
         # gate; rejected proposals remain inspectable and can be replaced once.
         attempt_record["binding_rejected"] = [test.to_dict() for test in unbound]
+        attempt_record["binding_unresolved"] = [
+            test.to_dict() for test in unresolved_tests
+        ]
         retained_rejections.extend(compiled.rejected)
         retained_checks.extend(compiled.faithfulness_checks)
         retained_screening.extend(compiled.screening_checks)

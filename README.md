@@ -295,8 +295,11 @@ candidate identities stay in the report. A confident failure or unresolved judgm
 cannot qualify a draft. Semantic passes never erase deterministic failures. This
 records judgment uncertainty; it does not establish semantic or sentence calibration.
 Rejected proposed success tests retain their source associations and screening
-reasons. Only tests with a supported source binding enter grading; binding checks
-use bounded batches and retain incomplete judgments. The engine may generate one replacement batch in a Round and screen it
+reasons. A screened test is excluded from grading only when the binding judge
+confidently rejects every source requirement for it. A missing, invalid, uncertain
+or oversized binding judgment keeps the test in grading without counting it as
+requirement coverage, so a judge outage cannot remove answer verification. Binding
+checks use bounded batches and retain incomplete judgments. The engine may generate one replacement batch in a Round and screen it
 again within the remaining active deadline. The original obligation remains active
 when proposals are rejected or no usable binding is found. Losing drafts pass their
 own source failure IDs, offending evidence and text to the next Round's writer;

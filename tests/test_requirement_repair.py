@@ -258,17 +258,38 @@ def test_unbound_accepted_proposal_is_retained_but_excluded_from_grading(
         store=RunStore(tmp_path / "unbound.sqlite"), gateway=gateway
     ).optimize(prompt, {"time_limit_s": 0})
     evidence = result["report"]["history"][0]["evidence"]["test_screening"]
-    assert evidence["tests"] == []
     source_checks = evidence["source_checks"]
-    assert len(source_checks["attempts"]) == 2
-    assert all(attempt["tests"] for attempt in source_checks["attempts"])
-    assert all(attempt["binding_rejected"] for attempt in source_checks["attempts"])
     assert source_checks["coverage"][0]["status"] == "unresolved"
-    assert evidence["rejected"]
-    assert not any(
+    graded = any(
         str(entry["question"].get("key", "")).startswith("grade_")
         for entry in gateway.decision_log
     )
+    if binding is None:
+        # A missing binding judgment cannot remove answer verification.
+        assert [test["question"] for test in evidence["tests"]] == [
+            "Does the answer equal PING and mention bananas?"
+        ]
+        assert len(source_checks["attempts"]) == 1
+        attempt = source_checks["attempts"][0]
+        assert attempt["binding_unresolved"] and not attempt["binding_rejected"]
+        assert all(
+            item["status"] == "unresolved"
+            and item["reason"] == "The binding judge returned no decision."
+            for item in attempt["bindings"]
+        )
+        assert graded
+        return
+    assert evidence["tests"] == []
+    assert len(source_checks["attempts"]) == 2
+    assert all(attempt["tests"] for attempt in source_checks["attempts"])
+    assert all(attempt["binding_rejected"] for attempt in source_checks["attempts"])
+    assert all(
+        item["status"] == "rejected"
+        for attempt in source_checks["attempts"]
+        for item in attempt["bindings"]
+    )
+    assert evidence["rejected"]
+    assert not graded
 
 
 def test_source_bindings_are_size_bounded_batches_and_checkpoint_partial_answers():
@@ -469,7 +490,8 @@ def test_screened_out_unbound_proposal_still_informs_bounded_replacement(
     assert feedback["test"]["question"] == "Does the answer contain PING?"
     assert feedback["reason"] and feedback["requirement_ids"] == []
     assert feedback["bindings"] and all(
-        item["status"] == "unresolved" for item in feedback["bindings"]
+        item["status"] == ("unresolved" if missing_binding else "rejected")
+        for item in feedback["bindings"]
     )
     assert source["coverage"][0]["status"] == "unresolved"
 
@@ -482,7 +504,10 @@ def test_screened_out_unbound_proposal_still_informs_bounded_replacement(
         ("outage", "The binding judge could not be reached."),
         ("oversize", "The binding request exceeds the supported 48000-byte limit."),
         ("uncertain", "The binding decision does not establish source support."),
-        ("unsupported", "The binding decision does not establish source support."),
+        (
+            "unsupported",
+            "The binding judge found that the proposed check does not test this original requirement.",
+        ),
     ],
 )
 def test_binding_uncertainty_retains_its_reason_and_physical_tests(mode, reason):
@@ -535,21 +560,28 @@ def test_binding_uncertainty_retains_its_reason_and_physical_tests(mode, reason)
         prompt + ("\nContext: " + "x" * 48_000 if mode == "oversize" else ""),
         requirements,
     )
-    assert not compiled.tests
-    assert len(evidence["attempts"]) == 2
+    status = "rejected" if mode == "unsupported" else "unresolved"
     assert all(attempt["tests"] for attempt in evidence["attempts"])
     assert all(
-        binding["status"] == "unresolved" and binding.get("reason") == reason
+        binding["status"] == status and binding.get("reason") == reason
         for attempt in evidence["attempts"]
         for binding in attempt["bindings"]
     )
     assert all(item["status"] == "unresolved" for item in evidence["coverage"])
     assert "private diagnostics" not in json.dumps(evidence)
     assert bool(binding_calls) is (mode != "oversize")
-    assert [attempt["tests"][0]["id"] for attempt in evidence["attempts"]] == [
-        "rNone:a1:t0",
-        "rNone:a2:t0",
-    ]
+    if mode == "unsupported":
+        assert not compiled.tests
+        assert [attempt["tests"][0]["id"] for attempt in evidence["attempts"]] == [
+            "rNone:a1:t0",
+            "rNone:a2:t0",
+        ]
+    else:
+        # An unavailable, invalid, uncertain or oversized judgment cannot
+        # remove the screened check, so the round keeps answer verification.
+        assert [test.id for test in compiled.tests] == ["rNone:a1:t0"]
+        assert len(evidence["attempts"]) == 1
+        assert evidence["attempts"][0]["binding_unresolved"]
 
 
 def test_worker_deadline_is_durable_before_the_completion_handoff(
@@ -603,3 +635,78 @@ def test_worker_deadline_is_durable_before_the_completion_handoff(
     finally:
         release.set()
         jobs._executor.shutdown(wait=True)
+
+
+def test_replacement_reusing_a_positional_id_keeps_both_obligations():
+    from prompt_enhancer.requirement_tests import compile_source_tests
+    from prompt_enhancer.requirements import extract_requirements
+    from prompt_enhancer.success_tests import SuccessTestCompiler
+
+    prompt = "Write using {one} and {two}."
+    requirements = extract_requirements(prompt)
+    gateway = compound_gateway(prompt, [])
+    decide_batch, decide = gateway.decide_batch, gateway.decision_handler
+
+    def faithful(request, **params):
+        if str(request.get("key", "")).startswith("faithful:"):
+            return {"type": "noul", "probability_true": 0.99, "confidence": 1.0}
+        return decide(request, **params)
+
+    def generate(_model, messages, **_params):
+        attempt = json.loads(messages[1]["content"])["attempt"]
+        questions = (
+            ["Does the answer use {one}?", "Does the answer mention bananas?"]
+            if attempt == 1
+            else ["Does the answer use {two}?"]
+        )
+        return json.dumps(
+            {
+                "tests": [
+                    {
+                        "id": f"t{index}",
+                        "question": question,
+                        "kind": "noul",
+                        "expected": "yes",
+                    }
+                    for index, question in enumerate(questions)
+                ]
+            }
+        )
+
+    def bindings(requests, **params):
+        if not all(
+            str(item.get("key", "")).startswith("requirement:test-binding:")
+            for item in requests
+        ):
+            return decide_batch(requests, **params)
+        answers = []
+        for request in requests:
+            question = request["state"]["test"]["question"]
+            requirement = json.dumps(request["state"]["requirement"])
+            bound = any(
+                word in question and word in requirement for word in ("{one}", "{two}")
+            )
+            answers.append(
+                {
+                    "type": "noul",
+                    "probability_true": 0.99 if bound else 0.01,
+                    "confidence": 1.0,
+                }
+            )
+        return answers
+
+    gateway.chat_handler, gateway.decision_handler = generate, faithful
+    gateway.decide_batch = bindings
+    compiler = SuccessTestCompiler(
+        gateway, writer_model="test", screen_protocol_version=1
+    )
+    compiled, evidence = compile_source_tests(compiler, prompt, requirements)
+    assert len(evidence["attempts"]) == 2
+    assert [test.id for test in compiled.tests] == ["rNone:a1:t0", "rNone:a2:t0"]
+    assert [test.question for test in compiled.tests] == [
+        "Does the answer use {one}?",
+        "Does the answer use {two}?",
+    ]
+    assert evidence["coverage"] and all(
+        item["status"] == "tested" for item in evidence["coverage"]
+    )
