@@ -1,5 +1,7 @@
 """Public-flow controls for the next requirement-ledger slice of #187."""
 
+import json
+
 import pytest
 from active_clock import TickingClock, advancing_chat
 from test_always_attempt import _gateway
@@ -489,4 +491,11 @@ def test_csv_column_list_does_not_invent_a_required_header_row():
     )
     assert result["report"]["outcome"] == "converged"
     assert result["report"]["requirements"]["coverage"] == "partial"
-    assert result["report"]["requirements"]["requirements"] == []
+    requirements = result["report"]["requirements"]["requirements"]
+    assert len(requirements) == 1 and requirements[0]["kind"] == "csv_contract"
+    findings = result["report"]["selection_evidence"]["selected_candidate"]["metadata"][
+        "requirement_findings"
+    ]
+    assert all(item["status"] == "untestable" for item in findings)
+    contract = json.loads(requirements[0]["oracle"]["expected"])
+    assert contract["columns"] is None and contract["uncertainty"]

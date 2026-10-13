@@ -48,7 +48,11 @@ def test_single_oversized_question_retains_all_source_windows_and_stays_incomple
         assert len(json.dumps(envelope, ensure_ascii=False).encode()) <= 1976
     assert evidence["provider_requests"] <= 8
     events = [facts for stage, facts in activity if stage == "activity"]
-    assert events[0]["kind"] == "repair"
+    assert events[0]["kind"] == "coverage"
+    assert events[0]["requirements"]["coverage"] == "partial"
+    assert (
+        next(item for item in events if item["kind"] != "coverage")["kind"] == "repair"
+    )
     assert any(
         item["kind"] == "blocked" and "partial checks" in item["summary"]
         for item in events

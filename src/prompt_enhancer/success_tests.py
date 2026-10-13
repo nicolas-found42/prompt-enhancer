@@ -358,12 +358,14 @@ class SuccessTestCompiler:
         # and accidentally retrying the scope or its provider call.
         return context(**kwargs)
 
-    def compile(self, prompt: str) -> CompiledSuccessTests:
+    def compile(
+        self, prompt: str, *, generation_state: Mapping[str, Any] | None = None
+    ) -> CompiledSuccessTests:
         parse_rejections: list[RejectedSuccessTest | MalformedSuccessTest] = []
 
         def read(response: Any) -> tuple[SuccessTest, ...]:
             parse_rejections.clear()
-            return self._parse_tests(
+            tests = self._parse_tests(
                 response,
                 stable_ids=self.screen_protocol_version >= 2,
                 rejected=parse_rejections,
@@ -371,13 +373,28 @@ class SuccessTestCompiler:
                 reject_malformed=self.instruction_version
                 >= WRITER_REPLY_RECOVERY_MIN_VERSION,
             )
+            if generation_state:
+                prefix = f"r{self.round_number}:a{generation_state['attempt']}:"
+                tests = tuple(replace(test, id=prefix + test.id) for test in tests)
+                parse_rejections[:] = [
+                    replace(item, test=replace(item.test, id=prefix + item.test.id))
+                    if isinstance(item, RejectedSuccessTest)
+                    else replace(item, test_id=prefix + item.test_id)
+                    for item in parse_rejections
+                ]
+            return tests
 
         with self._operation_scope("generate"):
             proposed = read_writer_reply(
                 self.gateway,
                 model=self.writer_model,
-                instructions=self._instructions(),
-                state={"prompt": prompt},
+                instructions=self._instructions()
+                + (
+                    " Use state.requirements as immutable source obligations. For replacements, address the concrete state.rejected_proposals screening evidence. Do not delete an obligation, strengthen it or use rejection feedback as new user intent."
+                    if generation_state
+                    else ""
+                ),
+                state={"prompt": prompt, **(generation_state or {})},
                 read=read,
                 operation="success_tests",
                 instruction_version=self.instruction_version,

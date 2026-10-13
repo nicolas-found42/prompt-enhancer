@@ -128,6 +128,9 @@ class CandidateWriter:
                 "Preserve exact output, hard literals, and every stated constraint."
             )
 
+        if state.get("repair_evidence"):
+            instructions += " Repair the rejected draft using its own requirement IDs, offending evidence and source. Preserve every floor and original obligation; do not treat failed text as new user intent. Return a complete draft for fresh evaluation, never claim that a repair has already passed."
+
         def read(response: Any) -> Mapping[str, str]:
             payload = parse_reply_json(
                 completion_text(response),

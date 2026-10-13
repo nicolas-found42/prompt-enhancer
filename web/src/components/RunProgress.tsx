@@ -1,3 +1,5 @@
+import RequirementCoverage from "../RequirementCoverage";
+import { record } from "../outcome";
 import type { Job } from "../api";
 import { elapsedText, stageLabels } from "../outcome";
 
@@ -21,6 +23,56 @@ function spentText(costTotal: number | undefined): string | null {
 export default function RunProgress({ job, onCancel }: Props) {
   const round = job.round.round ? ` · round ${job.round.round}` : "";
   const spent = spentText(job.cost_total);
+  const coverageEvent = [...(job.events ?? [])]
+    .reverse()
+    .find((event) => event.requirements);
+  const candidates = new Map<string, Record<string, unknown>>();
+  let selected: Record<string, unknown> | undefined;
+  for (const event of job.events ?? []) {
+    if (!event.candidate_id) continue;
+    const key = `${event.round}:${event.candidate_id}`;
+    const candidate = candidates.get(key) ?? {
+      candidate_id: event.candidate_id,
+      round: event.round,
+      status: "checks pending",
+    };
+    if (event.draft) candidate.text = event.draft;
+    if (event.checks?.length) {
+      candidate.metadata = {
+        requirement_findings: event.checks.flatMap(
+          (check) => check.evidence ?? []
+        ),
+      };
+    }
+    if (event.kind === "qualified") {
+      candidate.selected = true;
+      candidate.status = "qualified";
+      selected = candidate;
+    } else if (event.kind === "blocked") {
+      candidate.selected = false;
+      candidate.status = "did not qualify";
+    }
+    candidates.set(key, candidate);
+  }
+  const selection = {
+    selected_candidate: selected,
+    ranking: [...candidates.values()].filter(
+      (candidate) => candidate !== selected
+    ),
+  };
+  const rounds = new Map<number, Record<string, unknown>[]>();
+  for (const candidate of candidates.values()) {
+    const number = Number(candidate.round);
+    const ranking = rounds.get(number) ?? [];
+    ranking.push(candidate);
+    rounds.set(number, ranking);
+  }
+  const history = [...rounds.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([number, ranking]) => ({
+      round_number: number,
+      evidence: { selection_evidence: { ranking } },
+    }));
   const cancellationPending = job.cancellation_pending ?? job.cancel_requested;
 
   return (
@@ -72,6 +124,7 @@ export default function RunProgress({ job, onCancel }: Props) {
                 · {elapsedText(event.elapsed_ms)}
                 {event.round ? ` · round ${event.round}` : ""}
               </small>
+              {event.candidate_id && <p>Draft {event.candidate_id}</p>}
               {event.draft && (
                 <details>
                   <summary>
@@ -104,7 +157,8 @@ export default function RunProgress({ job, onCancel }: Props) {
                         {check.tested} passed check
                         {check.tested === 1 ? "" : "s"}, {check.failed} failed
                         check{check.failed === 1 ? "" : "s"}, {check.untestable}{" "}
-                        untestable check{check.untestable === 1 ? "" : "s"}.
+                        untestable check{check.untestable === 1 ? "" : "s"},{" "}
+                        {check.unresolved ?? 0} unresolved checks.
                       </p>
                       {check.reasons.map((reason) => (
                         <p key={reason}>{reason}</p>
@@ -125,6 +179,14 @@ export default function RunProgress({ job, onCancel }: Props) {
           </li>
         )}
       </ol>
+      {coverageEvent && (
+        <RequirementCoverage
+          live
+          ledger={record(coverageEvent.requirements)}
+          selection={selection}
+          history={history}
+        />
+      )}
       <p className="progress-note">
         You can leave this page open or come back later. The run keeps going and
         will show up in History.

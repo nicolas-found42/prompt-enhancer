@@ -146,12 +146,16 @@ export type RunEvent = {
   draft?: string;
   diff?: string;
   reasons?: string[];
+  requirements?: Record<string, unknown>;
   checks?: {
     requirement_id: string;
     source: string;
     tested: number;
     failed: number;
     untestable: number;
+    unresolved?: number;
+    scope?: string;
+    evidence?: Record<string, unknown>[];
     reasons: string[];
   }[];
 };
