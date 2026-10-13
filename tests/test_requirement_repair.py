@@ -218,7 +218,7 @@ def test_repeated_failed_repairs_reach_deadline_and_keep_every_completed_round(
 
 
 @pytest.mark.parametrize("binding", [0.01, None])
-def test_unbound_accepted_proposal_is_retained_but_excluded_from_grading(
+def test_unbound_proposal_leaves_grading_only_after_confident_rejection(
     tmp_path, binding
 ):
     prompt = "Reply with exactly PING and nothing else."
