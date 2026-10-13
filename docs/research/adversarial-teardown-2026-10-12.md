@@ -326,3 +326,24 @@ Original lifecycle assertions and deadlines remain unchanged. Final delivery
 checks and CI determine the outcome; no live provider/model inference is
 authorized for this follow-up, including development Jev. The earlier model
 reviews do not cover this new client patch or agent-guidance edits.
+
+
+## PR review follow-up
+
+Five latest-head review findings were checked against source and deterministic
+regressions. Native feedback and assumption edits now merge their changes under
+RunStore.update_run so progress advanced after the edit's read remains intact.
+Cleanup failures retain a cleanup_failed check, propagate the failure, and cannot
+produce a complete receipt. Last-result ownership uses sessionStorage; a shared
+legacy localStorage result cannot suppress active-job discovery in a new tab.
+Old shared cache entries are no longer treated as owned; persisted runs remain
+accessible in History. Unfiltered positive-limit native history pages use an
+offset-aware SQL query with the same created_at/run_id ordering, while searches,
+filters and unlimited snapshots retain complete coverage. Pending detail reads
+are invalidated at both the start and completion of run/job mutations.
+
+Focused tests reproduce the progress and post-mutation defects before the fixes
+and cover page decode counts, both edit paths, cleanup failure propagation and
+cross-tab discovery afterward. All findings and fingerprints are retained in
+the delivery evidence; fresh CI is required for the updated head. No live model
+judgments were requested for this follow-up.

@@ -544,6 +544,19 @@ class RunHistory:
         terms = dict(query) if isinstance(query, Mapping) else {}
         terms.update(metadata or {})
         wanted_feedback = _feedback(feedback) if feedback is not None else None
+        page = getattr(self.store, "page_runs", None)
+        if (
+            callable(page)
+            and int(limit) > 0
+            and not search_text
+            and not terms
+            and status is None
+            and feedback is None
+        ):
+            return [
+                self._summary(_normalise_record(_mapping(item), copy_values=False))
+                for item in page(int(limit), max(0, int(offset)))
+            ]
         details: list[dict[str, Any]] = []
         complete_snapshot = getattr(self.store, "all_runs", None)
         if callable(complete_snapshot):
@@ -643,14 +656,18 @@ class RunHistory:
             "weak_dimensions": weak_dimensions,
             "recorded_at": _utc_now(),
         }
-        self.store.save_run(
-            {
-                **original,
-                "feedback": value,
-                "feedback_at": labels["recorded_at"],
-                "feedback_labels": labels,
-            }
-        )
+        changes = {
+            "feedback": value,
+            "feedback_at": labels["recorded_at"],
+            "feedback_labels": labels,
+        }
+        atomic_update = getattr(self.store, "update_run", None)
+        if callable(atomic_update):
+            atomic_update(
+                str(run_id), lambda current: {**(current or original), **changes}
+            )
+        else:
+            self.store.save_run({**original, **changes})
         return self.require_run(str(run_id))
 
     def all_runs(self) -> list[dict[str, Any]]:

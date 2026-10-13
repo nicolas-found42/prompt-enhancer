@@ -2563,7 +2563,14 @@ class PromptOptimizer:
                 self._usage_cost(),
             ),
         )
-        self.store.save_run({**record, "result": result, "cost": result["cost"]})
+        self.store.update_run(
+            run_id,
+            lambda current: {
+                **(current or record),
+                "result": result,
+                "cost": result["cost"],
+            },
+        )
         return result
 
     def _usage_cost(self) -> CostBreakdown:

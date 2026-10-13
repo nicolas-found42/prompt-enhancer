@@ -543,7 +543,7 @@ test("an intentionally empty draft stays empty when an older result restores", a
 }) => {
   await page.addInitScript(() => {
     localStorage.setItem("prompt-enhancer.draft", "");
-    localStorage.setItem(
+    sessionStorage.setItem(
       "prompt-enhancer.last-result",
       JSON.stringify({ runId: "older-result", at: Date.now() })
     );
@@ -585,7 +585,7 @@ test("a late result restore does not repopulate a cleared draft", async ({
 }) => {
   await page.addInitScript(() => {
     localStorage.setItem("prompt-enhancer.draft", "Draft to clear");
-    localStorage.setItem(
+    sessionStorage.setItem(
       "prompt-enhancer.last-result",
       JSON.stringify({ runId: "late-result", at: Date.now() })
     );
@@ -1297,7 +1297,7 @@ test("reload restores this tab's result while another run is active", async ({
   page,
 }) => {
   await page.addInitScript(() => {
-    localStorage.setItem(
+    sessionStorage.setItem(
       "prompt-enhancer.last-result",
       JSON.stringify({ runId: "my-result", at: Date.now() })
     );
@@ -1330,7 +1330,7 @@ test("restoring and opening the same run share an unfinished detail read", async
   page,
 }) => {
   await page.addInitScript(() => {
-    localStorage.setItem(
+    sessionStorage.setItem(
       "prompt-enhancer.last-result",
       JSON.stringify({ runId: "shared-result", at: Date.now() })
     );
@@ -1380,4 +1380,31 @@ test("restoring and opening the same run share an unfinished detail read", async
   ).toBeVisible();
   await expect(page.locator(".final-prompt")).toHaveText(result.final_prompt);
   expect(reads).toBe(1);
+});
+
+test("a new tab discovers a running job despite another tab's shared old result", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      "prompt-enhancer.last-result",
+      JSON.stringify({ runId: "other-result", at: Date.now() })
+    );
+  });
+  const running = job("shared-running", "running", null, {
+    prompt: "A running shared job.",
+  });
+  await page.route("**/api/jobs", (route) =>
+    route.fulfill({ json: [running] })
+  );
+  await page.route("**/api/jobs/shared-running*", (route) =>
+    route.fulfill({ json: running })
+  );
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Improving your prompt" })
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Your prompt", exact: true })
+  ).toHaveValue("A running shared job.");
 });

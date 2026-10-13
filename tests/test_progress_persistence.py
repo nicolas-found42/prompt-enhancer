@@ -134,3 +134,72 @@ def test_stale_watchdog_and_late_checkpoint_cannot_publish(tmp_path):
     finally:
         jobs.close()
         store.close()
+
+
+def test_feedback_preserves_progress_advanced_after_the_edit_read(monkeypatch):
+    from prompt_enhancer.history import RunHistory
+
+    store = RunStore(":memory:")
+    store.save_run(
+        {
+            "run_id": "feedback-race",
+            "prompt": "Original",
+            "result": {"status": "completed", "final_prompt": "Original"},
+            "job": {"events": ["old"]},
+        }
+    )
+    read = store.get_run
+    reads = 0
+
+    def interleaved(run_id):
+        nonlocal reads
+        snapshot = read(run_id)
+        reads += 1
+        if reads == 2:
+            store.update_job(run_id, {"events": ["old", "new"]})
+        return snapshot
+
+    monkeypatch.setattr(store, "get_run", interleaved)
+    RunHistory(store).record_feedback("feedback-race", "accept")
+    assert store.get_run("feedback-race")["job"]["events"] == ["old", "new"]
+    store.close()
+
+
+def test_assumption_edit_preserves_progress_advanced_during_meaning_check(monkeypatch):
+    from prompt_enhancer.gateway import ScriptedGateway
+    from prompt_enhancer.optimizer import PromptOptimizer
+
+    store = RunStore(":memory:")
+    store.save_run(
+        {
+            "run_id": "assumption-race",
+            "prompt": "Help me.",
+            "result": {
+                "status": "completed",
+                "final_prompt": "Help me. Clarifications: goal: Summarize",
+                "report": {
+                    "assumptions": [
+                        {
+                            "key": "goal",
+                            "value": "Summarize",
+                            "source": "user_confirmed",
+                        }
+                    ]
+                },
+            },
+            "job": {"events": ["old"]},
+        }
+    )
+    engine = PromptOptimizer(store=store, gateway=ScriptedGateway())
+
+    def meaning_check(*args):
+        store.update_job("assumption-race", {"events": ["old", "new"]})
+        return {"passed": True}
+
+    monkeypatch.setattr(engine, "_assumption_meaning_check", meaning_check)
+    result = engine.update_assumption(
+        "assumption-race", {"key": "goal", "value": "Analyze"}
+    )
+    assert "goal: Analyze" in result["final_prompt"]
+    assert store.get_run("assumption-race")["job"]["events"] == ["old", "new"]
+    store.close()

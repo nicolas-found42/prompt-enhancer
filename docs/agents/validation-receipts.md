@@ -38,7 +38,9 @@ Receipts include runner PID/start identity, host, child process identity and a
 heartbeat updated while waiting for a check. SIGINT/SIGTERM stop the child process
 groups and retain an `interrupted` receipt. Graceful interruption gives test
 runners an opportunity to close their detached fixture services before
-termination escalates. A hard kill cannot update the file;
+termination escalates. A cleanup failure is recorded as `cleanup_failed` and
+propagated; inspect the recorded process identities because owned processes may
+still be running. Such a receipt is not successful. A hard kill cannot update the file;
 inspect it without rewriting the original evidence:
 
 ```sh

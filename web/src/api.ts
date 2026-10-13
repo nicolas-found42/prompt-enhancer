@@ -284,6 +284,7 @@ export function requestJson<T>(
         : input.toString();
   if (method.toUpperCase() !== "GET" && /\/api\/(?:runs|jobs)\//.test(url)) {
     pendingRunReads.clear();
+    return fetchJson<T>(input, init).finally(() => pendingRunReads.clear());
   }
   const key =
     typeof input === "string" && !init && /^\/api\/runs\/[^/?]+$/.test(input)

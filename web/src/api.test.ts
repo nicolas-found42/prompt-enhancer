@@ -120,3 +120,25 @@ it("keeps a pending run read shared while an unrelated health assessment posts",
   expect(await first).toEqual({ result: "same run" });
   expect(await second).toEqual({ result: "same run" });
 });
+
+it("starts a fresh read after mutation completion even when a mid-mutation read is pending", async () => {
+  const mutation = deferred<Response>();
+  const stale = deferred<Response>();
+  const fetcher = vi
+    .fn()
+    .mockReturnValueOnce(mutation.promise)
+    .mockReturnValueOnce(stale.promise)
+    .mockResolvedValueOnce(new Response(JSON.stringify({ version: "new" })));
+  vi.stubGlobal("fetch", fetcher);
+  const saving = requestJson("/api/runs/after-mutation/feedback", {
+    method: "POST",
+  });
+  const during = requestJson("/api/runs/after-mutation");
+  mutation.resolve(new Response("{}"));
+  await saving;
+  const after = requestJson("/api/runs/after-mutation");
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  stale.resolve(new Response(JSON.stringify({ version: "old" })));
+  expect(await during).toEqual({ version: "old" });
+  expect(await after).toEqual({ version: "new" });
+});

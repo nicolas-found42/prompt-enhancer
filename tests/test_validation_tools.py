@@ -535,3 +535,49 @@ def test_parallel_interrupt_allows_runner_to_close_detached_service(tmp_path):
                 os.kill(int(marker.read_text()), 15)
             except ProcessLookupError:
                 pass
+
+
+def test_cleanup_failure_is_explicit_and_propagated(tmp_path, monkeypatch):
+    sys.path.insert(0, str(SCRIPTS))
+    import validation.receipts as receipts
+
+    root = tmp_path / "cleanup"
+    root.mkdir()
+    marker = root / "started"
+    peer = root / "peer.py"
+    peer.write_text(
+        "import pathlib,sys,time\npathlib.Path(sys.argv[1]).touch()\ntime.sleep(60)\n"
+    )
+    failure = root / "failure.py"
+    failure.write_text(
+        "import pathlib,sys,time\nwhile not pathlib.Path(sys.argv[1]).exists(): time.sleep(.01)\nsys.exit(7)\n"
+    )
+    receipt = receipts.Receipt(
+        root / "receipt", kind="validation", phase="reproduction", sha="fixture"
+    )
+    original_cleanup = receipts.stop_process_group
+    owned = []
+
+    def denied(process):
+        owned.append(process)
+        raise PermissionError("simulated denial")
+
+    monkeypatch.setattr(receipts, "stop_process_group", denied)
+    try:
+        with pytest.raises(RuntimeError, match="Process cleanup failed for service"):
+            receipt.run_many(
+                [
+                    ("service", [sys.executable, str(peer), str(marker)], None),
+                    ("failure", [sys.executable, str(failure), str(marker)], None),
+                ],
+                cwd=root,
+            )
+        check = receipt.value["checks"][0]
+        assert check["status"] == "cleanup_failed"
+        assert check["cleanup_error"] == "PermissionError"
+        assert check["exit_code"] is None
+        with pytest.raises(ValueError, match="incomplete"):
+            receipt.finish()
+    finally:
+        for process in owned:
+            original_cleanup(process)

@@ -278,6 +278,15 @@ class RunStore:
             ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def page_runs(self, limit: int, offset: int) -> list[dict[str, Any]]:
+        """Read one unfiltered history page in the same stable order as search."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM runs ORDER BY created_at DESC, run_id DESC LIMIT ? OFFSET ?",
+                (max(1, int(limit)), max(0, int(offset))),
+            ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def all_runs(self) -> list[dict[str, Any]]:
         """Read every locally persisted run for offline training."""
         with self._lock:

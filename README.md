@@ -313,3 +313,9 @@ Progress snapshots are persisted separately from model evidence in SQLite. Exist
 databases migrate on open; history and detail responses retain the same evidence
 fields. Reloading a tab restores its recent saved result before discovering other
 active runs, while tabs without a saved result can still join a running job.
+
+
+Recent result restoration belongs to the current tab (`sessionStorage`). A shared
+legacy result cache does not prevent a new tab from joining an active job; saved
+results remain available in History. Native unfiltered history pages read only
+the requested rows, while searches and filters retain complete native coverage.

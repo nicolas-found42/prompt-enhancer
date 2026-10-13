@@ -273,13 +273,23 @@ class Receipt:
         except BaseException as exc:
             if isinstance(exc, KeyboardInterrupt):
                 self.value.update(status="interrupted", error=str(exc) or "interrupted")
+            cleanup_failures: list[str] = []
             for item in running:
                 process, check, _, _, _ = item
                 try:
                     stop_process_group(process)
                 except (OSError, subprocess.TimeoutExpired) as cleanup_error:
                     check["cleanup_error"] = type(cleanup_error).__name__
-                finish(item, status="interrupted")
+                    cleanup_failures.append(str(check["name"]))
+                    finish(item, status="cleanup_failed")
+                else:
+                    finish(item, status="interrupted")
+            if cleanup_failures:
+                raise RuntimeError(
+                    "Process cleanup failed for "
+                    + ", ".join(cleanup_failures)
+                    + "; owned processes may still be running"
+                ) from exc
             raise
         finally:
             signal.signal(signal.SIGTERM, previous_handler)

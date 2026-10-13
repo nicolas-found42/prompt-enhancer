@@ -103,3 +103,18 @@ def test_snapshot_summary_matches_detail_and_search_preserves_nested_evidence(co
         history._summary(detail)
     ]
     assert corpus.get_run("run-000") == before
+
+
+def test_unfiltered_page_decodes_only_requested_rows(corpus, monkeypatch):
+    decoded = []
+    decode = corpus._row_to_record
+
+    def counted(row):
+        decoded.append(row["run_id"])
+        return decode(row)
+
+    monkeypatch.setattr(corpus, "_row_to_record", counted)
+    page = RunHistory(corpus).list_runs(limit=3, offset=4)
+    assert [row["run_id"] for row in page] == ["run-255", "run-254", "run-253"]
+    assert decoded == ["run-255", "run-254", "run-253"]
+    assert RunHistory(corpus).list_runs(limit=2, offset=260) == []
