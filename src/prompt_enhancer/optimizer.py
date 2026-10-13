@@ -543,7 +543,7 @@ class PromptOptimizer:
         count = self.config.weak_model_count
         if len(selected_weak) < count:
             raise ValueError(f"weak panel requires {count} models")
-        _require_selectable((writer, strong, *selected_weak[:count]))
+        _require_selectable((writer, strong, *selected_weak))
         return replace(
             self.config,
             writer_model=writer,

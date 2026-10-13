@@ -118,3 +118,74 @@ it("groups unavailable choices while keeping them manually selectable", async ()
     weak: ["or-weak", "go-weak"],
   });
 });
+
+function renderPanel(weak: string[], onChange = vi.fn()) {
+  render(
+    <ModelPicker
+      catalog={catalog}
+      selection={{ ...selection, weak }}
+      onChange={onChange}
+      onSave={vi.fn()}
+      busy={false}
+      open
+      onToggle={vi.fn()}
+      providers={{}}
+    />
+  );
+  return onChange;
+}
+
+it("removes only the unchecked entry of a model repeated in the weak panel", async () => {
+  const user = userEvent.setup();
+  const onChange = renderPanel([
+    "go-weak",
+    "or-weak",
+    "go-weak",
+    "or-weak",
+    "go-weak",
+  ]);
+
+  const repeated = screen.getAllByRole("checkbox", {
+    name: "Go test, model go-weak, OpenCode Go",
+  });
+  expect(repeated).toHaveLength(3);
+  const middle = repeated[1];
+  if (!middle) throw new Error("The second repeated entry is missing");
+  await user.click(middle);
+
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...selection,
+    weak: ["go-weak", "or-weak", "or-weak", "go-weak"],
+  });
+});
+
+it("adds another entry for a model already in the weak panel", async () => {
+  const user = userEvent.setup();
+  const weak = ["or-weak", "or-weak", "or-weak", "or-weak"];
+  const onChange = renderPanel(weak);
+
+  await user.click(
+    screen.getByRole("checkbox", {
+      name: "Router test, model or-weak, OpenRouter, add again",
+    })
+  );
+
+  expect(onChange).toHaveBeenLastCalledWith({
+    ...selection,
+    weak: [...weak, "or-weak"],
+  });
+});
+
+it("keeps Save disabled until the weak panel has five entries", () => {
+  renderPanel(["go-weak", "go-weak", "go-weak", "go-weak"]);
+  const save = screen.getByRole("button", { name: "Save model defaults" });
+  expect(save).toBeDisabled();
+  expect(save).toHaveAccessibleDescription(/Choose 5 lower-cost test model/);
+});
+
+it("allows Save for five entries that repeat one model", () => {
+  renderPanel(["go-weak", "go-weak", "go-weak", "go-weak", "go-weak"]);
+  expect(
+    screen.getByRole("button", { name: "Save model defaults" })
+  ).toBeEnabled();
+});

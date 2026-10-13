@@ -165,6 +165,17 @@ def is_selectable_model(model_id: str) -> bool:
     return model_id in SELECTABLE_OPENROUTER_MODELS or "/" not in model_id
 
 
+def route_for(model_id: str, go_ids: Iterable[str]) -> str:
+    """Return the provider for a non-judge model.
+
+    Only vendor-namespaced IDs reach OpenRouter; an unknown slashless ID goes to
+    Go so a mistyped or retired Go model fails there, under its own name.
+    """
+    if model_id in go_ids or "/" not in model_id:
+        return "go"
+    return "openrouter"
+
+
 def unselectable_models(model_ids: Iterable[str]) -> list[str]:
     """Return the IDs, in order and without repeats, that a user may not pick."""
     return list(
@@ -361,7 +372,7 @@ class LiveModelCatalog:
         if model_id == JEV_MODEL:
             return "openrouter"
         snapshot = self.snapshot or self.fetch()
-        return "go" if model_id in snapshot.go_ids else "openrouter"
+        return route_for(model_id, snapshot.go_ids)
 
 
 class StaticModelCatalog:
@@ -395,7 +406,7 @@ class StaticModelCatalog:
     def route_provider(self, model_id: str) -> str:
         if model_id == JEV_MODEL:
             return "openrouter"
-        return "go" if model_id in self._snapshot.go_ids else "openrouter"
+        return route_for(model_id, self._snapshot.go_ids)
 
 
 __all__ = [
@@ -413,5 +424,6 @@ __all__ = [
     "StaticModelCatalog",
     "is_selectable_model",
     "parse_catalog",
+    "route_for",
     "unselectable_models",
 ]

@@ -235,7 +235,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
         ],
         [
             ModelInfo(
-                "or-writer",
+                "vendor/or-writer",
                 "openrouter",
                 input_cost_per_token=0.01,
                 output_cost_per_token=0.02,
@@ -255,7 +255,7 @@ def test_routes_go_and_openrouter_with_stable_session_and_fixed_jev():
     )
     gateway.new_run("run-1")
     gateway.chat("go-writer", "hello", role="writer")
-    gateway.chat("or-writer", "hello", role="strong", run_id="run-1")
+    gateway.chat("vendor/or-writer", "hello", role="strong", run_id="run-1")
     gateway.decide(
         {"state": "the user prompt", "instructions": "classify"}, role="judge"
     )

@@ -1677,6 +1677,14 @@ def test_run_and_saved_settings_accept_repeated_weak_models(tmp_path) -> None:
     assert result["report"]["models"]["weak"] == weak
 
 
+def test_run_rejects_a_disallowed_weak_override_beyond_the_panel_size() -> None:
+    optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
+    weak = ["one", "two", "three", "four", "five", "google/gemma-3-4b-it"]
+
+    with pytest.raises(ValueError, match="google/gemma-3-4b-it"):
+        optimizer.optimize("Write a release note.", {"model_overrides": {"weak": weak}})
+
+
 @pytest.mark.parametrize("role", ["writer", "strong", "weak"])
 def test_run_rejects_openrouter_models_other_than_mistral_large(role: str) -> None:
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=_no_test_gateway())
