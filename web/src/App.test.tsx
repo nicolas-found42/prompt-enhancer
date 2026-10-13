@@ -64,11 +64,7 @@ const catalog: ModelCatalog = {
       { id: "glm-5.3-flash", provider: "go" },
       { id: "go-weak-model", provider: "go" },
     ],
-    openrouter: [
-      { id: "router-writer", provider: "openrouter" },
-      { id: "router-strong", provider: "openrouter" },
-      { id: "meta-llama/llama-3.1-8b-instruct", provider: "openrouter" },
-    ],
+    openrouter: [{ id: "mistralai/mistral-large-4-0", provider: "openrouter" }],
   },
 };
 
@@ -76,14 +72,13 @@ const settings: ModelSettings = {
   judge_model: "typesafe/jev-1.13",
   writer_model: "space-bunny-free",
   strong_check_model: "glm-5.3-flash",
-  weak_models: ["meta-llama/llama-3.1-8b-instruct", "go-weak-model"],
+  weak_models: ["mistralai/mistral-large-4-0", "go-weak-model"],
 };
 
 const providers: ProviderReport = {
   providers: {
     go: { status: "unavailable", http_status: 403, model: "space-bunny-free" },
   },
-  fallback: { writer: "router-writer", strong: "router-strong" },
 };
 
 beforeEach(() => {
@@ -114,10 +109,10 @@ it("explains the unavailable models plainly and keeps diagnostics available", as
     /Some models selected for this app can't be reached/
   );
   expect(mainMessage).toHaveTextContent(
-    "Some models selected for this app can't be reached, so your prompt can't run. Use the button to try a different set of models."
+    "Some models selected for this app can't be reached, so your prompt can't run. Check your OpenCode Go subscription, or open Model choices below to choose different models."
   );
   expect(mainMessage).not.toHaveTextContent(
-    /OpenCode Go|HTTP|writer|strong check|space-bunny/i
+    /HTTP|writer|strong check|space-bunny/i
   );
 
   fireEvent.click(within(banner).getByText("Show troubleshooting details"));
@@ -127,62 +122,7 @@ it("explains the unavailable models plainly and keeps diagnostics available", as
   expect(
     within(banner).getByText(/strong check \(glm-5.3-flash\)/)
   ).toBeVisible();
-
-  fireEvent.click(
-    within(banner).getByRole("button", { name: "Try different models" })
-  );
-  await waitFor(() =>
-    expect(
-      screen.queryByText(/Some models selected for this app/)
-    ).not.toBeInTheDocument()
-  );
-  fireEvent.click(screen.getByText("Model choices"));
-  expect(screen.getByLabelText("selected model choices")).toHaveTextContent(
-    JSON.stringify({
-      writer: "router-writer",
-      strong: "router-strong",
-      weak: ["meta-llama/llama-3.1-8b-instruct"],
-    })
-  );
-});
-
-it("does not offer a fallback action when OpenRouter is known to be unavailable", async () => {
-  vi.mocked(getProviders).mockResolvedValue({
-    ...providers,
-    providers: {
-      ...providers.providers,
-      openrouter: { status: "unavailable", http_status: 401 },
-    },
-  });
-
-  render(<App />);
-
-  const banner = await warningBanner();
-  expect(
-    within(banner).getByText(/Open Model choices below/)
-  ).toBeInTheDocument();
-  expect(
-    within(banner).queryByRole("button", { name: "Try different models" })
-  ).not.toBeInTheDocument();
-  expect(banner).not.toHaveTextContent(/working models|available models/);
-});
-
-it("does not offer a fallback action when no fallback models are configured", async () => {
-  vi.mocked(getProviders).mockResolvedValue({
-    ...providers,
-    fallback: { writer: "", strong: "" },
-  });
-
-  render(<App />);
-
-  const banner = await warningBanner();
-  expect(
-    within(banner).getByText(/Open Model choices below/)
-  ).toBeInTheDocument();
-  expect(
-    within(banner).queryByRole("button", { name: "Try different models" })
-  ).not.toBeInTheDocument();
-  expect(banner).not.toHaveTextContent(/working models|available models/);
+  expect(within(banner).queryByRole("button")).not.toBeInTheDocument();
 });
 
 const runningJob: Job = {
@@ -216,7 +156,6 @@ function trackScrolling() {
 async function startRun() {
   vi.mocked(getProviders).mockResolvedValue({
     providers: { go: { status: "ok" } },
-    fallback: providers.fallback,
   });
   const user = userEvent.setup();
   render(<App />);
@@ -368,11 +307,11 @@ function reattachedFailure(failure: Record<string, unknown>): void {
   vi.mocked(getJob).mockResolvedValue(job);
 }
 
-it("confirms which models were switched to and clears the refusal it fixes", async () => {
+it("keeps a Go refusal visible without switching models automatically", async () => {
   reattachedFailure({
     kind: "provider_refused",
     headline: "OpenCode Go refused the request",
-    hint: "Choose OpenRouter models for the writer and strong check in Model choices, or renew the subscription.",
+    hint: "Renew the subscription, or choose mistralai/mistral-large-4-0 for the writer and strong check in Model choices.",
     message: "",
     provider: "go",
   });
@@ -385,46 +324,10 @@ it("confirms which models were switched to and clears the refusal it fixes", asy
       name: "OpenCode Go refused the request",
     })
   ).toBeVisible();
-
-  fireEvent.click(
-    within(banner).getByRole("button", { name: "Try different models" })
-  );
-
-  const confirmation = await screen.findByText(/Switched to different models/);
-  expect(confirmation).toHaveTextContent("router-writer");
-  expect(confirmation).toHaveTextContent("router-strong");
-  expect(confirmation).toHaveTextContent("Optimize prompt");
-  expect(confirmation.closest("[role=status]")).not.toBeNull();
-  expect(
-    screen.queryByRole("heading", { name: "OpenCode Go refused the request" })
-  ).not.toBeInTheDocument();
+  expect(within(banner).queryByRole("button")).not.toBeInTheDocument();
   expect(screen.getByLabelText("Your prompt")).toHaveValue(
     "Write a note to my neighbour."
   );
-});
-
-it("keeps an unrelated failure visible after switching models", async () => {
-  reattachedFailure({
-    kind: "internal",
-    headline: "The run stopped before finishing",
-    hint: "Try again.",
-    message: "boom",
-  });
-
-  render(<App />);
-
-  const banner = await warningBanner();
-  await screen.findByRole("heading", {
-    name: "The run stopped before finishing",
-  });
-  fireEvent.click(
-    within(banner).getByRole("button", { name: "Try different models" })
-  );
-
-  await screen.findByText(/Switched to different models/);
-  expect(
-    screen.getByRole("heading", { name: "The run stopped before finishing" })
-  ).toBeVisible();
 });
 
 it("cues and describes the disabled Optimize prompt button until a prompt is entered", async () => {

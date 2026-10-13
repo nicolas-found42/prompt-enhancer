@@ -35,8 +35,6 @@ def apply_tuning_profile(
         weak_model_count=1,
         weak_samples=3,
         weak_max_output_tokens=PILOT_MAX_OUTPUT_TOKENS,
-        fallback_writer_model=QWEN_MODEL,
-        fallback_strong_check_model=QWEN_MODEL,
     )
 
 

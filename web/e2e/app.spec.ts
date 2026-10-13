@@ -1192,7 +1192,7 @@ test("another tab joining a running job shows which prompt it is working on", as
   );
 });
 
-test("a first run can use the provider fallback without opening model choices", async ({
+test("a Go refusal explains itself without switching models", async ({
   page,
 }) => {
   await page.route("**/api/catalog", (route) =>
@@ -1205,9 +1205,7 @@ test("a first run can use the provider fallback without opening model choices", 
             { id: "go-strong", provider: "go" },
           ],
           openrouter: [
-            { id: "or-writer", provider: "openrouter" },
-            { id: "or-strong", provider: "openrouter" },
-            { id: "weak-a", provider: "openrouter" },
+            { id: "mistralai/mistral-large-4-0", provider: "openrouter" },
           ],
         },
       },
@@ -1219,7 +1217,7 @@ test("a first run can use the provider fallback without opening model choices", 
         judge_model: "typesafe/jev-1.13",
         writer_model: "go-writer",
         strong_check_model: "go-strong",
-        weak_models: ["weak-a"],
+        weak_models: ["go-writer"],
       },
     })
   );
@@ -1227,69 +1225,29 @@ test("a first run can use the provider fallback without opening model choices", 
     route.fulfill({
       json: {
         providers: { go: { status: "unavailable", http_status: 403 } },
-        fallback: { writer: "or-writer", strong: "or-strong" },
       },
     })
   );
 
-  const runId = "first-run-with-fallback";
-  await mockRun(page, {
-    ...completedBase,
-    run_id: runId,
-    original_prompt: "Write a birthday note.",
-    final_prompt: "Write a warm birthday note for a friend.",
-    original_kept: false,
-    report: { status: "optimized", summary: "The note has a clear purpose." },
-  });
-  let submittedBody: Json | undefined;
-  await page.route("**/api/jobs/optimize", (route) => {
-    submittedBody = route.request().postDataJSON() as Json;
-    return route.fulfill({ status: 202, json: job(runId, "running") });
-  });
-
   await page.goto("/");
-  await expect(page.getByText("Optional · you can ignore this")).toBeVisible();
-  await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
   const banner = page.locator(".banner");
   const mainWarning = banner.getByText(
     /Some models selected for this app can't be reached/
   );
   await expect(mainWarning).toBeVisible();
-  await expect(mainWarning).not.toContainText(
-    /OpenCode Go|HTTP|go-writer|go-strong/
+  await expect(mainWarning).toContainText(
+    "Check your OpenCode Go subscription"
   );
-  await expect(banner.getByText("Provider: OpenCode Go")).not.toBeVisible();
+  await expect(mainWarning).not.toContainText(/HTTP|go-writer|go-strong/);
   await banner.getByText("Show troubleshooting details").click();
   await expect(banner.getByText("Provider: OpenCode Go")).toBeVisible();
   await expect(banner.getByText("Provider response: HTTP 403")).toBeVisible();
   await expect(banner.getByText(/writer \(go-writer\)/)).toBeVisible();
-  await expect(banner.getByText(/strong check \(go-strong\)/)).toBeVisible();
-  await page.getByRole("button", { name: "Try different models" }).click();
-  await expect(banner).toHaveCount(0);
-  await expect(page.getByRole("status")).toContainText(
-    "Switched to different models (writer or-writer, strong check or-strong)"
-  );
-  await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
-  await expect(page.locator("#writer-model")).toBeHidden();
-  await page.getByLabel("Your prompt").fill("Write a birthday note.");
-  await page.getByRole("button", { name: "Optimize prompt" }).click();
-
-  await expect(page.locator(".final-prompt")).toContainText(
-    "Write a warm birthday note for a friend."
-  );
-  await expect(page.locator(".model-picker")).not.toHaveAttribute("open");
-  expect(submittedBody?.model_overrides).toEqual({
-    writer: "or-writer",
-    strong: "or-strong",
-    weak: ["weak-a"],
-  });
+  await expect(banner.getByRole("button")).toHaveCount(0);
 
   await page.getByText("Model choices", { exact: true }).click();
   await expect(page.getByLabel("Writer", { exact: true })).toHaveValue(
-    "or-writer"
-  );
-  await expect(page.getByLabel("Strong check", { exact: true })).toHaveValue(
-    "or-strong"
+    "go-writer"
   );
 });
 

@@ -189,6 +189,6 @@ def test_short_explicit_weak_panel_is_rejected_before_gateway_calls(count: int) 
     optimizer = PromptOptimizer(store=RunStore(":memory:"), gateway=gateway)
     picks = [f"weak-{index}" for index in range(count)]
 
-    with pytest.raises(ValueError, match="weak panel requires 5 distinct models"):
+    with pytest.raises(ValueError, match="weak panel requires 5 models"):
         optimizer.optimize("Explain recursion.", {"model_overrides": {"weak": picks}})
     assert calls == []

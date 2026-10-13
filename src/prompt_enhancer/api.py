@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from .catalog import SELECTABLE_OPENROUTER_MODELS
 from .clarification import InvalidAnswerError, RunNotPausedError
 from .config import Settings
 from .history import RunNotFound
@@ -53,18 +54,19 @@ class PromptHealthRequest(BaseModel):
     session_id: str = Field(min_length=1, max_length=128)
 
 
+def _public_model(model: str) -> dict[str, str]:
+    provider = "openrouter" if model in SELECTABLE_OPENROUTER_MODELS else "opencode-go"
+    return {"id": model, "provider": provider}
+
+
 def _public_catalog(settings: Settings) -> dict[str, Any]:
     models = {
         "judge": [
             {"id": settings.judge_model, "provider": "openrouter", "fixed": True}
         ],
-        "writer": [{"id": settings.writer_model, "provider": "opencode-go"}],
-        "strong_check": [
-            {"id": settings.strong_check_model, "provider": "opencode-go"}
-        ],
-        "weak_panel": [
-            {"id": model, "provider": "openrouter"} for model in settings.weak_models
-        ],
+        "writer": [_public_model(settings.writer_model)],
+        "strong_check": [_public_model(settings.strong_check_model)],
+        "weak_panel": [_public_model(model) for model in settings.weak_models],
     }
     return {"models": models, **models}
 
@@ -338,10 +340,6 @@ def create_app(
             "providers": dict(health(probe_models=models))
             if health is not None
             else {},
-            "fallback": {
-                "writer": config.fallback_writer_model,
-                "strong": config.fallback_strong_check_model,
-            },
         }
 
     @app.get("/api/runs")

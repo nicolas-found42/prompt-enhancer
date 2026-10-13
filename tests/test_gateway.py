@@ -78,7 +78,7 @@ def test_known_go_defaults_do_not_fall_back_to_openrouter_without_catalog():
     gateway = HttpGateway(config=GatewayConfig())
 
     assert gateway.route_model("deepseek-v4.1-flash").provider == "go"
-    assert gateway.route_model("space-bunny-free").provider == "go"
+    assert gateway.route_model("longcat-2.5-preview-free").provider == "go"
     assert gateway.route_model("glm-5.3-flash").provider == "go"
     assert gateway.route_model("qwen3.8-flash").url.endswith("/messages")
     assert gateway.route_model("muse-spark-1.3-contributor").url.endswith("/responses")

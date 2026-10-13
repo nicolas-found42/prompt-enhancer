@@ -10,7 +10,7 @@ Checking a prompt properly means running it on several models and judging every 
 
 ## Solution
 
-A standalone prompt optimizer: an engine exposed as an API, with a web app on top. The user pastes a prompt and chooses an improvement style. Each bounded Round can write up to six candidates. An early routing or writing decision can end a Round before panel requests; generated candidates are tested on five distinct weak models with three samples per model, then fidelity, score-floor, and acceptance checks decide which qualify. The engine repeats Rounds until its evidence converges or a separate control or provider condition interrupts the run:
+A standalone prompt optimizer: an engine exposed as an API, with a web app on top. The user pastes a prompt and chooses an improvement style. Each bounded Round can write up to six candidates. An early routing or writing decision can end a Round before panel requests; generated candidates are tested on a five-entry weak panel with three samples per entry, then fidelity, score-floor, and acceptance checks decide which qualify. The engine repeats Rounds until its evidence converges or a separate control or provider condition interrupts the run:
 
 1. **Diagnose.** Jev classifies the task, finds gaps it's confident about, and points to the exact sentences that are vague or contradictory.
 2. **Clarify.** Jev decides which gaps can be filled from the prompt itself. Only when a gap can't be inferred and it matters is the user asked, and always as multiple choice.
@@ -42,7 +42,7 @@ The user gets one clean prompt to copy, plus a collapsible report: diagnosis, hi
 
 ### Round workload and controls
 
-11. As a user, I want each Round to allow up to six candidates, with five distinct weak models and three samples per model for candidates that reach the panel, so that each Round has a consistent evidence budget.
+11. As a user, I want each Round to allow up to six candidates, with a five-entry weak panel and three samples per entry for candidates that reach the panel, so that each Round has a consistent evidence budget.
 12. As a user, I want a time or spend limit to pause for approval, so that I can control an uncapped convergence loop without mistaking a limit for an optimization result.
 13. As a user, I want actual cost split by model role after a run, so that I know where the money went.
 14. As a user on a subscription with usage caps, I want to see how much of each OpenCode Go model cap a run used, so that I don't run out unexpectedly.
@@ -166,7 +166,7 @@ five finalized outcomes.
 - **Strategy library.** Named rewrite strategies (for example: add missing context, specify output format, add done criteria, split into steps, add an example, remove contradictions). Each is tagged as safe or as a crutch (known to hurt strong models). Strategies are selected per prompt with rank-then-recheck: first a `choice` across the whole library, then a recheck of the shortlist with one `noul` per strategy.
 - **Candidate writer.** Generates K candidates in one structured call, each using a different strategy, editing only the flagged sentences unless the strategy explicitly restructures. It includes previous-round failures when running repeat rounds.
 - **Lossless restructuring.** The `restructure_lossless` strategy uses Jev Choices only to assign stable source units to Context, Task, Constraints, Output format, Examples, or Other. Code renders fixed headings and moves each exact source unit once; uncertain roles remain in Other. A deterministic proof checks IDs, source hashes, multiplicity, and the rendered candidate before fidelity. The candidate writer never receives this strategy. Whole-prompt meaning, weak-panel ranking, and the strong check still apply because moving text can change its interpretation. Reports expose the proof result, roles, outcome, and role-assignment cost; the evaluation harness counts generation, wins, and strong regressions with denominators. Missing observed evidence is reported as unavailable.
-- **Runner.** Each Round has capacity for six candidates. Generated candidates run on five distinct weak-panel models with three samples per model, at a nonzero temperature so samples differ, with a fixed per-run seed for reproducibility. The original is also measured for comparison. Runs happen in parallel. An earlier routing or writing decision can end a Round before panel requests.
+- **Runner.** Each Round has capacity for six candidates. Generated candidates run on a five-entry weak panel with three samples per entry, at a nonzero temperature so samples differ, with a fixed per-run seed for reproducibility. A model listed more than once continues its sample numbering, so each repeat adds distinct samples for that model; per-model pass rates, the worst model, and the mean count it once, and sample spread uses only the sample positions every model has. The original is also measured for comparison. Runs happen in parallel. An earlier routing or writing decision can end a Round before panel requests.
 - **Grader.** Grades every (candidate × model × sample) output against the approved tests and computes pass rate per model, worst-model pass rate, mean pass rate and sample spread. New runs send one output and all its test questions in a shared-state Jev request, splitting only that output when question or request-size limits require it. Oversized or partial responses are ungradable and cannot verify a candidate. An unresolved grade for either the original or a candidate makes that candidate ineligible; if the finite confirmation budget leaves no eligible candidate, the Round retains the original rather than claiming an improvement. Each Noul success test uses one direct question; an expected "no" uses the complement of that answer. The reversed-form Noul self-check stays dropped because [Jev 1.13 does not guarantee that separate questions and their negations sum to 1](https://docs.typesafe.ai/model-jaggedness/jev-1.13). Choice and Score option order is governed by a versioned order-bias artifact: `single` asks once, and `mean_pair` averages the two orders after aligning them to semantic options/levels. With no compatible artifact, the grader keeps the existing `legacy_min_pair` rule. The offline `order-bias` experiment compares cross-order changes with same-order repeat variation using paired source-group bootstrap intervals. It recommends `single` only when both excess-effect upper bounds are at most 0.01, `mean_pair` when either lower bound exceeds 0.01, and `insufficient_evidence` otherwise; it requires 30 distinct prompt/output groups. Synthetic-only, incomplete, snapshot-mismatched, or inconclusive evidence cannot activate a policy. The report does not change the production default by itself.
 - **Fidelity checker.** Code first checks that edits stay within diagnosed sentences, authorized gap insertions, or explicit restructuring; a confinement failure rejects the candidate without a Jev request. Jev then checks each inserted or changed sentence for support and the whole prompt for preserved meaning. Writer instruction versions 1–3 keep the historical three-question protocol.
 - **Selector.** Applies hard eligibility checks before semantic reranking and decides whether the Perfect Prompt Loop continues from this Round's evidence.
@@ -183,22 +183,23 @@ five finalized outcomes.
 ### Round workload and model defaults
 
 Each Round may write up to six candidates. An early routing or writing decision
-can end a Round before panel requests. Generated candidates are tested on five
-distinct weak models with three samples per model; later eligibility checks
+can end a Round before panel requests. Generated candidates are tested on a
+five-entry weak panel with three samples per entry; later eligibility checks
 decide which candidates qualify.
 There is no fixed total Round count. A per-run time or spend limit pauses at a
 Round boundary for approval; approval continues the same run, while cancel or
 stop is recorded as control state separately from the run outcome. Provider
 failures are operational failures, not a claim about prompt quality.
 
-| Role                           | Default model                                                                                                            | Route                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
-| Judge (pinned default)         | `typesafe/jev-1.13-20260917`                                                                                             | OpenRouter Decisions API |
-| Writer                         | `space-bunny-free`                                                                                                       | OpenCode Go              |
-| Strong check                   | `glm-5.3-flash`                                                                                                          | OpenCode Go              |
-| Weak panel (five models total) | `meta-llama/llama-3.1-8b-instruct`, `mistralai/mistral-nemo`, `meta-llama/llama-3.2-3b-instruct`, `google/gemma-3-4b-it` | OpenRouter               |
-| Weak panel (five models total) | `mimo-v2.6-flash`                                                                                                        | OpenCode Go              |
+| Role                    | Default model                                                                                                          | Route                    |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| Judge (pinned default)  | `typesafe/jev-1.13-20260917`                                                                                           | OpenRouter Decisions API |
+| Writer                  | `deepseek-v4.1-flash`                                                                                                  | OpenCode Go              |
+| Strong check            | `glm-5.3-flash`                                                                                                        | OpenCode Go              |
+| Weak panel (five slots) | `deepseek-v4.1-flash`, `mimo-v2.6-flash`, `longcat-2.5-preview-free`, `mimo-v2.6-flash`, `deepseek-v4.1-flash`         | OpenCode Go              |
 
+- Writer, strong-check, and weak-panel models come from OpenCode Go. The only selectable OpenRouter model is `mistralai/mistral-large-4-0`; Jev stays fixed. The opt-in `llama-tuning-v1` evaluation profile keeps its own OpenRouter models.
+- There is no automatic fallback when OpenCode Go refuses requests; the run fails with an explanation.
 - Muse Spark 1.3 Contributor and GPT 5.6 Luna remain excluded from defaults.
 - GLM 5.3 Flash is the strong reference by design. No frontier-model check runs per prompt or on a schedule.
 - Every role except the judge can be changed in the picker. Choices are saved as defaults and can be overridden per run.
@@ -266,6 +267,6 @@ failures are operational failures, not a claim about prompt quality.
   - Every `choice` needs an explicit "unknown" or "none" option, because without one the model answers confidently and wrongly.
 - **Weak → strong transfer is a floor, not a guarantee.** Prompt preferences are fairly consistent across model sizes (S2LPP, arXiv 2505.20097). But strict rule-based prompting that helps smaller models can hurt the strongest ones ("prompting inversion", arXiv 2510.22251), and explicit step-by-step reasoning can reduce instruction-following (arXiv 2505.11423). This is why the strong check and the crutch rule exist.
 - **OpenCode Go usage policy risk (accepted).** Go says it is designed for coding-agent traffic and monitors for abuse. This tool's traffic is not coding-agent traffic, so the account could be flagged or throttled. The user chose Go for every model it offers anyway; the gateway sends the required headers.
-- **Cost:** Writer and strong check come out of Go caps; the small weak panel and Jev are paid through OpenRouter. Live benchmark reports provide the measured cost for the selected writer.
+- **Cost:** Writer, strong check, and the default weak panel come out of Go caps; Jev, and Mistral Large 4 when selected, are paid through OpenRouter. Live benchmark reports provide the measured cost for the selected writer.
 - **Prior art studied:** pi-prompt-enhancer (Jev gap checklist, fail-open, confident-gaps-only scoring), prompt-oscilloscope (Jev prompt analysis, debounce, hash caching, local secret checks), mimicry and Lossless Rewrite (LLM rewrites, Jev checks meaning in a bounded loop), and OpenRouter's Jev-verified cascade and "prompt to questions" lab.
 - The research note in `docs/research/` from before this interview says the repository was empty and that "Jev" was undefined. This spec supersedes it.

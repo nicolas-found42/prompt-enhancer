@@ -594,15 +594,14 @@ def test_provider_probe_marks_a_refused_provider_unavailable_without_recording_c
     assert gateway.usage_report()["total"] == 0.0
 
 
-def test_providers_endpoint_offers_fallback_models() -> None:
+def test_providers_endpoint_offers_no_fallback_models() -> None:
     client, _jobs = _client(
         ScriptedGateway(chat=lambda *_a, **_k: "{}", decision=_decide)
     )
 
     body = client.get("/api/providers?probe=true").json()
 
-    assert body["providers"] == {}
-    assert body["fallback"]["writer"] and body["fallback"]["strong"]
+    assert body == {"providers": {}}
 
 
 def test_stale_cancel_cannot_persist_over_a_replacement_job(tmp_path):

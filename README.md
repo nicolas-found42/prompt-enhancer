@@ -3,8 +3,8 @@
 A local prompt workbench that diagnoses a request with Jev, resolves the
 requested improvement style, and evaluates up to six candidates per bounded
 round. An early routing or writing decision can end a round before panel
-requests; generated candidates are tested on five distinct models with three
-samples per model, then fidelity, score-floor, and acceptance checks decide
+requests; generated candidates are tested on a five-entry weak panel with three
+samples per entry, then fidelity, score-floor, and acceptance checks decide
 which qualify. The Perfect Prompt Loop repeats rounds until its score evidence meets the quality
 floors and stops gaining, or a separate run-control or provider condition
 interrupts it. When those details are available, a result names its applied
@@ -38,19 +38,22 @@ npm run dev -- --host 127.0.0.1
 ```
 
 The private `.env` file should contain `OPENCODE_GO_KEY` and
-`OPENROUTER_API_KEY`. It is ignored by Git. The configured default writer is
-Space Bunny Free on OpenCode Go; Jev defaults to the pinned
-`typesafe/jev-1.13-20260917` snapshot. Set `PROMPT_ENHANCER_JEV_MODEL` to use
-a different Jev snapshot for new runs. The app's
-**Model choices** section lets you change eligible writer, strong-check, and
-weak-panel models per run.
+`OPENROUTER_API_KEY`. It is ignored by Git. The default writer is DeepSeek
+V4.1 Flash on OpenCode Go, and the default weak panel is `deepseek-v4.1-flash`,
+`mimo-v2.6-flash`, `longcat-2.5-preview-free`, `mimo-v2.6-flash`, and
+`deepseek-v4.1-flash`; a model listed more than once gets more samples. Jev
+defaults to the pinned `typesafe/jev-1.13-20260917` snapshot. Set
+`PROMPT_ENHANCER_JEV_MODEL` to use a different Jev snapshot for new runs. The
+app's **Model choices** section lets you change the writer, strong-check, and
+weak-panel models per run. Those roles accept OpenCode Go models and one
+OpenRouter model, `mistralai/mistral-large-4-0`; other OpenRouter models are
+rejected with HTTP 422. Only the opt-in `llama-tuning-v1` evaluation profile
+keeps its own OpenRouter models.
 
-Go writer models require an active OpenCode Go subscription. Without one,
-every writer call returns HTTP 403. The app checks Go when it loads and, if Go
-refuses requests, shows a banner that switches the writer and strong check to
-OpenRouter models (`PROMPT_ENHANCER_FALLBACK_WRITER_MODEL` and
-`PROMPT_ENHANCER_FALLBACK_STRONG_MODEL` override the choices). A run that fails
-anyway shows what went wrong and what to do next.
+Go models require an active OpenCode Go subscription. Without one, every Go
+call returns HTTP 403. The app checks Go when it loads and, if Go refuses
+requests, shows a banner; there is no automatic switch to other models. A run
+that fails shows what went wrong and what to do next.
 
 The web app starts runs in the background (`POST /api/jobs/optimize`, then
 poll `GET /api/jobs/{run_id}`), so it shows each stage and elapsed time, can

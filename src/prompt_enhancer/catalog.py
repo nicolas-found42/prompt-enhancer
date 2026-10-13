@@ -13,12 +13,16 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 JEV_MODEL = "typesafe/jev-1.13-20260917"
-DEFAULT_GO_WRITER = "space-bunny-free"
+MISTRAL_LARGE_MODEL = "mistralai/mistral-large-4-0"
+# Writer, strong-check, and weak-panel models come from OpenCode Go. Mistral
+# Large 4 is the only OpenRouter model a user may select; Jev stays fixed.
+SELECTABLE_OPENROUTER_MODELS = frozenset({MISTRAL_LARGE_MODEL})
+DEFAULT_GO_WRITER = "deepseek-v4.1-flash"
 DEFAULT_GO_STRONG = "glm-5.3-flash"
 DEFAULT_WEAK_PANEL = (
-    "meta-llama/llama-3.1-8b-instruct",
-    "mistralai/mistral-nemo",
-    "meta-llama/llama-3.2-3b-instruct",
+    "deepseek-v4.1-flash",
+    "mimo-v2.6-flash",
+    "longcat-2.5-preview-free",
 )
 # The catalog flags models whose provider policies retain or train on prompts.
 # Excluded models remain available when the user explicitly selects them.
@@ -136,14 +140,36 @@ class CatalogSnapshot:
         return tuple(model for model in self.models if model.safe_for_default)
 
     def to_public_dict(self) -> dict[str, Any]:
+        # The full OpenRouter catalog stays available for pricing Jev and the
+        # tuning profile; pickers see only the models a user may select.
         return {
             "judge": self.judge.to_public_dict(),
             "providers": {
                 "go": [model.to_public_dict() for model in self.go],
-                "openrouter": [model.to_public_dict() for model in self.openrouter],
+                "openrouter": [
+                    model.to_public_dict()
+                    for model in self.openrouter
+                    if model.id in SELECTABLE_OPENROUTER_MODELS
+                ],
             },
             "fetched_at": self.fetched_at.isoformat(),
         }
+
+
+def is_selectable_model(model_id: str) -> bool:
+    """Whether a user may pick ``model_id`` for the writer, strong check, or panel.
+
+    OpenRouter IDs are vendor-namespaced (``vendor/model``) and OpenCode Go IDs
+    are not, so this needs no live catalog.
+    """
+    return model_id in SELECTABLE_OPENROUTER_MODELS or "/" not in model_id
+
+
+def unselectable_models(model_ids: Iterable[str]) -> list[str]:
+    """Return the IDs, in order and without repeats, that a user may not pick."""
+    return list(
+        dict.fromkeys(item for item in model_ids if not is_selectable_model(item))
+    )
 
 
 class CatalogError(RuntimeError):
@@ -377,11 +403,15 @@ __all__ = [
     "DEFAULT_GO_WRITER",
     "DEFAULT_WEAK_PANEL",
     "JEV_MODEL",
+    "MISTRAL_LARGE_MODEL",
+    "SELECTABLE_OPENROUTER_MODELS",
     "CatalogError",
     "CatalogSnapshot",
     "CatalogTransport",
     "LiveModelCatalog",
     "ModelInfo",
     "StaticModelCatalog",
+    "is_selectable_model",
     "parse_catalog",
+    "unselectable_models",
 ]

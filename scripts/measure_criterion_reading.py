@@ -49,7 +49,7 @@ FIXTURE = (
     Path(__file__).resolve().parents[1]
     / "tests/fixtures/evaluation/criterion_reading_cases.json"
 )
-CHEAP_MODEL = "mistralai/mistral-nemo"
+CHEAP_MODEL = "mimo-v2.6-flash"
 MAX_COMPLETION_TOKENS = 4096
 BANDS = ((0.5, 0.5), (0.3, 0.7), (0.2, 0.8), (0.1, 0.9), (0.05, 0.95))
 

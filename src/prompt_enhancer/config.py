@@ -13,9 +13,10 @@ from typing import Any
 from .catalog import DEFAULT_GO_WRITER, DEFAULT_WEAK_PANEL, JEV_MODEL
 
 MAX_CANDIDATES = 6
+# Repeated entries are allowed; each repeat adds samples for that model.
 DEFAULT_FIXED_WEAK_PANEL = DEFAULT_WEAK_PANEL + (
     "mimo-v2.6-flash",
-    "google/gemma-3-4b-it",
+    "deepseek-v4.1-flash",
 )
 
 
@@ -31,10 +32,6 @@ class Settings:
     candidate_count: int = MAX_CANDIDATES
     weak_model_count: int = 5
     weak_samples: int = 3
-    # Offered by the web app when OpenCode Go refuses requests, so a user
-    # without an active subscription can switch in one click.
-    fallback_writer_model: str = "~deepseek/deepseek-flash-latest"
-    fallback_strong_check_model: str = "deepseek/deepseek-v4.1-flash"
     grading_cascade_pair_cap: int | None = 30
     grading_cascade_dollar_cap: float | None = 0.05
     grading_confirmation_reservation_usd: float = 0.001
@@ -101,13 +98,6 @@ class Settings:
             writer_model=os.getenv("PROMPT_ENHANCER_WRITER_MODEL", DEFAULT_GO_WRITER),
             strong_check_model=os.getenv(
                 "PROMPT_ENHANCER_STRONG_MODEL", "glm-5.3-flash"
-            ),
-            fallback_writer_model=os.getenv(
-                "PROMPT_ENHANCER_FALLBACK_WRITER_MODEL",
-                "~deepseek/deepseek-flash-latest",
-            ),
-            fallback_strong_check_model=os.getenv(
-                "PROMPT_ENHANCER_FALLBACK_STRONG_MODEL", "deepseek/deepseek-v4.1-flash"
             ),
         )
 

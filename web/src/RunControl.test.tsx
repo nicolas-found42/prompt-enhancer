@@ -57,7 +57,6 @@ const settings: ModelSettings = {
 
 const providers: ProviderReport = {
   providers: {},
-  fallback: { writer: "router-writer", strong: "router-strong" },
 };
 
 const runningJob: Job = {

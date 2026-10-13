@@ -551,6 +551,7 @@ class HttpGateway:
             "deepseek-v4.1-flash",
             DEFAULT_GO_STRONG,
             "mimo-v2.6-flash",
+            "longcat-2.5-preview-free",
             "qwen3.8-flash",
             "muse-spark-1.3-contributor",
         } | {item if isinstance(item, str) else item.id for item in (go_models or ())}
