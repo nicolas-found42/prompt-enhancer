@@ -9,7 +9,7 @@ description = "A local, Jev-powered prompt optimizer"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.143.0",
-  "pydantic>=2.7",
+  "pydantic>=2.14.1",
   "uvicorn[standard]>=0.54.0",
 ]
 
