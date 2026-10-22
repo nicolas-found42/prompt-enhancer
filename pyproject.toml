@@ -39,7 +39,7 @@ dev = [
     "pytest-xdist==3.8.0",
     "pyyaml>=6.0.3",
     "ruff>=0.17.0",
-    "ty>=0.0.84",
+    "ty>=0.0.89",
 ]
 
 [tool.ruff]
